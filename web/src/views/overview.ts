@@ -313,6 +313,18 @@ function jobsList(s: Status): string {
       .join("")}</ul></div>`;
 }
 
+/** The other files uploading at the same time (Settings › Sync, Files at once). */
+function alsoUploading(s: Status, shown: string): string {
+  const others = (s.uploading ?? []).filter((u) => u.name !== shown);
+  if (!others.length) return "";
+  return `<ul class="mt-3 space-y-1.5">${others
+    .map(
+      (u) =>
+        `<li class="flex items-center gap-2 text-xs"><span class="min-w-0 flex-1 truncate" title="${esc(u.name)}">${esc(fileName(u.name))}</span><span class="bar w-20 shrink-0"><i style="width:${pct(u.bytes_done, u.bytes_total)}%"></i></span><span class="w-14 shrink-0 text-right text-ink-3 tabular-nums">${bytes(u.bytes_total)}</span></li>`,
+    )
+    .join("")}</ul>`;
+}
+
 function upNext(s: Status, current: string): string {
   const next = (s.pending ?? []).filter((n) => n !== current).slice(0, 4);
   if (!next.length) return "";
@@ -695,7 +707,8 @@ const overview: View = {
              <div class="mt-1 flex flex-wrap gap-1">${badge(c.kind === "video" ? "Video" : "Photo", "", c.kind === "video" ? "video" : "photo")}${stepBadge(c)}</div></div></div>
            <div class="bar active mt-3"><i style="width:${pct(c.bytes_done, c.bytes_total)}%"></i></div>
            <div class="mt-1.5 flex justify-between text-xs text-ink-3 tabular-nums"><span>${bytes(c.bytes_done)} of ${bytes(c.bytes_total)}</span><span>${speed(s.net.up_now)}</span></div>
-           ${s.total ? `<div class="mt-3 text-xs text-ink-3">File ${num(s.done + 1)} of ${num(s.total)} this round</div>` : ""}
+           ${alsoUploading(s, c.name)}
+           ${s.total ? `<div class="mt-3 text-xs text-ink-3">File ${num(Math.min(s.done + (s.uploading?.length || 1), s.total))} of ${num(s.total)} this round${(s.uploading?.length ?? 0) > 1 ? ` · ${num(s.uploading!.length)} at once` : ""}</div>` : ""}
            ${upNext(s, c.name)}`
         : `<div class="flex items-center gap-3"><span class="grid size-12 shrink-0 place-items-center rounded-xl bg-panel-2 ${s.phase === "paused" ? "text-warn" : s.phase === "scanning" ? "text-accent" : "text-ink-3"}">${icon(phaseInfo(s).icon, `size-6 ${s.phase === "scanning" ? "spin" : ""}`)}</span>
              <div class="min-w-0 flex-1"><div class="font-medium">${esc(nowTitle(s))}</div><div class="truncate text-xs text-ink-3">${esc(phaseInfo(s).detail)}</div></div>${nowAction(s)}</div>

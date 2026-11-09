@@ -8,7 +8,8 @@ import {
 import { $, animateChange, esc, html, toast } from "../lib/dom";
 import { ago, fileName, folderOf, num, pct } from "../lib/format";
 import { icon } from "../lib/icons";
-import { status } from "../lib/store";
+import { setPauseControl, status } from "../lib/store";
+import { confirmDialog } from "../lib/dialog";
 import {
   accountMenu,
   busyAccounts,
@@ -187,6 +188,17 @@ function render(): void {
     );
     return;
   }
+  // The header's pause button pauses fixing dates in this account here, not uploads.
+  const paused = !!r.paused;
+  setPauseControl({
+    paused,
+    label: paused ? `Resume fixing dates in ${account}` : `Pause fixing dates in ${account}`,
+    toggle: async () => {
+      await post("dates/pause", { account, paused: !paused });
+      void load();
+      return paused ? "Fixing dates resumed" : "Fixing dates paused";
+    },
+  });
   const available = new Set(r.items.filter((i) => waiting(i) || fixable(i)).map((i) => i.name));
   for (const name of picked) if (!available.has(name)) picked.delete(name);
   html(
@@ -218,7 +230,8 @@ function render(): void {
   };
   html(
     $("#dt-body"),
-    `<section class="card min-w-0 overflow-hidden">
+    `${paused ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Fixing dates is paused in this account</div><div class="mt-0.5 text-ink-3">${r.waiting ? `${num(r.waiting)} wait. ` : ""}Nothing is deleted or uploaded again until you resume. The pause button at the top resumes it too.</div></div><button class="btn sm primary" id="dt-resume">${icon("play")}Resume</button></section>` : ""}
+    <section class="card min-w-0 overflow-hidden">
         <div class="flex flex-wrap items-center gap-3 border-b border-line p-4">
           <div class="min-w-0 flex-1 basis-64"><h2 class="font-semibold">Files without a date</h2>
             <p class="mt-1 text-xs text-ink-3">${num(r.undated)} files · ${num(r.wrong)} with different dates · ${num(r.waiting)} in progress</p></div>
@@ -259,12 +272,16 @@ async function fixList(names: string[]): Promise<void> {
   if (!names.length) return;
   const selectedAccount = account;
   const what = names.length === 1 ? "this item" : `${num(names.length)} items`;
-  if (
-    !confirm(
-      `Fix ${what} in ${selectedAccount}?\n\nEach is deleted in Google Photos and uploaded again with the right date. Favourite, archive, caption and GP Sync albums come back; shared links and comments don't.`,
-    )
-  )
-    return;
+  const ok = await confirmDialog({
+    title: `Fix ${what}?`,
+    icon: "calendar",
+    body: [
+      `In ${selectedAccount}: each is deleted in Google Photos and uploaded again with the right date.`,
+      "Favourite, archive, caption and GP Sync albums come back; shared links and comments don't.",
+    ],
+    confirm: "Fix",
+  });
+  if (!ok) return;
   let queued = 0;
   try {
     for (let i = 0; i < names.length; i += 1000) {
@@ -305,6 +322,7 @@ function onClick(e: Event): void {
   const b = t.closest<HTMLElement>("button");
   if (!b) return;
   if (b.id === "dt-refresh") void act("refresh", {}, "Reading your library from Google");
+  else if (b.id === "dt-resume") void act("pause", { paused: false }, "Fixing dates resumed");
   else if (b.dataset.show) {
     if (b.dataset.show === show) return;
     show = b.dataset.show as DateFilter;
@@ -424,6 +442,7 @@ const dates: View = {
   unmount() {
     clearInterval(timer);
     request++;
+    setPauseControl(null);
   },
 };
 

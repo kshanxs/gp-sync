@@ -70,8 +70,9 @@ def test_status_lists_background_work_per_account():
     sync.reclaim_state["a@x.com"]["jobs"]["K"] = {
         "current": {"key": "K", "step": "deleting", "done": 0, "total": 9, "name": "a.jpg"}
     }
-    sync.copy_state[("a@x.com", "b@x.com")]["current"] = {"key": "K2", "step": "uploading", "done": 3, "total": 9,
-                                                         "name": "b.mp4"}  # fmt: skip
+    sync.copy_state[("a@x.com", "b@x.com")]["jobs"]["K2"] = {
+        "current": {"key": "K2", "step": "uploading", "done": 3, "total": 9, "name": "b.mp4"}
+    }
     jobs = sync.background_jobs()
     assert {"kind": "library", "account": "c@x.com"} in jobs
     assert {"kind": "storage", "account": "a@x.com", "name": "a.jpg", "step": "deleting", "done": 0, "total": 9} in jobs

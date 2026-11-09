@@ -7,9 +7,10 @@ import {
   type CopyReport,
 } from "../lib/api";
 import { $, esc, html, toast } from "../lib/dom";
-import { ago, bytes, date, num, pct } from "../lib/format";
+import { ago, bytes, date, duration, num, pct, speed } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
-import { status } from "../lib/store";
+import { setPauseControl, status } from "../lib/store";
+import { confirmDialog } from "../lib/dialog";
 import { badge, cardHead, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
@@ -216,20 +217,41 @@ function pickerCard(): string {
 function progressCard(r: CopyReport): string {
   const j = r.jobs;
   const total = j.copied + j.exists + j.failed + j.counts + j.queued;
-  if (!total && !r.current) return "";
+  const working = r.working ?? (r.current ? [r.current] : []);
+  if (!total && !working.length) return "";
   const done = total - j.queued;
-  const cur = r.current;
+  const busy = j.queued || working.length;
+  // Speed of the copies timed so far (download, check and upload together).
+  const rate = j.seconds && j.timed_bytes ? j.timed_bytes / j.seconds : 0;
   return `<section class="card">${cardHead(
-    r.paused ? "Paused" : j.queued || cur ? "Copying" : "Finished",
-    r.paused ? "pause" : j.queued || cur ? "loader" : "ok",
-    `${j.queued || cur || r.paused ? `<button class="btn sm" id="cp-pause">${icon(r.paused ? "play" : "pause")}${r.paused ? "Resume" : "Pause"}</button>` : ""}${j.queued || cur ? `<button class="btn sm" id="cp-stop">${icon("x")}Stop</button>` : ""}${j.failed ? `<button class="btn sm" id="cp-retry">${icon("retry")}Retry ${num(j.failed)} failed</button>` : ""}`,
+    r.paused ? "Paused" : busy ? "Copying" : "Finished",
+    r.paused ? "pause" : busy ? "loader" : "ok",
+    `${r.paused ? `<button class="btn sm primary" id="cp-pause">${icon("play")}Resume</button>` : ""}${busy ? `<button class="btn sm" id="cp-stop">${icon("x")}Stop</button>` : ""}${j.failed ? `<button class="btn sm" id="cp-retry">${icon("retry")}Retry ${num(j.failed)} failed</button>` : ""}`,
   )}
     <div class="card-b space-y-3">
       <div class="flex items-center justify-between text-sm"><span>${num(done)} of ${num(total)} done</span><span class="text-ink-3 tabular-nums">${Math.floor(pct(done, total))}%</span></div>
       <div class="bar"><i style="width:${pct(done, total)}%"></i></div>
-      ${cur ? `<div class="rounded-xl bg-panel-2 p-3 text-sm"><div class="flex items-center gap-2">${icon(cur.step === "downloading" ? "download" : "upload", "size-4 text-ink-3")}<span class="truncate">${cur.step === "downloading" ? "Downloading" : "Uploading"} ${esc(cur.name)}</span><span class="ml-auto shrink-0 text-xs text-ink-3">${bytes(cur.done)} / ${bytes(cur.total)}</span></div><div class="bar mt-2"><i style="width:${pct(cur.done, cur.total)}%"></i></div></div>` : ""}
-      <div class="flex flex-wrap gap-1.5">${badge(`${num(j.copied)} copied · ${bytes(j.copied_bytes)}`, "good", "check")}${j.exists ? badge(`${num(j.exists)} already there`, "info", "verified") : ""}${j.failed ? badge(`${num(j.failed)} didn't work`, "bad", "error") : ""}${j.queued ? badge(`${num(j.queued)} waiting · ${bytes(j.queued_bytes)}`, "", "hourglass") : ""}</div>
-      ${j.copied ? `<p class="text-xs text-ink-3">${num(j.verified)} of ${num(j.copied)} checked with Google: they don't count against ${esc(r.dst)}'s storage.</p>` : ""}
+      ${
+        working.length
+          ? `<div class="space-y-2">${working
+              .map(
+                (cur) =>
+                  `<div class="rounded-xl bg-panel-2 p-3 text-sm"><div class="flex items-center gap-2">${icon(cur.step === "downloading" ? "download" : "upload", "size-4 text-ink-3")}<span class="truncate">${cur.step === "downloading" ? "Downloading" : "Uploading"} ${esc(cur.name)}</span><span class="ml-auto shrink-0 text-xs font-semibold tabular-nums">${Math.floor(pct(cur.done, cur.total))}%</span></div>${cur.done ? `<div class="bar active mt-2"><i style="width:${pct(cur.done, cur.total)}%"></i></div>` : `<div class="bar indeterminate mt-2"><i></i></div>`}<div class="mt-1 text-right text-xs text-ink-3 tabular-nums">${bytes(cur.done)} of ${bytes(cur.total)}</div></div>`,
+              )
+              .join("")}</div>`
+          : ""
+      }
+      <div class="flex flex-wrap gap-1.5">${badge(`${num(j.copied)} copied · ${bytes(j.copied_bytes)}`, "good", "check")}${j.exists ? badge(`${num(j.exists)} already there`, "info", "verified") : ""}${j.failed ? badge(`${num(j.failed)} didn't work`, "bad", "error") : ""}${j.queued ? badge(`${num(j.queued)} waiting · ${bytes(j.queued_bytes)}`, "", "hourglass") : ""}${working.length > 1 ? badge(`${num(working.length)} at once`, "info", "layers") : ""}</div>
+      ${
+        j.timed
+          ? `<div class="grid grid-cols-3 gap-2 text-center">
+        <div class="stat-tile"><div class="num text-lg">${speed(rate)}</div><div class="text-[11px] text-ink-3">Average speed</div></div>
+        <div class="stat-tile"><div class="num text-lg">${duration((j.seconds ?? 0) / j.timed)}</div><div class="text-[11px] text-ink-3">Per item</div></div>
+        <div class="stat-tile"><div class="num text-lg">${j.queued && rate ? duration(j.queued_bytes / rate) : "–"}</div><div class="text-[11px] text-ink-3">Left, about</div></div>
+      </div>`
+          : ""
+      }
+      ${j.copied ? `<p class="text-xs text-ink-3">${num(j.verified)} of ${num(j.copied)} checked with Google: they don't count against ${esc(r.dst)}'s storage. Items at once is set on Free storage › Options.</p>` : ""}
     </div></section>`;
 }
 
@@ -262,6 +284,19 @@ function render(): void {
        <button class="btn sm" id="cp-refresh" ${r?.refreshing ? "disabled" : ""}>${r?.refreshing ? `${icon("loader", "spin")}Reading libraries…` : `${icon("refresh")}${r?.listed?.src && r.listed.dst ? "Refresh from Google" : "Read both libraries"}`}</button>
      </div>`,
   );
+  if (r && r.ready !== false) {
+    // The header's pause button pauses copying here, not uploads.
+    const paused = r.paused;
+    setPauseControl({
+      paused,
+      label: paused ? "Resume copying between accounts" : "Pause copying between accounts",
+      toggle: async () => {
+        await post("copy/pause", { src, dst, paused: !paused });
+        void load();
+        return paused ? "Copying resumed" : "Copying paused: items under way finish first";
+      },
+    });
+  }
   if (!r || r.ready === false) {
     html($("#cp-body"), `<div class="card empty">${icon("warn")}Couldn't load</div>`);
     return;
@@ -373,13 +408,17 @@ function onClick(e: Event): void {
     void loadCandidates();
   } else if (b.id === "cp-start") {
     const sel = report ? selection(report) : { count: 0, bytes: 0 };
-    if (
-      !confirm(
-        `Copy ${num(sel.count)} items (${bytes(sel.bytes)}) from ${src} to ${dst}?\n\nNothing is deleted in either account.`,
-      )
-    )
-      return;
     void (async () => {
+      const ok = await confirmDialog({
+        title: `Copy ${num(sel.count)} items?`,
+        icon: "copy",
+        body: [
+          `${bytes(sel.bytes)} from ${src} to ${dst}. Original files, uploaded the free way.`,
+          "Nothing is deleted in either account.",
+        ],
+        confirm: "Copy",
+      });
+      if (!ok) return;
       try {
         const result = await post<{ queued: number }>("copy/start", {
           src,
@@ -400,8 +439,15 @@ function onClick(e: Event): void {
     })();
   } else if (b.id === "cp-pause") void act("pause", { paused: !report?.paused });
   else if (b.id === "cp-stop") {
-    if (confirm("Stop copying? What's already copied stays. The rest is taken off the list."))
-      void act("stop", {}, (r) => `${num(r.removed ?? 0)} taken off the list`);
+    void confirmDialog({
+      title: "Stop copying?",
+      icon: "x",
+      body: ["What's already copied stays. The rest is taken off the list."],
+      confirm: "Stop",
+      danger: true,
+    }).then((ok) => {
+      if (ok) void act("stop", {}, (r) => `${num(r.removed ?? 0)} taken off the list`);
+    });
   } else if (b.id === "cp-dups") {
     dupOpen = !dupOpen;
     render();
@@ -443,7 +489,7 @@ const copyView: View = {
     void load();
     timer = window.setInterval(() => {
       const r = report;
-      const active = r?.refreshing || r?.current || (r?.jobs.queued && !r.paused);
+      const active = r?.refreshing || r?.working?.length || r?.current || (r?.jobs.queued && !r.paused);
       if (active || ++ticks % 7 === 0) void load(); // busy: every 3 s, else every 20 s
     }, 3000);
   },
@@ -451,6 +497,7 @@ const copyView: View = {
     clearInterval(timer);
     request++;
     candidateRequest++;
+    setPauseControl(null);
   },
 };
 

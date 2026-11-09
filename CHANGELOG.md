@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.5.4
+
+- Uploads go several at a time: 3 files at once per account by default (Settings › Sync, Files at
+  once, up to 8). The speed limit is shared between them, and Overview lists every file uploading.
+- Pause works at once: pausing Free storage or Copy accounts stops downloads in progress (they
+  wait in the queue, nothing changes in Google). An item already deleted in Google still finishes
+  its upload, so nothing is lost. The Working now card says "Pausing" until then.
+- Working now shows a moving progress bar and the percentage for every item; replacing in Google
+  shows a sliding bar. Progress bars on the thumbnails show up again.
+- Free storage: "Left to free" replaces the GP Sync uploads card: what is still queued and about
+  how long it takes at the speed of the last hour.
+- Copy accounts copies several items at once (Free storage › Options, Items at once), shows each
+  one, the average speed, time per item and time left, and the header's pause button pauses
+  copying there. Starting and stopping ask in the app's own dialog.
+- Fix dates can be paused per account, from the header's pause button on that page.
+- Diagnostics list what Free storage and copies are working on.
+
 ## 1.5.3
 
 - Fixed: Free storage said "Didn't work: the download is not exactly Google's original" for some

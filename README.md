@@ -115,8 +115,9 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
 - **Folders and accounts:** connect up to 5 Google accounts and choose, per folder, which of them it
   goes to: one account, or several at once (the first is the main backup, the others get copies).
   Photos and Videos go to the first account by default (or every folder, if those don't exist).
-- **Upload hours and speed limit:** only upload between set hours, and cap the upload speed so the
-  rest of your internet stays fast.
+- **Upload hours, speed limit and files at once:** only upload between set hours, cap the upload
+  speed so the rest of your internet stays fast, and upload several files side by side (3 by
+  default, up to 8 per account; the speed limit is shared between them).
 - **Albums:** put new uploads in Google Photos albums named after their folder.
 - **Files:** search and filter everything that was backed up, with thumbnails (iPhone HEIC too) and
   a link to each item in Google Photos. A duplicates tab lists identical files.
@@ -138,11 +139,14 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
 - **Fix dates:** photos and videos with no date inside (Snapchat saves, screenshots) that Google
   dated by the upload. Press Fix and GP Sync replaces each in Google Photos with one uploaded
   again with the right date, keeping favourite, archive, caption and GP Sync albums. It only
-  does so when the file on the server is exactly what was uploaded.
+  does so when the file on the server is exactly what was uploaded. The header's pause button
+  pauses it on that page.
 - **Copy accounts:** choose individual photos and videos, or copy everything matching a type and
   year range, from one connected Google account to another (only what the other doesn't have), in
   original quality with dates, favourites, archive and captions. Nothing is deleted in either
   account. Albums and people names don't come over: the connected login cannot list source albums.
+  Several items copy at once (Free storage › Options, Items at once); the page shows each one,
+  the average speed and the time left, and the header's pause button pauses copying there.
 - **Sources:** where every photo and video came from (camera, Snapchat, Instagram, TikTok,
   WhatsApp, Telegram, screenshot or "saved from an app"), with the evidence. Items saved from apps
   can go into an album per app, get a searchable caption, or be archived. Snapchat saves get an

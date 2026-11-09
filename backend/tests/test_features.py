@@ -626,3 +626,31 @@ def test_priority_change_reorders_a_running_round(media):
     seen += [sync.rel(item[0]) for item in queue]
     assert seen[1] == "Videos/c.mp4" and len(seen) == len(todo)
     sync.update_settings({"priority": []})
+
+
+def test_parallel_uploads(media):
+    """Several files go up at once; every one is recorded and counted, and an outage stops new ones."""
+    import threading
+
+    sync.update_settings({"upload_workers": 3})
+    at_once, peak, lock = [0], [0], threading.Lock()
+    gate = threading.Barrier(3, timeout=5)
+
+    class Slow(FakeClient):
+        def _upload_file(self, file_path, *a, **k):
+            with lock:
+                at_once[0] += 1
+                peak[0] = max(peak[0], at_once[0])
+            gate.wait()  # all three are uploading at the same moment
+            try:
+                return super()._upload_file(file_path, *a, **k)
+            finally:
+                with lock:
+                    at_once[0] -= 1
+
+    sync.upload_all(Slow({"a.jpg": "uploading", "b.HEIC": "uploading", "c.mp4": "skipped"}), sync.scan())
+    assert peak[0] == 3
+    statuses = dict(sync.q("SELECT path, status FROM files"))
+    assert sorted(statuses.values()) == ["exists", "uploaded", "uploaded"]
+    assert sync.state["done"] == 3 and sync.state["uploading"] == {} and sync.state["current"] is None
+    assert sync.update_settings({"upload_workers": 99})["upload_workers"] == sync.UPLOAD_MAX_WORKERS

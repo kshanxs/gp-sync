@@ -88,6 +88,9 @@ export interface Status {
   /** The user has seen the "album for files without a date" choice. */
   undated_asked?: boolean;
   current: Current | null;
+  /** Every file uploading right now (several at once: Settings › Sync, Files at once). */
+  uploading?: Current[];
+  upload_workers?: number;
   library: Library;
   folders: Record<string, Folder>;
   session: { started: number; uploaded_files: number; uploaded_bytes: number };
@@ -253,6 +256,8 @@ export interface Settings {
   schedule: { enabled: boolean; start: number; end: number };
   tz_offset_min: number;
   speed_limit_mbps: number;
+  /** Files uploaded at once per account. */
+  upload_workers?: number;
   albums: "off" | "top" | "parent";
   notify: Notify;
   hash_existing: boolean;
@@ -356,6 +361,8 @@ export interface DatesReport {
   accounts: string[];
   refreshed: number | null;
   refreshing: boolean;
+  /** Fix dates is paused for this account. */
+  paused?: boolean;
   items: DateItem[];
   undated: number;
   wrong: number;
@@ -559,8 +566,10 @@ export interface StorageReport {
   counted: number;
   counted_bytes: number;
   /** GP Sync's own uploads found in the library, and how many of them count (should be 0). */
-  ours: { seen: number; counted: number };
+  ours: { seen: number; counted: number; uploaded?: number };
   freed: { count: number; bytes: number };
+  /** Still to free in this account, and the speed of the last hour (storage freed per second). */
+  left?: { count: number; bytes: number; rate: number };
   /** What counts against storage, photos and videos apart. */
   kinds?: Record<"photo" | "video", { count: number; bytes: number }>;
   items: StorageItem[];
@@ -605,6 +614,8 @@ export interface CopyReport {
     done: number;
     total: number;
   } | null;
+  /** Every item being copied right now (several at once). */
+  working?: { key: string; name: string; step: "downloading" | "uploading"; done: number; total: number }[];
   src_total: number;
   in_dst: number;
   /** Never copied: already in the other account, or the same file twice. `error` says which. */
@@ -621,6 +632,10 @@ export interface CopyReport {
     exists: number;
     failed: number;
     counts: number;
+    /** Copies timed (from 1.5.4 on): how many, how long in all, and their bytes. */
+    timed?: number;
+    seconds?: number;
+    timed_bytes?: number;
   };
   recent: CopyItem[];
   failed: CopyItem[];

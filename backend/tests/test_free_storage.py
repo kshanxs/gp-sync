@@ -133,7 +133,7 @@ def test_report_lists_what_counts_biggest_first(library):
     r = sync.storage_report(ACC)
     assert [i["key"] for i in r["items"]] == ["BIG", "SMALL"]  # not free, partner or trashed ones
     assert r["counted"] == 2 and r["counted_bytes"] == len(DATA) + 5 and r["total"] == 3
-    assert r["ours"] == {"seen": 1, "counted": 0}  # GP Sync's own upload doesn't count
+    assert r["ours"] == {"seen": 1, "counted": 0, "uploaded": 1}  # GP Sync's own upload doesn't count
     assert r["items"][0]["taken"] == 1_700_000_000
 
 
@@ -547,3 +547,55 @@ def test_freed_report_counts_time_and_days(library):
     assert r["timed"] == 1 and r["seconds"] >= 0
     assert len(r["days"]) == 1 and r["days"][0]["bytes"] == len(DATA)
     assert r["items"][0]["key"] == "NEW" and r["items"][0]["old_key"] == "BIG"
+
+
+def test_pause_stops_a_download_in_progress(library, monkeypatch):
+    # Pausing doesn't wait for big downloads to finish: they stop, and the item stays queued.
+    clock = iter(range(0, 10**6, 2))
+    monkeypatch.setattr(sync.time, "monotonic", lambda: next(clock))
+
+    class Halfway(FakeResponse):
+        def iter_content(self, n):
+            yield DATA[:100]
+            sync.meta_set(f"reclaim_paused:{ACC}", "1")  # the user presses pause now
+            yield DATA[100:]
+
+    monkeypatch.setattr("requests.get", lambda url, **kw: Halfway(DATA))
+    client = FakeClient(library, {b64(DATA)})
+    sync.reclaim_queue(ACC, ["BIG"])
+    try:
+        assert not step(client)
+        assert sync.q("SELECT state, local FROM reclaim WHERE media_key='BIG'")[0] == ("queued", None)
+        assert not list((sync.RECLAIM_DIR / ACC / "BIG").glob("*"))  # no half-downloaded file left
+        assert client.api.calls == []  # nothing touched in Google
+        assert sync.reclaim_state[ACC]["jobs"] == {}
+    finally:
+        sync.meta_set(f"reclaim_paused:{ACC}", "0")
+
+
+def test_diagnostics_list_items_being_moved(library):
+    sync.reclaim_state[ACC]["jobs"]["K"] = {"current": {"key": "K", "step": "downloading", "done": 1, "total": 2},
+                                            "stop": lambda: False}  # fmt: skip
+    try:
+        d = sync.diagnostics(1)
+        json.dumps(d)  # nothing in it that can't be written out
+        assert d["workers"]["free_storage"][ACC]["working"][0]["key"] == "K"
+    finally:
+        sync.reclaim_state.clear()
+
+
+def test_report_says_how_many_gp_sync_uploads_went_to_the_account(library):
+    sync.q("DELETE FROM files")
+    assert sync.storage_report(ACC)["ours"]["uploaded"] == 0
+    sync.q("INSERT INTO files (path, status, account, sha1) VALUES ('x', 'uploaded', ?, 'ab')", (ACC,))
+    assert sync.storage_report(ACC)["ours"]["uploaded"] == 1
+
+
+def test_report_shows_what_is_left_and_the_speed(library):
+    sync.reclaim_queue(ACC, ["BIG", "SMALL"])
+    left = sync.storage_report(ACC)["left"]
+    assert left["count"] == 2 and left["bytes"] == len(DATA) + 5 and left["rate"] == 0
+    now = sync.time.time()
+    sync.q("UPDATE reclaim SET state='done', started=?, finished=? WHERE media_key='SMALL'", (now - 10, now))
+    left = sync.storage_report(ACC)["left"]
+    assert left["count"] == 1 and left["rate"] == pytest.approx(0.5)  # 5 bytes in 10 seconds

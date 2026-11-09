@@ -8,7 +8,7 @@ import {
   type StorageReport,
 } from "../lib/api";
 import { $, esc, html, toast } from "../lib/dom";
-import { ago, bytes, date, duration, num, pct } from "../lib/format";
+import { ago, bytes, date, duration, num, pct, speed } from "../lib/format";
 import { icon } from "../lib/icons";
 import { setPauseControl, status } from "../lib/store";
 import {
@@ -150,7 +150,7 @@ function gridTile(i: StorageItem, r: StorageReport, working: Map<string, Reclaim
       ${pickable ? `<input type="checkbox" class="peer sr-only" data-pick="${esc(i.key)}" ${chosen ? "checked" : ""} aria-label="Pick ${esc(i.name)}">` : ""}
       ${pickable ? `<span class="absolute inset-0 transition-colors peer-checked:bg-accent/25"></span><span class="absolute top-2 left-2 grid size-6 place-items-center rounded-full border border-white/70 bg-black/30 text-white opacity-0 transition-opacity group-hover:opacity-100 peer-checked:opacity-100 peer-checked:bg-accent peer-checked:border-accent">${icon("check", "size-3.5")}</span>` : ""}
       ${s.label ? `<span class="absolute top-2 right-2">${badge(s.label, s.tone, s.ic)}</span>` : ""}
-      ${cur ? `<span class="absolute inset-x-2 bottom-2"><span class="bar"><i style="width:${pct(cur.done, cur.total)}%"></i></span></span>` : ""}
+      ${cur ? `<span class="absolute inset-x-2 bottom-2">${progressBar(cur.done, cur.total, cur.step !== "deleting")}</span>` : ""}
     </label>
     <figcaption class="p-2.5">
       <div class="truncate text-xs font-medium" title="${esc(i.name)}">${esc(i.name)}</div>
@@ -189,20 +189,33 @@ function accountStrip(r: StorageReport): string {
     .join("")}</div>`;
 }
 
-/** Items being worked on right now, each with its step and progress. */
+/** A progress bar that moves: the share done with a shimmer, or a sliding bar for a step that has
+ * no byte count (replacing in Google, or the first moment of a download). */
+function progressBar(done: number, total: number, known = true): string {
+  return known && total > 0 && done > 0
+    ? `<span class="bar active mt-1.5 block" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.floor(pct(done, total))}"><i style="width:${pct(done, total)}%"></i></span>`
+    : `<span class="bar indeterminate mt-1.5 block" role="progressbar" aria-busy="true"><i></i></span>`;
+}
+
+/** Items being worked on right now, each with its step and a moving progress bar. */
 function workingCard(r: StorageReport): string {
   const w = r.working ?? [];
   if (!w.length) return "";
+  const pausing = r.paused;
   return `<section class="card mt-4 min-w-0 overflow-hidden">
-    ${cardHead("Working now", "loader", `${num(w.length)} at once`)}
+    ${cardHead(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", pausing ? `${num(w.length)} finishing their step` : `${num(w.length)} at once`)}
     <ul class="divide-y divide-line">${w
       .map((c) => {
         const step = STEP[c.step];
-        const whole = c.step === "deleting";
-        return `<li class="flex items-center gap-3 px-4 py-2.5">
-        <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-panel-2 text-accent">${icon(step.ic, `size-4 ${whole ? "spin" : ""}`)}</span>
-        <span class="min-w-0 flex-1"><span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium">${esc(c.name ?? c.key)}</span><span class="ml-auto shrink-0 text-xs text-ink-3">${step.label}${whole ? "" : ` · ${bytes(c.done)} of ${bytes(c.total)}`}</span></span>
-        <span class="bar mt-1.5"><i style="width:${whole ? 100 : pct(c.done, c.total)}%"></i></span></span>
+        const known = c.step !== "deleting";
+        const share = Math.floor(pct(c.done, c.total));
+        return `<li class="flex items-center gap-3 px-4 py-3">
+        <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2 text-accent">${icon(step.ic, `size-4 ${known ? "" : "spin"}`)}</span>
+        <span class="min-w-0 flex-1">
+          <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium" title="${esc(c.name ?? c.key)}">${esc(c.name ?? c.key)}</span><span class="ml-auto shrink-0 text-sm font-semibold tabular-nums">${known ? `${share}%` : ""}</span></span>
+          ${progressBar(c.done, c.total, known)}
+          <span class="mt-1 flex justify-between text-xs text-ink-3 tabular-nums"><span>${step.label}</span><span>${known ? `${bytes(c.done)} of ${bytes(c.total)}` : "Waiting for Google"}</span></span>
+        </span>
       </li>`;
       })
       .join("")}</ul>
@@ -225,7 +238,7 @@ function optionsCard(p: ReclaimPrefs): string {
         ${row("st-opt-keep", p.keep, "Keep the downloaded copies", "On: each copy stays on this server, under Downloads. Off: it is deleted once Google has the free upload.")}
       </div>
       <div class="divide-y divide-line">
-        <div class="flex items-start gap-3 px-4 py-3"><span class="min-w-0 flex-1"><span class="block text-sm font-medium">Items at once</span><span class="block text-xs text-ink-3">Per account. More is faster on a fast connection; each needs its size free here while it moves.</span></span>
+        <div class="flex items-start gap-3 px-4 py-3"><span class="min-w-0 flex-1"><span class="block text-sm font-medium">Items at once</span><span class="block text-xs text-ink-3">Per account, for Free storage and Copy accounts. More is faster on a fast connection; each needs its size free here while it moves.</span></span>
           <select id="st-opt-workers" class="input w-20 shrink-0" aria-label="Items at once">${WORKER_CHOICES.map((n) => `<option value="${n}" ${n === p.workers ? "selected" : ""}>${n}</option>`).join("")}</select></div>
         ${row("st-opt-album", p.album, "Add freed items to an album", `Album “${p.album_name}” in Google Photos: an easy place to check them. Captions are never changed.`)}
       </div>
@@ -251,14 +264,13 @@ function renderList(r: StorageReport): void {
       return `<button data-kind="${k}" aria-pressed="${k === kind}">${k === "all" ? "Both" : k === "photo" ? "Photos" : "Videos"} <span class="opacity-60">${num(n)}</span></button>`;
     })
     .join("");
-  const oursOk = r.ours.seen > 0 && r.ours.counted === 0;
   const workers = r.prefs?.workers ?? 4;
   html(
     $("#st-body"),
     `${accountStrip(r)}
     ${
       r.paused
-        ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Freeing storage is paused in this account</div><div class="mt-0.5 text-ink-3">${busy ? `${num(busy)} item${busy === 1 ? "" : "s"} wait. ` : ""}Nothing new starts; items under way finish their step. The pause button at the top resumes it too.</div></div><button class="btn sm primary" id="st-resume">${icon("play")}Resume</button></section>`
+        ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Freeing storage is paused in this account</div><div class="mt-0.5 text-ink-3">${busy ? `${num(busy)} item${busy === 1 ? "" : "s"} wait. ` : ""}Downloads stop at once and wait in the queue. An item already deleted in Google finishes its upload first, so nothing is lost. The pause button at the top resumes it too.</div></div><button class="btn sm primary" id="st-resume">${icon("play")}Resume</button></section>`
         : ""
     }
     ${
@@ -273,11 +285,16 @@ function renderList(r: StorageReport): void {
       ${tile({ label: "Freed by GP Sync", value: bytes(r.freed.bytes), ic: "sparkles", sub: r.freed.count ? `${num(r.freed.count)} item${r.freed.count === 1 ? "" : "s"} · see details` : "Nothing freed yet", tone: r.freed.count ? "good" : "", href: `#/storage/${encodeURIComponent(account)}/freed` })}
       ${tile({ label: "In progress", value: num(busy), ic: "hourglass", sub: r.paused && busy ? "Paused" : working.size ? `${num(working.size)} at once (up to ${workers})` : busy ? "Waiting for the next step" : "Nothing running" })}
       ${tile({
-        label: "GP Sync uploads",
-        value: r.ours.seen ? (oursOk ? "Free" : `${num(r.ours.counted)} count`) : "–",
-        ic: oursOk ? "verified" : "info",
-        sub: r.ours.seen ? `${num(r.ours.seen)} found in Google` : "None found in Google yet",
-        tone: r.ours.seen ? (oursOk ? "good" : "bad") : "",
+        label: "Left to free",
+        value: bytes(r.left?.bytes ?? 0),
+        ic: "timer",
+        sub: !r.left?.count
+          ? "Nothing queued"
+          : r.paused
+            ? `${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} · paused`
+            : r.left.rate
+              ? `${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} · about ${duration(r.left.bytes / r.left.rate)} at ${speed(r.left.rate)}`
+              : `${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} · timing the first ones`,
       })}
     </div>
     ${workingCard(r)}
@@ -429,7 +446,7 @@ function render(): void {
         void load();
         return paused
           ? "Freeing storage resumed"
-          : "Freeing storage paused: items under way finish their step";
+          : "Freeing storage paused: downloads stop now, uploads under way finish first";
       },
     });
   }

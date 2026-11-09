@@ -213,3 +213,16 @@ def test_copy_keeps_googles_date(libs):
     made, get = clients(libs)
     sync.copy_step(get)
     assert made[DST].uploads[0][3] == 1_700_000_000  # the date Google showed in the source account
+
+
+def test_several_items_are_copied_at_once_and_timed(libs, monkeypatch):
+    monkeypatch.setattr("requests.get", lambda url, **kw: FakeResponse({"CLIP": b"clip", "OLD": b"old photo"}.get(
+        url.rsplit("/", 1)[-1], DATA)))  # fmt: skip
+    sync.copy_start(SRC, DST, ["photo", "video"], None, None)
+    _made, get = clients(libs)
+    assert sync.copy_step(get)  # one step starts up to "Items at once" (4) copies together
+    states = dict(sync.q("SELECT media_key, state FROM copyjobs"))
+    assert list(states.values()).count("copied") == 3, states
+    jobs = sync.copy_report(SRC, DST)["jobs"]
+    assert jobs["timed"] == 3 and jobs["seconds"] >= 0 and jobs["timed_bytes"] > 0
+    assert sync.copy_state[(SRC, DST)]["jobs"] == {}  # nothing left marked as running

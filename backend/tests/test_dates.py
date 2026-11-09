@@ -294,6 +294,11 @@ def test_fix_round_trip(dates):
     waiting = next(i for i in sync.dates_report(ACC)["items"] if i["name"] == "Photos/b/late.jpg")
     assert waiting["previous_google"] == 1_700_000_000 + 3 * DAY
     assert waiting["previous_google_source"] == "google"
+    # Paused for the account: nothing is touched in Google.
+    sync.meta_set(f"dates_paused:{ACC}", "1")
+    assert not sync.datefix_step(lambda a: client) and client.api.calls == []
+    assert sync.dates_report(ACC)["paused"]
+    sync.meta_set(f"dates_paused:{ACC}", "0")
     # One step: Google's copy goes (Trash, then out of it) and the file is uploaded with the right date.
     assert sync.datefix_step(lambda a: client)
     dedup = sync._b64_hash(bytes.fromhex(sha1hex))

@@ -131,7 +131,7 @@ function actions(note: string, buttons: string): string {
 
 let cfg: Settings | null = null;
 let section = "sync";
-let draft = { start: 1, end: 7, enabled: false, speed: 0 };
+let draft = { start: 1, end: 7, enabled: false, speed: 0, workers: 3 };
 
 async function save(changes: Partial<Settings> | Record<string, unknown>, message = "Saved"): Promise<void> {
   try {
@@ -209,6 +209,7 @@ function sectionSync(s: Status | null): string {
         <div class="seg grid w-full grid-cols-3 sm:grid-cols-6" id="set-speed">${presets.map((p) => `<button data-mbps="${p}" aria-pressed="${p === draft.speed}">${p ? `${p} Mbps` : "No limit"}</button>`).join("")}</div>
         ${field("Custom (Mbps)", `<input class="input" id="set-mbps" type="number" min="0" step="0.5" value="${draft.speed || ""}" placeholder="No limit">`, "Leave room for video calls and streaming at home. Limits the upload to Google only.")}
         <div class="flex items-center gap-2 text-sm text-ink-2" id="set-speed-note"></div>
+        ${field("Files at once", `<select class="input" id="set-workers">${[1, 2, 3, 4, 6, 8].map((n) => `<option value="${n}" ${n === draft.workers ? "selected" : ""}>${n}</option>`).join("")}</select>`, "Per account. Several small photos go up much faster side by side; the speed limit is shared between them.")}
       </div></section>
     <section class="card xl:col-span-2">${cardHead("How syncing works", "info")}
       <div class="card-b grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
@@ -841,6 +842,7 @@ function wire(): void {
     save({
       schedule: { enabled: draft.enabled, start: draft.start, end: draft.end },
       speed_limit_mbps: draft.speed,
+      upload_workers: Number(val("set-workers")) || draft.workers,
       tz_offset_min: -new Date().getTimezoneOffset(),
     }),
   );
@@ -1015,6 +1017,7 @@ const settings: View = {
         end: c.schedule.end,
         enabled: c.schedule.enabled,
         speed: c.speed_limit_mbps,
+        workers: c.upload_workers ?? 3,
       };
       renderSection();
     });

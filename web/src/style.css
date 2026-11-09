@@ -413,11 +413,16 @@ body::before {
   }
 
   .bar {
-    @apply h-2 overflow-hidden rounded-full bg-panel-2;
+    @apply block h-2 overflow-hidden rounded-full bg-panel-2;
   }
   .bar > i {
     @apply relative block h-full overflow-hidden rounded-full transition-[width] duration-700 ease-out;
     background: linear-gradient(90deg, var(--accent-fill), var(--accent-fill-2));
+  }
+  /* No byte count yet: a short bar slides across. */
+  .bar.indeterminate > i {
+    width: 35%;
+    animation: bar-slide 1.3s ease-in-out infinite;
   }
   .bar.active > i::after {
     content: "";
@@ -873,8 +878,13 @@ body::before {
 
 @media (prefers-reduced-motion: reduce) {
   .spin,
-  .animate-pulse {
+  .animate-pulse,
+  .bar.indeterminate > i {
     animation: none;
+  }
+  .bar.indeterminate > i {
+    width: 100%;
+    opacity: 0.45;
   }
 }
 
@@ -883,6 +893,14 @@ body::before {
   100% {
     transform: scale(2.6);
     opacity: 0;
+  }
+}
+@keyframes bar-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(290%);
   }
 }
 @keyframes shimmer {

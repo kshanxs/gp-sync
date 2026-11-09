@@ -196,6 +196,10 @@ def db():
             PRIMARY KEY (src, dst, media_key))"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS copyjobs_state ON copyjobs(state, taken)")
+    have = {r[1] for r in conn.execute("PRAGMA table_info(copyjobs)")}
+    for col in ("started", "finished"):  # when each copy began and ended (copy speed on the page)
+        if col not in have:
+            conn.execute(f"ALTER TABLE copyjobs ADD COLUMN {col} REAL")
     have = {r[1] for r in conn.execute("PRAGMA table_info(reclaim)")}
     for col, decl in (
         ("keep", "INTEGER DEFAULT 0"),  # keep the downloaded copy
@@ -245,6 +249,7 @@ DEFAULT_SETTINGS = {
     "schedule": {"enabled": False, "start": 1, "end": 7},  # local hours; may wrap past midnight
     "tz_offset_min": 0,  # viewer's time zone, saved from the dashboard
     "speed_limit_mbps": 0,  # 0 = no limit
+    "upload_workers": 3,  # files uploaded at once per account
     "albums": "off",  # off | top (first subfolder) | parent (folder the file is in)
     "notify": {
         "ntfy_url": "",
@@ -280,6 +285,7 @@ DEFAULT_SETTINGS = {
     "reclaim": {"confirm": True, "keep": False, "workers": 4, "album": False, "album_name": "Freed by GP Sync"},
 }
 RECLAIM_MAX_WORKERS = 16
+UPLOAD_MAX_WORKERS = 8
 UNDATED_ALBUM = "Date unknown"
 SECRET_KEYS = ("ntfy_token", "telegram_token")
 
@@ -329,6 +335,7 @@ def update_settings(changes):
     s["enabled"] = bool(s["enabled"])
     new["tz_offset_min"] = max(-840, min(840, int(new["tz_offset_min"])))
     new["speed_limit_mbps"] = max(0.0, float(new["speed_limit_mbps"] or 0))
+    new["upload_workers"] = max(1, min(UPLOAD_MAX_WORKERS, int(new["upload_workers"] or 1)))
     if new["albums"] not in ("off", "top", "parent"):
         new["albums"] = "off"
     n["round_min"] = max(1, int(n["round_min"]))
@@ -1832,146 +1839,187 @@ def upload_all(client, todo, account="", st=None):
         account = todo[0][3]  # every item in one call belongs to the same account
     state.update(phase="uploading", done=0, total=len(todo))
     queued = collections.defaultdict(list)
-    round_files = round_bytes = 0
-    try:
-        for path, size, mtime, *rest in UploadQueue(todo):
-            copy = len(rest) > 1 and rest[1]  # another account's copy, not the folder's main backup
+    rnd = {"files": 0, "bytes": 0}
+    workers = max(1, min(UPLOAD_MAX_WORKERS, int(st.get("upload_workers") or 1)))
+    items = UploadQueue(todo)
+    lock = threading.RLock()  # counters, the queue and album batches are shared by the workers
+    stop = threading.Event()  # pause, upload window or an outage: no new file starts
+    state["uploading"] = {}
+
+    def next_item():
+        with lock:
+            if stop.is_set():
+                return None
             if PAUSE_FILE.exists():
                 log("Paused", "pause")
-                return
+                stop.set()
+                return None
             if not upload_allowed(st):
                 log("Upload window closed; continuing when it opens", "pause")
-                return
-            name = rel(path)
-            cur = {
-                "name": name,
-                "bytes_done": 0,
-                "bytes_total": size,
-                "step": "hashing",
-                "kind": "video" if ext(name) in VIDEO_EXTS else "photo",
-                "account": account,
-            }
+                stop.set()
+                return None
+            return next(items, None)
+
+    def run():
+        while (item := next_item()) is not None:
+            one(*item)
+
+    def one(path, size, mtime, *rest):
+        """Upload one file (on a worker thread when several run at once)."""
+        copy = len(rest) > 1 and rest[1]  # another account's copy, not the folder's main backup
+        name = rel(path)
+        cur = {
+            "name": name,
+            "bytes_done": 0,
+            "bytes_total": size,
+            "step": "hashing",
+            "kind": "video" if ext(name) in VIDEO_EXTS else "photo",
+            "account": account,
+        }
+        with lock:
             state["current"] = cur
-            phases = []
-            throttle = Throttle(st["speed_limit_mbps"])
-            started = time.monotonic()
+            state["uploading"][name] = cur
+        phases = []
+        throttle = Throttle(st["speed_limit_mbps"] / workers)  # the limit is shared by the workers
+        started = time.monotonic()
 
-            def progress(ev, cur=cur, phases=phases, throttle=throttle):
-                phase = ev.get("phase")
-                phases.append(phase)
-                cur["step"] = phase
-                if phase == "uploading":
-                    cur["bytes_done"] = ev.get("bytes_completed") or 0
-                    throttle(cur["bytes_done"])
+        def progress(ev, cur=cur, phases=phases, throttle=throttle):
+            phase = ev.get("phase")
+            phases.append(phase)
+            cur["step"] = phase
+            if phase == "uploading":
+                cur["bytes_done"] = ev.get("bytes_completed") or 0
+                throttle(cur["bytes_done"])
 
-            try:
-                digest = media.sha1_file(path, on_progress=lambda n, cur=cur: cur.update(bytes_done=n))
-                cur.update(step="checking", bytes_done=0)
-                # No date inside the file: Google uses the one sent with the upload, so send the
-                # best one known (a date the user picked, or the earliest identical copy here).
-                when = None
-                if date_facts(path, size, mtime) == 0:
-                    remember_sha1(path, digest.hex())
-                    # Labelled before upload, so a new Snapchat save gets its estimated date.
-                    if source_facts(path, size, mtime) and estimated_date(path) is None and _is_snap(path):
-                        refresh_estimates()
-                    when = best_date(path, size, mtime, digest.hex())[0]
-                # Single-file upload raises on failure; the batch upload() only logs errors.
-                # gpmc is pinned in pyproject.toml, so this internal method stays stable.
-                with Progress(disable=True) as bar, upload_date(client, when, mtime):
-                    result = client._upload_file(
-                        Path(path), digest, bar, force_upload=False, use_quota=False, saver=False,
-                        progress_callback=progress,
-                    )  # fmt: skip
-                key = next(iter(result.values()), "")
-                if not key:
-                    raise RuntimeError("Google returned no media key")
-                status = "exists" if "skipped" in phases else "uploaded"
-                if copy:
-                    q(
-                        """INSERT OR REPLACE INTO copies
-                           (path, account, size, mtime, status, media_key, error, attempts, updated)
-                           VALUES (?,?,?,?,?,?,'',0,?)""",
-                        (path, account, size, mtime, status, key, time.time()),
-                    )
-                else:
-                    q(
-                        """INSERT OR REPLACE INTO files
-                           (path, size, mtime, status, media_key, error, attempts, updated, account, sha1)
-                           VALUES (?,?,?,?,?,'',0,?,?,?)""",
-                        (path, size, mtime, status, key, time.time(), account, digest.hex()),
-                    )
+        try:
+            digest = media.sha1_file(path, on_progress=lambda n, cur=cur: cur.update(bytes_done=n))
+            cur.update(step="checking", bytes_done=0)
+            # No date inside the file: Google uses the one sent with the upload, so send the
+            # best one known (a date the user picked, or the earliest identical copy here).
+            when = None
+            if date_facts(path, size, mtime) == 0:
+                remember_sha1(path, digest.hex())
+                # Labelled before upload, so a new Snapchat save gets its estimated date.
+                if source_facts(path, size, mtime) and estimated_date(path) is None and _is_snap(path):
+                    refresh_estimates()
+                when = best_date(path, size, mtime, digest.hex())[0]
+            # Single-file upload raises on failure; the batch upload() only logs errors.
+            # gpmc is pinned in pyproject.toml, so this internal method stays stable.
+            with Progress(disable=True) as bar, upload_date(client, when, mtime):
+                result = client._upload_file(
+                    Path(path), digest, bar, force_upload=False, use_quota=False, saver=False,
+                    progress_callback=progress,
+                )  # fmt: skip
+            key = next(iter(result.values()), "")
+            if not key:
+                raise RuntimeError("Google returned no media key")
+            status = "exists" if "skipped" in phases else "uploaded"
+            if copy:
+                q(
+                    """INSERT OR REPLACE INTO copies
+                       (path, account, size, mtime, status, media_key, error, attempts, updated)
+                       VALUES (?,?,?,?,?,?,'',0,?)""",
+                    (path, account, size, mtime, status, key, time.time()),
+                )
+            else:
+                q(
+                    """INSERT OR REPLACE INTO files
+                       (path, size, mtime, status, media_key, error, attempts, updated, account, sha1)
+                       VALUES (?,?,?,?,?,'',0,?,?,?)""",
+                    (path, size, mtime, status, key, time.time(), account, digest.hex()),
+                )
+                with lock:
                     state["library"]["synced_files"] += 1
                     state["library"]["synced_bytes"] += size
-                    if when is not None and status == "uploaded":
-                        sq("UPDATE media_dates SET sent=? WHERE path=?", (int(when), path))
-                state["login_failed"].discard(account)
-                if (album := album_name(path, st["albums"])) is not None:
+                if when is not None and status == "uploaded":
+                    sq("UPDATE media_dates SET sent=? WHERE path=?", (int(when), path))
+            state["login_failed"].discard(account)
+            if (album := album_name(path, st["albums"])) is not None:
+                with lock:
                     queued[album].append(key)
                     if len(queued[album]) >= 100:
                         flush_albums(client, account, queued)
-                ms = int((time.monotonic() - started) * 1000)
-                save_upload(name, cur["kind"], size, ms, status, account)
-                if status == "uploaded":
+            ms = int((time.monotonic() - started) * 1000)
+            save_upload(name, cur["kind"], size, ms, status, account)
+            if status == "uploaded":
+                with lock:
                     state["session"]["uploaded_files"] += 1
                     state["session"]["uploaded_bytes"] += size
-                    round_files += 1
-                    round_bytes += size
-                    if cur["kind"] == "video":
-                        add_stats(videos=1, video_bytes=size, video_ms=ms)
-                    else:
-                        add_stats(photos=1, photo_bytes=size, photo_ms=ms)
-                    to = f" to {account}" if copy else ""
-                    log(f"Uploaded {name}{to} ({fmt_bytes(size)} in {fmt_secs(ms / 1000)})", "uploaded", name)
+                    rnd["files"] += 1
+                    rnd["bytes"] += size
+                if cur["kind"] == "video":
+                    add_stats(videos=1, video_bytes=size, video_ms=ms)
                 else:
-                    add_stats(existing=1)
-                    log(f"Already in Google Photos{f' ({account})' if copy else ''}: {name}", "exists", name)
-            except Exception as e:
-                err = f"{type(e).__name__}: {e}"[:500]
-                problem = outage_kind(e)
-                if problem:
-                    # Not this file's fault: stop the round and try again later without
-                    # using up the file's retries.
+                    add_stats(photos=1, photo_bytes=size, photo_ms=ms)
+                to = f" to {account}" if copy else ""
+                log(f"Uploaded {name}{to} ({fmt_bytes(size)} in {fmt_secs(ms / 1000)})", "uploaded", name)
+            else:
+                add_stats(existing=1)
+                log(f"Already in Google Photos{f' ({account})' if copy else ''}: {name}", "exists", name)
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"[:500]
+            problem = outage_kind(e)
+            if problem:
+                # Not this file's fault: stop the round and try again later without
+                # using up the file's retries.
+                with lock:
+                    first = not stop.is_set()
+                    stop.set()
+                if first:
                     state["error"] = problem if not account else f"{account}: {problem}"
                     log(f"Stopped this round: {state['error']}", "error")
-                    if "login" in problem and account not in state["login_failed"]:
-                        state["login_failed"].add(account)
-                        alert("GP Sync: login rejected", f"{account}: {problem}", "warning", "on_login")
-                    return
-                attempts = (
-                    q(
-                        """INSERT INTO copies (path,account,size,mtime,status,error,attempts,updated)
-                       VALUES (?,?,?,?,'failed',?,1,?)
-                       ON CONFLICT(path, account) DO UPDATE SET size=excluded.size, mtime=excluded.mtime,
-                       status='failed', error=excluded.error, attempts=copies.attempts+1, updated=excluded.updated
-                       RETURNING attempts""",
-                        (path, account, size, mtime, err, time.time()),
-                    )[0][0]
-                    if copy
-                    else q(
-                        """INSERT INTO files (path,size,mtime,status,error,attempts,updated,account)
-                       VALUES (?,?,?,'failed',?,1,?,?)
-                       ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, status='failed',
-                       error=excluded.error, attempts=files.attempts+1, updated=excluded.updated,
-                       account=excluded.account
-                       RETURNING attempts""",
-                        (path, size, mtime, err, time.time(), account),
-                    )[0][0]
-                )
-                add_stats(failed=1)
-                save_upload(name, cur["kind"], size, int((time.monotonic() - started) * 1000), "failed", account)
-                log(f"Failed {name}{f' ({account})' if copy else ''}: {err}", "failed", name)
-                if attempts >= MAX_ATTEMPTS:
-                    alert("GP Sync: gave up on a file", f"{name}\n{err}", "x", "on_gave_up")
-            finally:
-                state["current"] = None
+                if first and "login" in problem and account not in state["login_failed"]:
+                    state["login_failed"].add(account)
+                    alert("GP Sync: login rejected", f"{account}: {problem}", "warning", "on_login")
+                return
+            attempts = (
+                q(
+                    """INSERT INTO copies (path,account,size,mtime,status,error,attempts,updated)
+                   VALUES (?,?,?,?,'failed',?,1,?)
+                   ON CONFLICT(path, account) DO UPDATE SET size=excluded.size, mtime=excluded.mtime,
+                   status='failed', error=excluded.error, attempts=copies.attempts+1, updated=excluded.updated
+                   RETURNING attempts""",
+                    (path, account, size, mtime, err, time.time()),
+                )[0][0]
+                if copy
+                else q(
+                    """INSERT INTO files (path,size,mtime,status,error,attempts,updated,account)
+                   VALUES (?,?,?,'failed',?,1,?,?)
+                   ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, status='failed',
+                   error=excluded.error, attempts=files.attempts+1, updated=excluded.updated,
+                   account=excluded.account
+                   RETURNING attempts""",
+                    (path, size, mtime, err, time.time(), account),
+                )[0][0]
+            )
+            add_stats(failed=1)
+            save_upload(name, cur["kind"], size, int((time.monotonic() - started) * 1000), "failed", account)
+            log(f"Failed {name}{f' ({account})' if copy else ''}: {err}", "failed", name)
+            if attempts >= MAX_ATTEMPTS:
+                alert("GP Sync: gave up on a file", f"{name}\n{err}", "x", "on_gave_up")
+        finally:
+            with lock:
+                state["uploading"].pop(name, None)
+                state["current"] = next(iter(state["uploading"].values()), None)
+        with lock:
             state["done"] += 1
+
+    try:
+        if workers == 1:
+            run()
+        else:  # several files at once, each on its own thread, sharing the account's login
+            threads = [threading.Thread(target=run, daemon=True, name=f"upload {n}") for n in range(workers)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
     finally:
+        state["uploading"] = {}
         flush_albums(client, account, queued)
-        if round_files and round_files >= st["notify"]["round_min"]:
+        if rnd["files"] and rnd["files"] >= st["notify"]["round_min"]:
             alert(
                 "GP Sync: backup done",
-                f"Uploaded {round_files} file(s), {fmt_bytes(round_bytes)}" + (f" to {account}" if account else ""),
+                f"Uploaded {rnd['files']} file(s), {fmt_bytes(rnd['bytes'])}" + (f" to {account}" if account else ""),
                 "white_check_mark",
                 "on_round",
             )
@@ -2418,9 +2466,15 @@ def diagnostics(hours=24, limit=3000):
         "settings": public_settings(),
         "library": library,
         "workers": {
-            "free_storage": {a: dict(t) for a, t in reclaim_state.items()},
+            "free_storage": {
+                a: {"error": t.get("error", ""), "working": _reclaim_working(a), "paused": reclaim_paused(a)}
+                for a, t in list(reclaim_state.items())
+            },
             "dates": {a: dict(t) for a, t in dates_state.items()},
-            "copies": {f"{s_} -> {d}": dict(t) for (s_, d), t in copy_state.items()},
+            "copies": {
+                f"{s_} -> {d}": {"error": t.get("error", ""), "working": _copy_working(s_, d)}
+                for (s_, d), t in list(copy_state.items())
+            },
             "sources": dict(sources_state),
             "jobs": background_jobs(),
         },
@@ -2483,6 +2537,8 @@ def status_json():
         "schedule": {**st["schedule"], "allowed": upload_allowed(st), "next_window": next_window(st)},
         "speed_limit_mbps": st["speed_limit_mbps"],
         "current": state["current"],
+        "uploading": list(state.get("uploading", {}).values()),
+        "upload_workers": st["upload_workers"],
         "library": state["library"],
         "folders": state["folders"],
         "session": state["session"],
@@ -2550,8 +2606,9 @@ def background_jobs():
             add("storage", cur, account=account)
     for account, t in list(dates_state.items()):
         add("dates", t.get("current"), account=account)
-    for (src, dst), t in list(copy_state.items()):
-        add("copy", t.get("current"), account=src, to=dst)
+    for src, dst in list(copy_state):
+        for cur in _copy_working(src, dst):
+            add("copy", cur, account=src, to=dst)
     return jobs
 
 
@@ -2687,6 +2744,21 @@ def storage_report(account, limit=500, kind="all"):
         return {"state": j[7], "error": j[8] or "", "new_key": j[9] or "", "updated": j[10]} if j else {"state": ""}
 
     done = q("SELECT COUNT(*), SUM(quota) FROM reclaim WHERE account=? AND state='done'", (account,))[0]
+    sql = "SELECT COUNT(*) FROM files WHERE account=? AND status IN ('uploaded','exists')"
+    backed_up = q(sql, (account,))[0][0]
+    left = q(
+        """SELECT COUNT(*), SUM(quota) FROM reclaim WHERE account=?
+           AND state IN ('queued', 'downloaded', 'in_google', 'checking')""",
+        (account,),
+    )[0]
+    # Speed over the last hour: storage freed between the first start and the last finish.
+    recent = q(
+        """SELECT SUM(quota), MIN(started), MAX(finished) FROM reclaim WHERE account=? AND state='done'
+           AND started IS NOT NULL AND finished > ?""",
+        (account, time.time() - 3600),
+    )[0]
+    span = (recent[2] - recent[1]) if recent[1] and recent[2] else 0
+    rate = (recent[0] or 0) / span if span > 0 else 0
     # Only the chosen kind's items are listed, so "Videos" still fills the list even when the biggest
     # items overall are photos. The totals above stay for all kinds.
     shown_items = [i for i in items if only in ("all", i[3])][:limit]
@@ -2697,8 +2769,15 @@ def storage_report(account, limit=500, kind="all"):
         "counted": counted,
         "counted_bytes": counted_bytes,
         "kinds": kinds,
-        "ours": {"seen": ours_seen, "counted": ours_counted},
+        "ours": {
+            "seen": ours_seen,
+            "counted": ours_counted,
+            # Files GP Sync backed up to this account (0: its folders go to other accounts).
+            "uploaded": backed_up,
+        },
         "freed": {"count": done[0], "bytes": done[1] or 0},
+        # Still to free, and how fast it went in the last hour (bytes of storage freed per second).
+        "left": {"count": left[0], "bytes": left[1] or 0, "rate": rate},
         "items": [
             {
                 "key": key,
@@ -2888,6 +2967,23 @@ def _item_hashes(response, dedup):
     return found
 
 
+class Paused(Exception):
+    """The user paused this work: a download in progress stops, and the item stays queued."""
+
+
+def _stop_check(paused):
+    """`paused()` asked at most once a second: called for every downloaded block."""
+    last = [0.0, False]
+
+    def check():
+        now = time.monotonic()
+        if now - last[0] >= 1:
+            last[:] = [now, paused()]
+        return last[1]
+
+    return check
+
+
 def _fetch(client, account, key, dedup, name, size, taken, folder, track):
     import requests
 
@@ -2907,7 +3003,10 @@ def _fetch(client, account, key, dedup, name, size, taken, folder, track):
         try:
             with requests.get(url, headers=headers, stream=True, timeout=60) as r, open(tmp, "wb") as f:
                 r.raise_for_status()
+                stop = track.get("stop")
                 for block in r.iter_content(1024 * 1024):
+                    if stop and stop():
+                        raise Paused
                     f.write(block)
                     digest.update(block)
                     done += len(block)
@@ -2961,7 +3060,7 @@ def _reclaim_item(account, row, make_client):
     """Move one item a step on, on a worker thread: download it, or replace it in Google.
     Returns True if it did something."""
     key, dedup, name, size, taken, st_, local, fav, arch, cap, local_hash = row
-    track = {"current": None}
+    track = {"current": None, "stop": _stop_check(lambda: reclaim_paused(account))}
     with _reclaim_jobs_lock:
         reclaim_state[account]["jobs"][key] = track
     try:
@@ -3000,6 +3099,9 @@ def _reclaim_item(account, row, make_client):
         _restore_details(client, have, fav, arch, cap)
         _set_reclaim(account, key, "checking", new_key=result, checks=0)
         return True
+    except Paused:  # stopped mid-download: nothing changed in Google, it waits in the queue
+        log(f"Paused: stopped downloading {name}; it stays queued", "pause")
+        return False
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"[:300]
         print(f"Free storage: {name}: {msg}", file=sys.stderr, flush=True)
@@ -3841,6 +3943,7 @@ def dates_report(account):
         "accounts": [a for a, _ in accounts()],
         "refreshed": refreshed or None,
         "refreshing": account in _refreshing,
+        "paused": dates_paused(account),
         "items": items,
         "undated": len(items),
         "wrong": sum(i["wrong"] for i in items),
@@ -3948,6 +4051,11 @@ def _set_fix(path, fix, error=""):
     notify_change()
 
 
+def dates_paused(account):
+    """The user paused Fix dates for this account: nothing more is deleted and uploaded again."""
+    return meta_get(f"dates_paused:{account}") == "1"
+
+
 def datefix_step(make_client=None, only=None):
     """Replace queued files in Google Photos with the right date: Google's copy is deleted (once the
     file here is checked to be the same) and the file uploaded again. A file Google still has is
@@ -3961,6 +4069,8 @@ def datefix_step(make_client=None, only=None):
         account = _main_account(found[0][2]) if found else ""
         if only is not None and account != only:
             continue  # another account's worker does it
+        if dates_paused(account):
+            continue
         with _dates_checked_lock:
             if now - _dates_checked.get(path, 0) < 100:
                 continue
@@ -4347,7 +4457,7 @@ def sources_accept_dates(names):
 COPY_DIR = DATA / "copy"
 COPY_CHECK_EVERY = 25  # after this many copies, check with Google that they don't count
 # Progress and the last error per (source, destination): each pair copies on its own worker.
-copy_state = collections.defaultdict(lambda: {"current": None, "error": ""})
+copy_state = collections.defaultdict(lambda: {"current": None, "error": "", "jobs": {}})
 copy_wake = threading.Event()
 _OWNED = "origin = 'self' AND COALESCE(trash_timestamp, 0) = 0 AND COALESCE(is_locked, 0) = 0 AND is_canonical"
 
@@ -4397,6 +4507,12 @@ def copy_report(src, dst):
         "SELECT COUNT(*), SUM(size) FROM copyjobs WHERE src=? AND dst=? AND state IN ('copied', 'done')", (src, dst)
     )[0]
     queued = q("SELECT COUNT(*), SUM(size) FROM copyjobs WHERE src=? AND dst=? AND state='queued'", (src, dst))[0]
+    # Copies timed from 1.5.4 on: how long they took, for the speed shown on the page.
+    timed = q(
+        """SELECT COUNT(*), SUM(finished - started), SUM(size) FROM copyjobs WHERE src=? AND dst=?
+           AND state IN ('copied', 'done') AND started IS NOT NULL AND finished >= started""",
+        (src, dst),
+    )[0]
     recent = q(
         """SELECT media_key, name, kind, size, taken, state, error, updated FROM copyjobs
            WHERE src=? AND dst=? AND state != 'queued' ORDER BY updated DESC LIMIT 40""",
@@ -4426,7 +4542,8 @@ def copy_report(src, dst):
         "refreshing": bool(_refreshing & {src, dst}) or any(a in (src, dst) for a in _refresh_requests),
         "error": copy_state[(src, dst)]["error"] or reclaim_state[src]["error"] or reclaim_state[dst]["error"],
         "paused": meta_get("copy_paused") == "1",
-        "current": copy_state[(src, dst)]["current"],
+        "current": next(iter(_copy_working(src, dst)), None),
+        "working": _copy_working(src, dst),
         "src_total": len(src_rows or []),
         "in_dst": in_dst,
         "duplicates": {
@@ -4457,6 +4574,9 @@ def copy_report(src, dst):
             "exists": jobs.get("exists", 0),
             "failed": jobs.get("failed", 0),
             "counts": jobs.get("counts", 0),
+            "timed": timed[0] or 0,
+            "seconds": timed[1] or 0,
+            "timed_bytes": timed[2] or 0,
         },
         "recent": [item(r) for r in recent],
         "failed": [item(r) for r in failed],
@@ -4594,32 +4714,59 @@ def _verify_copies(dst_client, src, dst, force=False):
 
 
 def copy_step(make_client=None, pair=None):
-    """Copy the next item (of one (source, destination) pair, or any). Returns True if there was
+    """Copy the next items (of one (source, destination) pair, or any): up to Settings'
+    reclaim.workers at once, the same "Items at once" as Free storage. Returns True if there was
     something to do."""
     make_client = make_client or _reclaim_client
     if meta_get("copy_paused") == "1":
         return False
     src_, dst_ = pair or (None, None)
-    row = q(
+    rows = q(
         """SELECT src, dst, media_key, dedup_key, name, size, taken, favorite, archived, caption FROM copyjobs
-           WHERE state='queued' AND (? IS NULL OR (src=? AND dst=?)) ORDER BY taken DESC LIMIT 1""",
-        (src_, src_, dst_),
+           WHERE state='queued' AND (? IS NULL OR (src=? AND dst=?)) ORDER BY taken DESC LIMIT ?""",
+        (src_, src_, dst_, get_settings()["reclaim"]["workers"]),
     )
-    if not row:  # the list is done: check the last copies (once a minute until Google lists them)
+    if not rows:  # the list is done: check the last copies (once a minute until Google lists them)
         for s_, d in q(
             "SELECT DISTINCT src, dst FROM copyjobs WHERE state='copied' AND (? IS NULL OR (src=? AND dst=?))",
             (src_, src_, dst_),
         ):
             _verify_copies(make_client(d), s_, d, force=True)
         return False
-    src, dst, key, dedup, name, size, taken, fav, arch, cap = row[0]
-    track = copy_state[(src, dst)]
     connected = dict(accounts())
-    if src not in connected or dst not in connected:  # an account was removed: wait, don't fail it all
-        track["error"] = f"{src if src not in connected else dst} is no longer connected. Copying is paused."
-        meta_set("copy_paused", "1")
-        return False
+    for src, dst, *_ in rows:
+        if src not in connected or dst not in connected:  # an account was removed: wait, don't fail it all
+            copy_state[(src, dst)]["error"] = (
+                f"{src if src not in connected else dst} is no longer connected. Copying is paused."
+            )
+            meta_set("copy_paused", "1")
+            return False
+    if len(rows) == 1:
+        results = [_copy_one(rows[0], make_client)]
+    else:  # several at once, each on its own thread
+        with concurrent.futures.ThreadPoolExecutor(len(rows), thread_name_prefix="account copy") as pool:
+            results = list(pool.map(lambda r: _copy_one(r, make_client), rows))
+    for s_, d in dict.fromkeys((r[0], r[1]) for r in rows):
+        try:  # the copies are made: a failed check is tried again later, it doesn't fail them
+            _verify_copies(make_client(d), s_, d)
+        except Exception as e:
+            print(f"Account copy: check failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    return any(results)
+
+
+def _copy_working(src, dst):
+    """Progress of every item being copied between two accounts."""
+    return [dict(t["current"]) for t in list(copy_state[(src, dst)]["jobs"].values()) if t.get("current")]
+
+
+def _copy_one(row, make_client):
+    """Copy one item: download it from the source, check it, upload it to the destination.
+    Returns False when Google or the internet is down (it stays queued)."""
+    src, dst, key, dedup, name, size, taken, fav, arch, cap = row
+    state_ = copy_state[(src, dst)]
+    track = state_["jobs"][key] = {"current": None, "stop": _stop_check(lambda: meta_get("copy_paused") == "1")}
     folder = COPY_DIR / f"{dst}-{key}"  # the same item can be copied to two accounts at once
+    started = time.time()
     try:
         source, target = make_client(src), make_client(dst)
         track["current"] = {"key": key, "step": "downloading", "done": 0, "total": size, "name": name}
@@ -4630,24 +4777,24 @@ def copy_step(make_client=None, pair=None):
             log(f"Already in {dst}: {name}", "exists")
         else:
             _restore_details(target, have, fav, arch, cap)
-            _set_copy(src, dst, key, "copied", new_key=new_key)
+            _set_copy(src, dst, key, "copied", new_key=new_key, started=started, finished=time.time())
             log(f"Copied {name} from {src} to {dst} ({fmt_bytes(size)})", "copied")
-            try:  # the copy is made: a failed check is tried again later, it doesn't fail the copy
-                _verify_copies(target, src, dst)
-            except Exception as e:
-                print(f"Account copy: check failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-        track["error"] = ""
+        state_["error"] = ""
+        return True
+    except Paused:  # stopped mid-download: it stays queued
+        return False
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"[:300]
         print(f"Account copy: {name}: {msg}", file=sys.stderr, flush=True)
         if outage := outage_kind(e):  # Google or the internet is down: keep it queued, try again later
-            track["error"] = outage
+            state_["error"] = outage
             return False
         _set_copy(src, dst, key, "failed", msg)
+        return True
     finally:
         track["current"] = None
+        state_["jobs"].pop(key, None)
         shutil.rmtree(folder, ignore_errors=True)
-    return True
 
 
 copy_lanes = Lanes("Account copy", lambda pair: copy_step(pair=pair))
@@ -5532,6 +5679,14 @@ class Handler(BaseHTTPRequestHandler):
                     self.json(dates_recheck(account, None if req.get("all") is True else names))
                 elif path == "/api/dates/set":
                     self.json(dates_set(str(req.get("path", "")), req.get("when")))
+                elif path == "/api/dates/pause":
+                    account = str(req.get("account", "")) or _main_account("")
+                    if account not in dict(accounts()):
+                        raise ValueError("unknown account")
+                    meta_set(f"dates_paused:{account}", "1" if req.get("paused") else "0")
+                    reclaim_wake.set()
+                    notify_change()
+                    self.json({"ok": True, "paused": dates_paused(account)})
                 elif path == "/api/dates/refresh":
                     account = str(req.get("account", "")) or _main_account("")
                     if account not in dict(accounts()):

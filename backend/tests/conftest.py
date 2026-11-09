@@ -27,6 +27,8 @@ import sync  # noqa: E402
 def media():
     sync.q("DELETE FROM files")
     sync.q("DELETE FROM meta WHERE k='settings'")
+    # One upload at a time, so tests can rely on the order (test_parallel_uploads covers several).
+    sync.update_settings({"upload_workers": 1})
     sync.PAUSE_FILE.unlink(missing_ok=True)
     for f in sync.ACCOUNTS_DIR.glob("*.auth"):
         f.unlink()
