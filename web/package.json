@@ -1,6 +1,6 @@
 {
   "name": "gphotos-sync-web",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "private": true,
   "description": "Dashboard for GP Sync, built with Vite+, TypeScript, Tailwind CSS and Lucide.",
   "type": "module",

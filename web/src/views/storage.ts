@@ -273,7 +273,7 @@ function renderList(r: StorageReport): void {
     `${accountStrip(r)}
     ${
       r.paused
-        ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Freeing storage is paused in this account</div><div class="mt-0.5 text-ink-3">${busy ? `${num(busy)} item${busy === 1 ? "" : "s"} wait. ` : ""}Downloads stop at once and wait in the queue. An item already deleted in Google finishes its upload first, so nothing is lost.</div></div><span class="flex shrink-0 items-center gap-1.5 text-xs text-ink-3">${icon("play", "size-3.5")}Resume with the play button at the top</span></section>`
+        ? `<section class="card mb-4 flex gap-3 border-warn/40 p-4">${icon("pause", "mt-0.5 size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1"><span class="font-medium">Freeing storage is paused in this account</span><span class="text-xs text-ink-3">${icon("play", "mr-1 inline size-3 align-[-1px]")}Resume with the play button at the top</span></div><p class="mt-1.5 text-ink-3">${r.left?.count ? `${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} wait. ` : ""}Downloads stop at once and wait in the queue. An item already deleted in Google finishes its upload first, so nothing is lost.</p></div></section>`
         : ""
     }
     ${

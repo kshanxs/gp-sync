@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.6
+
+- Free storage: the "paused" banner fits phones. The text runs the full width under its title,
+  and its count is the real number of items waiting, not the 500 the list shows at most.
+
 ## 1.5.5
 
 - Free storage, Time taken: the card shows the time Free storage actually ran (items moving at
