@@ -133,6 +133,7 @@ const about: View = {
         $("#ab-badges"),
         [
           badge(`Version ${a.version}`, "info", "package"),
+          badge(`Backend ${a.backend_version ?? a.version}`, "", "server"),
           badge(`Dashboard ${__WEB_VERSION__}`, "", "code"),
           a.commit ? badge(a.commit.slice(0, 7), "", "branch", "Build commit") : "",
           badge(a.stats_engine.split(" (")[0] ?? "", "good", "database"),
@@ -140,7 +141,8 @@ const about: View = {
         ].join(""),
       );
       const rows: [string, string][] = [
-        ["App", a.version],
+        ["Release", a.version],
+        ["Backend", a.backend_version ?? a.version],
         ["Dashboard", __WEB_VERSION__],
         ["Build", a.commit ? a.commit.slice(0, 12) : "local"],
         ["Built", a.built ? date(Date.parse(a.built) / 1000, true) : "–"],

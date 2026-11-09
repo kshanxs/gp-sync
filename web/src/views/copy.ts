@@ -7,12 +7,12 @@ import {
   type CopyReport,
 } from "../lib/api";
 import { $, esc, html, toast } from "../lib/dom";
-import { ago, bytes, date, duration, num, pct, speed } from "../lib/format";
+import { ago, bytes, date, duration, num, pct, speed, until } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
-import { setPauseControl, status } from "../lib/store";
+import { setPauseControl, setRefreshControl, status } from "../lib/store";
 import { accountMenu, wireAccountMenu } from "../lib/account-menu";
 import { confirmDialog } from "../lib/dialog";
-import { badge, cardHead, tile, type Tone } from "../lib/ui";
+import { badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // Copy one Google account to another: what the second one lacks, original files, nothing deleted.
@@ -109,7 +109,7 @@ const thumbOf = (i: CopyItem) =>
 
 function itemRow(i: CopyItem): string {
   const [label, tone, ic] = STATES[i.state] ?? [i.state, "", "info"];
-  return `<div class="row px-4">${thumbOf(i)}
+  return `<div data-key="${esc(i.key)}" class="row px-4">${thumbOf(i)}
     <div class="min-w-0 flex-1"><div class="truncate text-sm">${esc(i.name)}</div>
       <div class="truncate text-xs ${i.error && !["done", "exists"].includes(i.state) ? "text-bad" : "text-ink-3"}">${i.error && i.state !== "done" ? esc(i.error) : `${i.kind === "video" ? "Video" : "Photo"} · ${i.taken ? date(i.taken, true) : "no date"} · ${bytes(i.size)}`}</div></div>
     ${badge(label, tone, ic)}</div>`;
@@ -168,6 +168,28 @@ function dupCard(r: CopyReport): string {
     <div class="divide-y divide-line">${list.map(itemRow).join("")}</div>
     ${d.items.length > 5 ? `<div class="flex justify-center p-3"><button class="btn sm" id="cp-dups">${dupOpen ? "Show fewer" : `Show ${num(d.items.length - 5)} more`}</button></div>` : ""}
   </section>`;
+}
+
+/** Keep in sync: copy what one account lacks every so often, one way or both ways. */
+function mirrorCard(r: CopyReport): string {
+  const m = r.mirror ?? { mode: "off", last_run: null, next_run: null, queued: 0, error: "" };
+  const on = m.mode !== "off";
+  const btn = (mode: "off" | "one" | "both", label: string) =>
+    `<button data-mirror="${mode}" aria-pressed="${m.mode === mode}">${label}</button>`;
+  const when = !on
+    ? "Off. Turn it on to copy new items automatically: GP Sync compares both libraries every hour and copies what's missing."
+    : m.mode === "reverse"
+      ? `On from ${r.dst} to ${r.src} only. Choose Both ways to add this direction too.`
+      : m.last_run
+        ? `Compared ${ago(m.last_run)}${m.queued ? `, ${num(m.queued)} item${m.queued === 1 ? "" : "s"} queued` : ", nothing missing"}.${m.next_run ? ` Next check ${until(m.next_run)}.` : ""}`
+        : "Comparing both libraries now…";
+  return `<section class="card self-start">${cardHead("Keep in sync", "refresh", on ? badge(m.mode === "both" ? "Both ways" : "On", "good", "ok") : "")}
+    <div class="card-b space-y-3">
+      <div class="seg w-full" id="cp-mirror">${btn("off", "Off")}${btn("one", `${icon("up", "rotate-90")}This way`)}${btn("both", `${icon("swap")}Both ways`)}</div>
+      <p class="text-sm text-ink-2">${esc(when)}</p>
+      ${m.error ? `<p class="text-sm text-warn">${esc(m.error)}. Trying again soon.</p>` : ""}
+      <p class="text-xs text-ink-3">Items already in both accounts are skipped by checksum, and copies are never sent back. Files on your Umbrel are used before downloading.</p>
+    </div></section>`;
 }
 
 function startCard(r: CopyReport): string {
@@ -252,7 +274,7 @@ function progressCard(r: CopyReport): string {
           ? `<div class="space-y-2">${working
               .map(
                 (cur) =>
-                  `<div class="rounded-xl bg-panel-2 p-3 text-sm"><div class="flex items-center gap-2">${icon(cur.step === "downloading" ? "download" : "upload", "size-4 text-ink-3")}<span class="truncate">${cur.step === "downloading" ? "Downloading" : "Uploading"} ${esc(cur.name)}</span><span class="ml-auto shrink-0 text-xs font-semibold tabular-nums">${Math.floor(pct(cur.done, cur.total))}%</span></div>${cur.done ? `<div class="bar active mt-2"><i style="width:${pct(cur.done, cur.total)}%"></i></div>` : `<div class="bar indeterminate mt-2"><i></i></div>`}<div class="mt-1 text-right text-xs text-ink-3 tabular-nums">${bytes(cur.done)} of ${bytes(cur.total)}</div></div>`,
+                  `<div class="rounded-xl bg-panel-2 p-3 text-sm"><div class="flex items-center gap-2">${icon(cur.step === "downloading" ? "download" : cur.step === "local" ? "server" : "upload", "size-4 text-ink-3")}<span class="truncate">${cur.step === "downloading" ? "Downloading" : cur.step === "local" ? "Copying from Umbrel" : "Uploading"} ${esc(cur.name)}</span><span class="ml-auto shrink-0 text-xs font-semibold tabular-nums">${Math.floor(pct(cur.done, cur.total))}%</span></div>${cur.done ? `<div class="bar active mt-2"><i style="width:${pct(cur.done, cur.total)}%"></i></div>` : `<div class="bar indeterminate mt-2"><i></i></div>`}<div class="mt-1 text-right text-xs text-ink-3 tabular-nums">${bytes(cur.done)} of ${bytes(cur.total)}</div></div>`,
               )
               .join("")}</div>`
           : ""
@@ -318,9 +340,18 @@ function render(): void {
   html(
     $("#cp-foot"),
     `<span>${num(accs.length)} of ${num(max)} accounts connected${accs.length < max ? ` · <a class="link-btn" href="#/settings/accounts">Add an account</a>` : ""}</span>
-     <span class="ml-auto flex items-center gap-2"><span>${r?.refreshed?.src ? `Libraries read ${ago(Math.min(r.refreshed.src, r.refreshed.dst ?? r.refreshed.src))}` : ""}</span>
-     <button class="btn sm" id="cp-refresh" ${r?.refreshing ? "disabled" : ""}>${r?.refreshing ? `${icon("loader", "spin")}Reading libraries…` : `${icon("refresh")}${listed ? "Refresh from Google" : "Read both libraries"}`}</button></span>`,
+     <span class="ml-auto">${r?.refreshing ? "Reading both libraries…" : r?.refreshed?.src ? `Libraries read ${ago(Math.min(r.refreshed.src, r.refreshed.dst ?? r.refreshed.src))} · refresh with the button at the top` : "Read both libraries with the refresh button at the top"}</span>`,
   );
+  // The header's refresh button reads both libraries from Google here (no second button).
+  setRefreshControl({
+    label: r?.refreshing ? "Reading both libraries from Google…" : "Read both libraries from Google",
+    busy: !!r?.refreshing,
+    run: async () => {
+      await post("copy/refresh", { src, dst });
+      void load();
+      return "Reading both libraries from Google";
+    },
+  });
   if (r && r.ready !== false) {
     // The header's pause button pauses copying here, not uploads.
     const paused = r.paused;
@@ -354,14 +385,15 @@ function render(): void {
     $("#cp-body"),
     `${r.jobs.counts && r.paused ? `<section class="card mb-4 flex items-start gap-3 border-bad/40 p-4">${icon("warn", "size-5 shrink-0 text-bad")}<div class="text-sm"><div class="font-medium">Paused: Google counted a copy against ${esc(r.dst)}'s storage</div><div class="mt-0.5 text-ink-3">Copies would use that account's storage. Nothing was deleted.</div></div></section>` : ""}
     ${r.error ? `<section class="card mb-4 p-4 text-sm text-warn">${esc(r.error)} Copying goes on by itself when it's back.</section>` : ""}
+    ${checkNote(r.check)}
     <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
-      ${tile({ label: "In " + r.src.split("@")[0], value: num(r.src_total), ic: "library", sub: "Photos and videos it owns" })}
+      ${tile({ label: "In this account", value: num(r.src_total), ic: "library", sub: "Photos and videos" })}
       ${tile({ label: "Duplicates found", value: num(r.duplicates.count), ic: "copy", sub: r.duplicates.count ? `${bytes(r.duplicates.bytes)} · not copied` : "None so far" })}
       ${tile({ label: "Still to copy", value: num(todo), ic: "copy", sub: bytes(r.todo.photo.bytes + r.todo.video.bytes) })}
       ${tile({ label: "Copied", value: num(r.jobs.copied), ic: "check", sub: bytes(r.jobs.copied_bytes), tone: r.jobs.copied ? "good" : "" })}
     </div>
     <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[22rem_1fr]">
-      ${startCard(r)}
+      <div class="min-w-0 space-y-4 self-start">${mirrorCard(r)}${startCard(r)}</div>
       <div class="min-w-0 space-y-4">
         ${pickerCard()}
         ${progressCard(r)}
@@ -380,8 +412,16 @@ function render(): void {
 function onClick(e: Event): void {
   const b = (e.target as HTMLElement).closest<HTMLElement>("button");
   if (!b) return;
-  if (b.id === "cp-refresh") void act("refresh", {}, () => "Reading both libraries from Google");
-  else if (b.id === "cp-swap") {
+  if (b.dataset.mirror) {
+    const m = b.dataset.mirror;
+    const label =
+      m === "off"
+        ? "Keep in sync is off"
+        : m === "both"
+          ? "Keeping both accounts in sync"
+          : `Keeping ${dst} in sync`;
+    void act("mirror", { mode: m }, () => label);
+  } else if (b.id === "cp-swap") {
     [src, dst] = [dst, src];
     resetPick();
   } else if (b.dataset.mode) {
@@ -469,7 +509,7 @@ function onClick(e: Event): void {
 }
 
 const copyView: View = {
-  subtitle: "Copy items between Google accounts",
+  subtitle: "Items one account has and the other lacks, in original quality",
   mount(el) {
     kinds = new Set(["photo", "video"]);
     fromYear = "";
@@ -512,6 +552,7 @@ const copyView: View = {
     request++;
     candidateRequest++;
     setPauseControl(null);
+    setRefreshControl(null);
   },
 };
 

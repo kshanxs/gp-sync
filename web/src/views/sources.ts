@@ -74,7 +74,7 @@ function row(i: SourceItem, r: SourcesReport): string {
   ]
     .filter(Boolean)
     .join(" · ");
-  return `<div class="row flex-wrap items-start px-4 py-3 sm:flex-nowrap">
+  return `<div data-key="${esc(i.name)}" class="row flex-wrap items-start px-4 py-3 sm:flex-nowrap">
     <input type="checkbox" class="mt-3 size-4 accent-[var(--accent)]" data-pick="${esc(i.name)}" ${picked.has(i.name) ? "checked" : ""} aria-label="Pick ${esc(fileName(i.name))}">
     <span class="clickable" ${openAttrs(i.name)}>${thumb(i.name)}</span>
     <div class="min-w-0 flex-1 basis-48">

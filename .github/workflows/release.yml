@@ -1,8 +1,9 @@
 name: Test and release
 
 # Every push and pull request: lint and test. When VERSION names a version that has no
-# git tag yet, build the image (ghcr.io and Docker Hub) and tag the release. The Umbrel app store
-# (kshanxs/kshanxs-umbrel-store) picks up new images by itself every hour.
+# git tag yet, build the image (ghcr.io and Docker Hub) and tag the release, then ask the Umbrel
+# app store (kshanxs/kshanxs-umbrel-store) to pick it up now (secret STORE_TOKEN; without it the
+# store's own scheduled check finds it later, which GitHub often runs only every few hours).
 # Mondays: try newer gpmc and dependencies; if every test passes, release a patch version.
 
 on:
@@ -164,6 +165,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "v${{ steps.check.outputs.version }}" --title "GP Sync ${{ steps.check.outputs.version }}" --notes-file "$RUNNER_TEMP/notes.txt"
+
+      # STORE_TOKEN: a fine-grained token with "Actions: Read and write" on kshanxs/kshanxs-umbrel-store.
+      - name: Update the Umbrel store now
+        if: steps.build.outputs.digest != ''
+        env:
+          GH_TOKEN: ${{ secrets.STORE_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "No STORE_TOKEN: the store's scheduled check will pick this up."; exit 0; fi
+          gh workflow run update-apps.yml -R kshanxs/kshanxs-umbrel-store || echo "Could not start the store update."
 
       # A tagged version without a release page (the release step failed last time): add it now.
       - name: Catch up a missing GitHub release

@@ -29,7 +29,22 @@ type ChartEl = HTMLElement & {
   _drag?: number | null;
   _drawn?: boolean;
   _view?: { start: number; n: number; max: number; ih: number; w: number };
+  /** Gradient id prefix, fixed per chart so an unchanged chart draws the same markup. */
+  _gid?: string;
+  /** The markup last drawn: nothing is redrawn while it stays the same. */
+  _svg?: string;
+  /** Where the pointer is while hovering, so the crosshair comes back after a redraw. */
+  _hover?: { clientX: number; clientY: number } | null;
 };
+
+let chartIds = 0;
+
+/** A short stable id for gradients: the same picture always gets the same id. */
+function hashId(prefix: string, text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return `${prefix}${(h >>> 0).toString(36)}`;
+}
 
 const PAD = { top: 14, right: 14, bottom: 24, left: 58 };
 
@@ -104,8 +119,12 @@ export function areaChart(el: HTMLElement, opts: AreaOptions): void {
     observers.set(el, ro);
     el.style.position = "relative";
     el.style.touchAction = "pan-y";
-    el.addEventListener("pointermove", (e) => hoverArea(c, e));
+    el.addEventListener("pointermove", (e) => {
+      c._hover = { clientX: e.clientX, clientY: e.clientY };
+      hoverArea(c, e);
+    });
     el.addEventListener("pointerleave", () => {
+      c._hover = null;
       hideCrosshair(c);
       c._drag = null;
       el.querySelector(".zoom-sel")?.remove();
@@ -161,7 +180,8 @@ function drawArea(c: ChartEl): void {
   const n = stop - start + 1;
   const all = series.flatMap((s) => s.values.filter((v): v is number => v != null));
   if (n < 2 || !all.length) {
-    c.innerHTML = `<div class="empty h-full" style="min-height:${H}px">${icon("chart")}${esc(opts.empty ?? "No data yet")}</div>`;
+    const empty = `<div class="empty h-full" style="min-height:${H}px">${icon("chart")}${esc(opts.empty ?? "No data yet")}</div>`;
+    if (c._svg !== empty) c.innerHTML = c._svg = empty;
     return;
   }
   const max = niceMax(opts.yMax ?? Math.max(...all));
@@ -196,7 +216,8 @@ function drawArea(c: ChartEl): void {
       } else cur.push([x(i), y(v)]);
     });
     if (cur.length) segs.push(cur);
-    const id = `g${Math.random().toString(36).slice(2, 8)}`;
+    c._gid ??= `g${(++chartIds).toString(36)}`;
+    const id = `${c._gid}-${si}`;
     svg += `<defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${s.color}" stop-opacity="${si ? 0.22 : 0.38}"/><stop offset="0.55" stop-color="${s.color}" stop-opacity="${si ? 0.07 : 0.12}"/><stop offset="1" stop-color="${s.color}" stop-opacity="0"/></linearGradient></defs>`;
     for (const seg of segs) {
       const d = smoothPath(seg);
@@ -223,12 +244,15 @@ function drawArea(c: ChartEl): void {
   } else if (opts.zoomable) {
     svg += `<span class="pointer-events-none absolute top-0 right-1 hidden text-[10px] text-ink-3 lg:block">Drag to zoom</span>`;
   }
-  c.innerHTML = svg;
-  c._drawn = true;
   c._view = { start, n, max, ih, w: W };
+  c._drawn = true;
+  if (c._svg === svg) return; // same picture: keep the hover, the tooltip and the crosshair
+  c._svg = svg;
+  c.innerHTML = svg;
+  if (c._hover) hoverArea(c, c._hover); // new data under the pointer: show the crosshair again
 }
 
-function hoverArea(c: ChartEl, e: PointerEvent): void {
+function hoverArea(c: ChartEl, e: { clientX: number; clientY: number }): void {
   const opts = c._opts;
   const v = c._view;
   const g = c.querySelector<SVGGElement>(".xh");
@@ -295,7 +319,7 @@ export function sparkline(values: number[], color = "var(--s1)", h = 36): string
   const max = Math.max(...v, 1e-9);
   const pts = v.map((y, i): [number, number] => [(i / (v.length - 1)) * 100, h - 3 - (y / max) * (h - 6)]);
   const d = smoothPath(pts);
-  const id = `sp${Math.random().toString(36).slice(2, 7)}`;
+  const id = hashId("sp", `${color}${d}`);
   return `<svg class="block w-full overflow-visible" style="height:${h}px" viewBox="0 0 100 ${h}" preserveAspectRatio="none" aria-hidden="true">
     <defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity="0.4"/><stop offset="0.6" stop-color="${color}" stop-opacity="0.1"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
     <path d="${d}L100,${h}L0,${h}Z" fill="url(#${id})"/>

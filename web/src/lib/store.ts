@@ -1,7 +1,8 @@
 // Live status. Pushed by the app over server-sent events (/api/stream) the moment something
 // happens; if the stream can't be used, the page asks every 2 seconds instead.
 
-import { get, type Status } from "./api";
+import { get, setTzOffset, type Status } from "./api";
+import { setZone } from "./format";
 
 type Listener = (s: Status) => void;
 
@@ -54,6 +55,9 @@ function publish(s: Status): void {
   if (reloadIfUpdated(s)) return;
   current = s;
   failures = 0;
+  // Days and times follow the time zone chosen in Settings (or the system default).
+  setZone(s.tz?.name);
+  setTzOffset(s.tz?.offset_min);
   document.documentElement.dataset.offline = "";
   listeners.forEach((fn) => {
     try {
@@ -141,4 +145,30 @@ export function pauseControl(): PauseControl | null {
 
 export function onPauseControl(fn: () => void): void {
   pauseListeners.add(fn);
+}
+
+/** What the header's refresh button does on the open page, when not a scan (Free storage, Fix
+ * dates and Copy accounts read the library from Google). Pages set it and clear it on unmount. */
+export interface RefreshControl {
+  /** "Refresh from Google"… */
+  label: string;
+  /** Reading right now: the button spins. */
+  busy: boolean;
+  /** Starts it; resolves with the toast to show. */
+  run: () => Promise<string>;
+}
+let refreshCtl: RefreshControl | null = null;
+const refreshListeners = new Set<() => void>();
+
+export function setRefreshControl(c: RefreshControl | null): void {
+  refreshCtl = c;
+  refreshListeners.forEach((fn) => fn());
+}
+
+export function refreshControl(): RefreshControl | null {
+  return refreshCtl;
+}
+
+export function onRefreshControl(fn: () => void): void {
+  refreshListeners.add(fn);
 }

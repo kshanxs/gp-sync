@@ -79,7 +79,8 @@ def test_filters_and_copy(libs):
     assert not (sync.COPY_DIR / "NEW").exists()  # the temporary file is gone
     assert made[SRC].uploads == []  # nothing changes in the account copied from
 
-    assert not sync.copy_step(get)  # list done: the copies are checked
+    assert not sync.copy_step(get)  # list done
+    assert sync.check_step(DST, get, force=True)  # the checker confirms the copy is free
     assert sync.q("SELECT state FROM copyjobs WHERE media_key='NEW'")[0][0] == "done"
     r = sync.copy_report(SRC, DST)
     assert r["jobs"]["verified"] == 1 and r["todo"]["photo"]["count"] == 1
@@ -98,7 +99,7 @@ def test_pauses_when_copies_count(libs):
     sync.copy_start(SRC, DST, ["photo"], 2020, None)
     _, get = clients(libs, quota=99)
     sync.copy_step(get)
-    sync.copy_step(get)
+    sync.check_step(DST, get, force=True)
     assert sync.q("SELECT state FROM copyjobs WHERE media_key='NEW'")[0][0] == "counts"
     assert sync.copy_report(SRC, DST)["paused"]
     with pytest.raises(ValueError, match="counted"):
@@ -156,15 +157,18 @@ def test_removed_account_pauses_instead_of_failing(libs):
 
 def test_failed_check_does_not_fail_the_copy(libs, monkeypatch):
     sync.copy_start(SRC, DST, ["photo"], 2020, None)
-    monkeypatch.setattr(sync, "COPY_CHECK_EVERY", 1)
     made, get = clients(libs)
 
     def broken(show_progress=True):
         raise RuntimeError("database is locked")
 
     made[DST].update_cache = broken
+    sync.check_state.clear()
     sync.copy_step(get)
+    assert not sync.check_step(DST, get, force=True)
     assert sync.q("SELECT state FROM copyjobs WHERE media_key='NEW'")[0][0] == "copied"
+    st = sync.check_state[DST]
+    assert st["wait"] == 2 * sync.CHECK_EVERY and "locked" in st["error"]  # waits longer before trying again
 
 
 def test_year_filter_keeps_the_other_copy(libs):
@@ -226,3 +230,108 @@ def test_several_items_are_copied_at_once_and_timed(libs, monkeypatch):
     jobs = sync.copy_report(SRC, DST)["jobs"]
     assert jobs["timed"] == 3 and jobs["seconds"] >= 0 and jobs["timed_bytes"] > 0
     assert sync.copy_state[(SRC, DST)]["jobs"] == {}  # nothing left marked as running
+
+
+def test_copy_uses_the_file_on_this_server(libs, tmp_path, monkeypatch):
+    from test_free_storage import DATA as SAME
+    from test_free_storage import _on_this_server
+
+    _on_this_server(tmp_path, SAME)
+
+    def no_download(url, **kw):
+        raise AssertionError("downloaded from Google although the file is here")
+
+    monkeypatch.setattr("requests.get", no_download)
+    sync.copy_start(SRC, DST, ["photo"], 2020, None)
+    made, get = clients(libs)
+    sync.copy_step(get)
+    assert sync.q("SELECT state FROM copyjobs WHERE media_key='NEW'")[0][0] == "copied"
+    assert made[DST].uploads[0][0] == SAME
+
+
+# ---- keep two accounts in sync
+
+
+@pytest.fixture
+def mirrors(libs):
+    sync.q("DELETE FROM mirrors")
+    yield libs
+    sync.q("DELETE FROM mirrors")
+
+
+def mirror_clients(libs):
+    """Clients whose library reads change nothing (the fake would otherwise add an item)."""
+    made, get = clients(libs)
+    for c in made.values():
+        c.update_cache = lambda show_progress=True: None
+    return made, get
+
+
+def test_keep_in_sync_queues_what_is_missing(mirrors):
+    assert sync.mirror_set(SRC, DST, "one") == {"mode": "one"}
+    assert sync.mirror_get(DST, SRC) == "reverse"
+    _, get = mirror_clients(mirrors)
+    assert sync.mirror_step(get)  # turned on: compared straight away
+    queued = {k for (k,) in sync.q("SELECT media_key FROM copyjobs WHERE src=? AND dst=?", (SRC, DST))}
+    assert queued == {"NEW", "OLD", "CLIP"}  # not SHARED (already there), NEW-AGAIN (twice) or the partner's
+    info = sync.copy_report(SRC, DST)["mirror"]
+    assert info["mode"] == "one" and info["queued"] == 3 and info["next_run"] > info["last_run"]
+    assert not sync.mirror_step(get)  # not due again for an hour
+
+
+def test_both_ways_never_copies_a_copy_back(mirrors):
+    sync.mirror_set(SRC, DST, "both")
+    _, get = mirror_clients(mirrors)
+    sync.mirror_step(get)
+    sync.q("DELETE FROM copyjobs WHERE src=? AND media_key != 'NEW'", (SRC,))
+    sync.copy_step(get)  # NEW is copied; the destination calls the new item "NEW" too (the fake)
+    # Google lists the copy in DST under another checksum (its edited copy): it must not come back.
+    with Storage(mirrors[DST]) as st:
+        st.update([item("COPIED-IN", data=b"edited copy")])
+    sync.q("UPDATE copyjobs SET new_key='COPIED-IN' WHERE src=? AND media_key='NEW'", (SRC,))
+    sync.q("UPDATE mirrors SET last_run=0")
+    sync.mirror_step(get)
+    back = {k for (k,) in sync.q("SELECT media_key FROM copyjobs WHERE src=? AND dst=?", (DST, SRC))}
+    assert "COPIED-IN" not in back
+    assert "THERE" not in back  # in both accounts already (same checksum as SHARED)
+
+
+def test_keep_in_sync_off_and_paused(mirrors):
+    sync.mirror_set(SRC, DST, "both")
+    assert sync.mirror_set(SRC, DST, "off") == {"mode": "off"}
+    assert sync.q("SELECT COUNT(*) FROM mirrors")[0][0] == 0
+    sync.mirror_set(SRC, DST, "one")
+    sync.meta_set("copy_paused", "1")
+    _, get = mirror_clients(mirrors)
+    assert not sync.mirror_step(get)  # nothing is compared while copying is paused
+    with pytest.raises(ValueError):
+        sync.mirror_set(SRC, DST, "sideways")
+
+
+def test_keep_in_sync_waits_when_google_is_down(mirrors):
+    sync.mirror_set(SRC, DST, "one")
+    made, get = mirror_clients(mirrors)
+
+    def down(show_progress=True):
+        raise requests.ConnectionError("offline")
+
+    made[SRC].update_cache = down
+    sync.mirror_step(get)
+    info = sync.mirror_info(SRC, DST)
+    assert info["error"] and sync.q("SELECT COUNT(*) FROM copyjobs")[0][0] == 0
+    assert info["next_run"] - sync.time.time() < sync.MIRROR_EVERY / 2  # tried again sooner
+
+
+def test_removing_an_account_stops_keeping_it_in_sync(mirrors):
+    sync.mirror_set(SRC, DST, "both")
+    sync.remove_account(DST)
+    assert sync.q("SELECT COUNT(*) FROM mirrors")[0][0] == 0
+
+
+def test_mirror_api(mirrors, server):
+    body = json.dumps({"src": SRC, "dst": DST, "mode": "both"}).encode()
+    with urllib.request.urlopen(urllib.request.Request(f"{server}/api/copy/mirror", body)) as r:
+        assert json.load(r) == {"mode": "both"}
+    bad = json.dumps({"src": SRC, "dst": DST, "mode": "x"}).encode()
+    with pytest.raises(urllib.error.HTTPError):
+        urllib.request.urlopen(urllib.request.Request(f"{server}/api/copy/mirror", bad))

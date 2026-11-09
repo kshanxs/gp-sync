@@ -63,6 +63,8 @@ export interface Status {
   host: string;
   /** True when the dashboard asks for a password. */
   auth?: boolean;
+  /** The time zone days and times are shown in: chosen in Settings ("" = system default), or the system's. */
+  tz?: { name: string; offset_min: number; chosen: string; system: string };
   phase: string;
   error: string;
   done: number;
@@ -83,6 +85,8 @@ export interface Status {
   jobs?: Job[];
   /** Free storage per account: items waiting or under way, items freed, and whether it is paused. */
   reclaim?: Record<string, ReclaimSummary>;
+  /** Copy accounts, all pairs: items waiting, copies Google hasn't confirmed yet, paused. */
+  copying?: { queued: number; checking: number; paused: boolean };
   /** Files with no date of their own, and fixes waiting for the user to delete the item in Google. */
   dates?: { undated: number; waiting: number };
   /** The user has seen the "album for files without a date" choice. */
@@ -131,6 +135,20 @@ export interface History {
   first: string;
   today: string;
   data: Day[];
+}
+/** Each process's own history (api/processes): per day, and when in the day and week it runs. */
+export type ProcessKey = "uploads" | "freed" | "copied" | "fixed";
+export interface ProcessHistory {
+  days: { day: string; count: number; bytes: number }[];
+  /** Items finished in each hour of the day (0–23) and each weekday (Monday first). */
+  hours: number[];
+  weekdays: number[];
+  count: number;
+  bytes: number;
+}
+export interface Processes {
+  today: string;
+  processes: Record<ProcessKey, ProcessHistory>;
 }
 export interface Totals {
   photos: number;
@@ -224,7 +242,10 @@ export interface Health {
   checks: { media_readable: boolean; upload_folder: boolean; turso: boolean; errors_24h: number };
 }
 export interface About {
+  /** The release (image tag). */
   version: string;
+  /** The server side's own version: raised only when it changes. */
+  backend_version?: string;
   host: string;
   commit: string;
   built: string;
@@ -255,6 +276,10 @@ export interface Settings {
   folders: Record<string, string> | null;
   schedule: { enabled: boolean; start: number; end: number };
   tz_offset_min: number;
+  /** Chosen in Settings ("Asia/Kolkata"); "" = the system default. */
+  timezone: string;
+  /** The dashboard device's zone, reported by the dashboard (the default when TZ isn't set). */
+  system_timezone: string;
   speed_limit_mbps: number;
   /** Files uploaded at once per account. */
   upload_workers?: number;
@@ -494,11 +519,13 @@ export interface ReclaimSummary {
   freed: number;
   failed: number;
   paused: boolean;
+  /** Bytes still counting against storage in the account (Free storage page only; null: library not read). */
+  counted?: number | null;
 }
 export interface ReclaimProgress {
   key: string;
   name?: string;
-  step: "downloading" | "deleting" | "uploading";
+  step: "downloading" | "local" | "deleting" | "uploading";
   done: number;
   total: number;
 }
@@ -555,8 +582,18 @@ export interface FreedReport {
   days: { day: string; count: number; bytes: number; active?: number }[];
   items: FreedItem[];
 }
+/** The checker: confirms with Google that free uploads and copies don't count, apart from the work itself. */
+export interface CheckInfo {
+  /** Items waiting to be confirmed. */
+  waiting: number;
+  last: number | null;
+  next: number | null;
+  /** Set when Google didn't answer the last check (it is tried again later, waiting longer each time). */
+  error: string;
+}
 export interface StorageReport {
   account: string;
+  check?: CheckInfo;
   /** Every item being worked on (several at once). */
   working?: ReclaimProgress[];
   paused?: boolean;
@@ -571,7 +608,7 @@ export interface StorageReport {
   blocked: boolean;
   current: {
     key: string;
-    step: "downloading" | "deleting" | "uploading";
+    step: "downloading" | "local" | "deleting" | "uploading";
     done: number;
     total: number;
   } | null;
@@ -610,9 +647,20 @@ export interface CopyCandidates {
   bytes: number;
   items: CopyCandidate[];
 }
+/** Keep in sync for a pair of accounts. "reverse": on, but only from the other account to this one. */
+export interface MirrorInfo {
+  mode: "off" | "one" | "both" | "reverse";
+  last_run: number | null;
+  next_run: number | null;
+  /** Items queued the last time the libraries were compared. */
+  queued: number;
+  error: string;
+}
 export interface CopyReport {
   src: string;
   dst: string;
+  check?: CheckInfo;
+  mirror?: MirrorInfo;
   /** False when fewer than two accounts are connected. */
   ready?: boolean;
   accounts?: string[];
@@ -624,12 +672,18 @@ export interface CopyReport {
   current: {
     key: string;
     name: string;
-    step: "downloading" | "uploading";
+    step: "downloading" | "local" | "uploading";
     done: number;
     total: number;
   } | null;
   /** Every item being copied right now (several at once). */
-  working?: { key: string; name: string; step: "downloading" | "uploading"; done: number; total: number }[];
+  working?: {
+    key: string;
+    name: string;
+    step: "downloading" | "local" | "uploading";
+    done: number;
+    total: number;
+  }[];
   src_total: number;
   in_dst: number;
   /** Never copied: already in the other account, or the same file twice. `error` says which. */
@@ -670,7 +724,13 @@ export interface AppLog {
   text: string;
 }
 
-export const tz = -new Date().getTimezoneOffset();
+/** Minutes east of UTC that the server's day counts use: the chosen time zone's, once the status
+ * has said (until then the browser's). */
+export let tz = -new Date().getTimezoneOffset();
+
+export function setTzOffset(min: number | undefined): void {
+  if (typeof min === "number") tz = min;
+}
 
 export async function get<T>(path: string): Promise<T> {
   const r = await fetch("api/" + path, { cache: "no-store" });

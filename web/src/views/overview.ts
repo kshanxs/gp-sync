@@ -1,11 +1,21 @@
-import { get, tz, type FolderReport, type History, type Insights, type Status } from "../lib/api";
-import { donut, heatLegend, heatmap, ring, setRing, sparkline, type Slice } from "../lib/charts";
+import {
+  get,
+  tz,
+  type FolderReport,
+  type History,
+  type Insights,
+  type Processes,
+  type Status,
+} from "../lib/api";
+import { donut, heatLegend, heatmap, sparkline, type Slice } from "../lib/charts";
 import { $, $$, animateChange, esc, html } from "../lib/dom";
 import { ago, bytes, clock, duration, fileName, ms, num, pct, speed } from "../lib/format";
-import { icon } from "../lib/icons";
+import { icon, type IconName } from "../lib/icons";
 import { NetChart, rangeButtons, type Range } from "../lib/netchart";
 import { jobLink, jobStep, jobTitle } from "../lib/jobs";
-import { badge, cardHead, etaText, eventMeta, openAttrs, phaseInfo, thumb, tile } from "../lib/ui";
+import { badge, cardHead, eventMeta, openAttrs, thumb, tile } from "../lib/ui";
+import { liveProcesses, PROCESS_HREF } from "../lib/live";
+import { PROCESS, PROCESS_KEYS } from "../lib/processes";
 import type { View } from "./view";
 
 let chart: NetChart | null = null;
@@ -15,6 +25,7 @@ let slowTimer = 0;
 let slowSynced = -1; // uploaded count the heat map and streak were last loaded for
 let slowAt = 0;
 let last: Status | null = null;
+let procs: Processes | null = null;
 
 // ---- where the photos are: pie charts per device (or folder) and photos vs videos
 let share: FolderReport | null = null;
@@ -162,11 +173,13 @@ function streak(h: History): number {
 
 async function loadSlow(): Promise<void> {
   slowAt = Date.now();
-  [hist, ins] = await Promise.all([
+  [hist, ins, procs] = await Promise.all([
     get<History>(`history?days=371&tz=${tz}`),
     get<Insights>(`insights?tz=${tz}`),
+    get<Processes>(`processes?days=14&tz=${tz}`).catch(() => procs),
   ]);
   renderSlow();
+  if (last) renderProcs(last);
 }
 
 function renderSlow(): void {
@@ -248,107 +261,139 @@ function renderSlow(): void {
   }
 }
 
-const STEPS: Record<string, string> = {
-  hashing: "Fingerprinting",
-  checking: "Checking Google",
-  uploading: "Uploading",
-  finalizing: "Finishing",
-  skipped: "Already there",
-  complete: "Done",
-};
-
-function stepBadge(c: NonNullable<Status["current"]>): string {
-  const up = c.step === "uploading";
-  const label =
-    up && c.bytes_total
-      ? `Uploading ${pct(c.bytes_done, c.bytes_total).toFixed(0)}%`
-      : (STEPS[c.step] ?? c.step);
-  return `<span class="badge info">${icon(up ? "cloudUp" : "loader", up ? "bob" : "spin")}${esc(label)}</span>`;
+/** Every kind of work running now, in one list: normal sync first, then the background jobs. */
+function runningItems(s: Status): {
+  icon: IconName;
+  title: string;
+  step: string;
+  pct: number | null;
+  href: string;
+  spin: boolean;
+  paused: boolean;
+}[] {
+  const items: ReturnType<typeof runningItems> = [];
+  const up = s.uploading ?? (s.current ? [s.current] : []);
+  if (up.length && s.phase !== "paused") {
+    items.push({
+      icon: "upload",
+      title: `Uploading · ${num(up.length)} file${up.length === 1 ? "" : "s"} at once`,
+      step:
+        up.length === 1
+          ? fileName(up[0]!.name)
+          : up
+              .map((u) => fileName(u.name))
+              .slice(0, 2)
+              .join(", "),
+      pct: up.length === 1 ? pct(up[0]!.bytes_done, up[0]!.bytes_total) : null,
+      href: "#/sync",
+      spin: false,
+      paused: false,
+    });
+  }
+  for (const j of s.jobs ?? []) {
+    const paused = j.kind === "storage" ? !!s.reclaim?.[j.account]?.paused : false;
+    items.push({
+      icon:
+        j.kind === "library"
+          ? "refresh"
+          : j.kind === "copy"
+            ? "users"
+            : j.kind === "dates"
+              ? "clock"
+              : "cloud",
+      title: jobTitle(j),
+      step: paused ? "Paused" : jobStep(j),
+      pct: j.total ? pct(j.done ?? 0, j.total) : null,
+      href: jobLink(j),
+      spin: j.kind === "library",
+      paused,
+    });
+  }
+  return items;
 }
 
-/** What the Now card says when no file is being sent (the badge elsewhere already shows the phase). */
-function nowTitle(s: Status): string {
-  switch (s.phase) {
-    case "paused":
-      return "Uploads are paused";
-    case "scanning":
-      return "Scanning your folders";
-    case "scheduled":
-      return "Waiting for upload hours";
-    case "setup":
-      return "No Google account yet";
-    case "error":
-      return "Something went wrong";
-    case "starting":
-      return "Starting up";
-    default:
-      return s.library.files > s.library.synced_files ? "Next files go at the next scan" : "All caught up";
+/** One card per process: what it is doing now and what it did today, with the last 14 days. */
+function renderProcs(s: Status): void {
+  if (!document.getElementById("ov-procs")) return;
+  const today = procs?.today;
+  for (const l of liveProcesses(s)) {
+    const el = document.querySelector<HTMLElement>(`[data-proc="${l.key}"]`);
+    if (!el) continue;
+    const p = PROCESS[l.key];
+    const hist = procs?.processes[l.key];
+    const day = hist?.days.find((d) => d.day === today);
+    const last14 = Array.from({ length: 14 }, (_, i) => {
+      if (!today) return 0;
+      const d = new Date(`${today}T00:00:00`);
+      d.setDate(d.getDate() - 13 + i);
+      return hist?.days.find((x) => x.day === d.toLocaleDateString("sv"))?.count ?? 0;
+    });
+    const state = l.paused
+      ? badge("Paused", "warn", "pause")
+      : l.running
+        ? badge("Running", "info", "loader")
+        : l.waiting
+          ? badge("Waiting", "", "hourglass")
+          : badge("Idle", "", "ok");
+    const count = day?.count ?? 0;
+    el.classList.toggle("is-running", l.running && !l.paused);
+    html(
+      el,
+      `<div class="flex items-center gap-2.5"><span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2" style="color:${p.color}">${icon(p.icon, "size-4")}</span>
+        <span class="min-w-0 flex-1 truncate font-medium">${esc(p.label)}</span>${state}</div>
+      <div class="mt-3 flex items-end justify-between gap-3">
+        <div class="min-w-0"><div class="num text-2xl">${procs ? num(count) : "–"}</div>
+          <div class="text-xs text-ink-3">${esc(p.noun)} today${day?.bytes ? ` · ${bytes(day.bytes)}` : ""}</div></div>
+        <div class="h-8 w-24 shrink-0">${sparkline(last14, p.color)}</div>
+      </div>
+      <div class="mt-3 truncate text-xs text-ink-2" title="${esc(l.detail)}">${esc(l.detail)}</div>
+      ${l.running && l.pct !== null ? `<span class="bar active mt-1.5 block h-1.5"><i style="width:${l.pct}%"></i></span>` : `<span class="mt-1.5 block h-1.5"></span>`}`,
+    );
   }
 }
 
-function nowAction(s: Status): string {
-  if (s.phase === "paused")
-    return `<button class="btn sm primary shrink-0" data-now="resume">${icon("play")}Resume</button>`;
-  if (s.phase === "setup")
-    return `<a class="btn sm primary shrink-0" href="#/settings/accounts">${icon("key")}Connect</a>`;
-  if (s.phase === "idle" && s.library.files > s.library.synced_files)
-    return `<button class="btn sm shrink-0" data-now="scan">${icon("refresh")}Scan now</button>`;
-  return "";
+function runningCount(s: Status): string {
+  const n = runningItems(s).length;
+  return n
+    ? `<span class="badge info">${num(n)} running</span>`
+    : `<span class="text-xs text-ink-3">Nothing running</span>`;
 }
 
-/** Background work across accounts, under the current upload: one line each, with progress. */
-function jobsList(s: Status): string {
-  const jobs = s.jobs ?? [];
-  if (!jobs.length) return "";
-  return `<div class="border-t border-line px-4 py-3">
-    <div class="label mb-2">Also running</div>
-    <ul class="space-y-2.5">${jobs
-      .map((j) => {
-        const step = jobStep(j);
-        const bar = j.total
-          ? `<div class="bar mt-1.5 h-1.5"><i style="width:${pct(j.done ?? 0, j.total)}%"></i></div>`
-          : "";
-        return `<li><a href="${jobLink(j)}" class="block rounded-lg hover:text-ink"><div class="flex items-center gap-2 text-sm">${icon(j.kind === "library" ? "refresh" : j.kind === "copy" ? "users" : j.kind === "dates" ? "clock" : "cloud", `size-4 shrink-0 text-accent ${j.kind === "library" ? "spin" : ""}`)}<span class="truncate font-medium">${esc(jobTitle(j))}</span></div>${step ? `<div class="truncate pl-6 text-xs text-ink-3">${esc(step)}</div>` : ""}${bar ? `<div class="pl-6">${bar}</div>` : ""}</a></li>`;
-      })
-      .join("")}</ul></div>`;
-}
-
-/** The other files uploading at the same time (Settings › Sync, Files at once). */
-function alsoUploading(s: Status, shown: string): string {
-  const others = (s.uploading ?? []).filter((u) => u.name !== shown);
-  if (!others.length) return "";
-  return `<ul class="mt-3 space-y-1.5">${others
+function runningList(s: Status): string {
+  const items = runningItems(s);
+  if (!items.length)
+    return `<div class="empty">${icon("shield")}Nothing is running. Uploads, freeing storage, copies and date fixes show here as they start.</div>`;
+  return `<ul class="divide-y divide-line">${items
     .map(
-      (u) =>
-        `<li class="flex items-center gap-2 text-xs"><span class="min-w-0 flex-1 truncate" title="${esc(u.name)}">${esc(fileName(u.name))}</span><span class="bar w-20 shrink-0"><i style="width:${pct(u.bytes_done, u.bytes_total)}%"></i></span><span class="w-14 shrink-0 text-right text-ink-3 tabular-nums">${bytes(u.bytes_total)}</span></li>`,
+      (i) => `<li><a href="${i.href}" class="flex items-center gap-3 px-4 py-3 hover:bg-panel-2">
+        <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2 text-accent">${icon(i.icon, `size-4 ${i.spin ? "spin" : ""}`)}</span>
+        <span class="min-w-0 flex-1">
+          <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium">${esc(i.title)}</span>${i.paused ? badge("Paused", "warn", "pause") : ""}</span>
+          ${i.step ? `<span class="block truncate text-xs text-ink-3">${esc(i.step)}</span>` : ""}
+          ${i.pct !== null ? `<span class="bar mt-1.5 block h-1.5"><i style="width:${i.pct}%"></i></span>` : ""}
+        </span>
+        ${icon("chevron", "size-4 shrink-0 -rotate-90 text-ink-3")}
+      </a></li>`,
     )
     .join("")}</ul>`;
-}
-
-function upNext(s: Status, current: string): string {
-  const next = (s.pending ?? []).filter((n) => n !== current).slice(0, 4);
-  if (!next.length) return "";
-  return `<div class="mt-4 label">Up next</div><div class="-mx-4 mt-1">${next
-    .map(
-      (n) =>
-        `<div class="row clickable py-2" ${openAttrs(n)}>${thumb(n, "thumb size-8")}<div class="min-w-0 flex-1 truncate text-sm">${esc(fileName(n))}</div></div>`,
-    )
-    .join("")}</div>`;
 }
 
 // ---- customise: show, hide and reorder cards (saved in this browser)
 
 const CARDS: [string, string][] = [
-  ["ov-hero", "Backed up"],
+  ["ov-running", "Running now"],
+  ["ov-procs", "Uploads, Free storage, Copies, Date fixes"],
   ["ov-kpis", "Speed, today, streak, CPU, memory"],
   ["ov-share", "Where your photos are"],
   ["ov-network", "Network"],
   ["ov-glance", "At a glance"],
-  ["ov-now", "Now"],
   ["ov-recent", "Recent activity"],
   ["ov-times", "Upload times and sizes"],
   ["ov-year", "Uploads per day"],
 ];
+// Saved under a new name since the Sync page took Backup progress and Now: the new cards come first.
+const LAYOUT_KEY = "ov-layout-2";
+
 interface Layout {
   order: string[];
   hidden: string[];
@@ -356,7 +401,7 @@ interface Layout {
 
 function layout(): Layout {
   try {
-    const l = JSON.parse(localStorage.getItem("ov-layout") ?? "") as Layout;
+    const l = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "") as Layout;
     const known = CARDS.map(([id]) => id);
     const order = l.order.filter((id) => known.includes(id));
     return { order: [...order, ...known.filter((id) => !order.includes(id))], hidden: l.hidden ?? [] };
@@ -366,8 +411,8 @@ function layout(): Layout {
 }
 
 function saveLayout(l: Layout | null): void {
-  if (l) localStorage.setItem("ov-layout", JSON.stringify(l));
-  else localStorage.removeItem("ov-layout");
+  if (l) localStorage.setItem(LAYOUT_KEY, JSON.stringify(l));
+  else localStorage.removeItem(LAYOUT_KEY);
   applyLayout();
 }
 
@@ -444,17 +489,16 @@ const overview: View = {
       <button class="link-btn" data-ov-custom aria-label="Customize overview">${icon("sliders")}Edit</button>
     </div>
     <div class="grid grid-flow-row-dense grid-cols-1 gap-4 lg:grid-cols-12" id="ov-grid">
-      <section class="card overview-hero relative overflow-hidden p-5 lg:col-span-5 xl:col-span-4" id="ov-hero" data-card="ov-hero">
-        <div class="flex items-center justify-between gap-2"><div><span class="label">Your library</span><h2 class="mt-1 text-lg font-semibold tracking-tight">Backup progress</h2></div><span id="ov-rate" class="text-xs text-ink-3 tabular-nums"></span></div>
-        <div class="mt-4 flex items-center gap-4 sm:gap-5">
-          <div class="ring-box relative shrink-0">${ring(0, 148, 12)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-3xl" id="ov-pct">–</div><div class="text-[11px] text-ink-3">of library</div></div></div></div>
-          <div class="min-w-0 space-y-1.5" id="ov-hero-text"></div>
-        </div>
-        <div class="mt-4 flex flex-wrap gap-1.5" id="ov-hero-badges"></div>
-        <div class="mt-4 space-y-3" id="ov-folders"></div>
+      <section class="card lg:col-span-12" data-card="ov-running">
+        ${cardHead("Running now", "loader", '<span id="ov-running-count"></span>')}
+        <div id="ov-running"></div>
       </section>
 
-      <section class="grid grid-cols-2 gap-4 md:grid-cols-3 lg:col-span-7 xl:col-span-8" data-card="ov-kpis">
+      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-12 xl:grid-cols-4" data-card="ov-procs" id="ov-procs">
+        ${PROCESS_KEYS.map((k) => `<a href="${PROCESS_HREF[k]}" class="card proc-card block p-4" data-proc="${k}"><div class="skeleton h-28"></div></a>`).join("")}
+      </section>
+
+      <section class="grid grid-cols-2 gap-4 md:grid-cols-3 lg:col-span-12 xl:grid-cols-6" data-card="ov-kpis">
         ${tile({ id: "k-up", label: "Upload", value: "–", ic: "up", chart: "", href: "#/network" })}
         ${tile({ id: "k-down", label: "Download", value: "–", ic: "down", chart: "", href: "#/network" })}
         ${tile({ id: "k-today", label: "Today", value: "–", ic: "calendar", chart: "", href: "#/activity/uploaded" })}
@@ -478,13 +522,7 @@ const overview: View = {
         <div class="px-4 py-1" id="ov-glance"></div>
       </section>
 
-      <section class="card lg:col-span-6 xl:col-span-4" data-card="ov-now">
-        ${cardHead("Now", "cloudUp", '<a href="#/upload" class="hover:text-ink">Upload from phone ›</a>')}
-        <div class="card-b" id="ov-now"></div>
-        <div id="ov-jobs"></div>
-      </section>
-
-      <section class="card lg:col-span-6 xl:col-span-4" data-card="ov-recent">
+      <section class="card lg:col-span-6 xl:col-span-8" data-card="ov-recent">
         ${cardHead("Recent activity", "activity", '<a href="#/activity" class="hover:text-ink">See all ›</a>')}
         <div id="ov-recent" data-gallery></div>
       </section>
@@ -501,10 +539,6 @@ const overview: View = {
     </div>`;
     applyLayout();
     $$("[data-ov-custom]").forEach((b) => b.addEventListener("click", openCustomize));
-    $("#ov-now").addEventListener("click", (e) => {
-      const b = (e.target as HTMLElement).closest<HTMLElement>("[data-now]");
-      if (b) document.getElementById(b.dataset.now === "resume" ? "btn-pause" : "btn-sync")?.click();
-    });
     $("#ov-share-by").addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
       if (!b) return;
@@ -541,64 +575,6 @@ const overview: View = {
     }
     if (Date.now() - shareAt > 60_000) void loadShare(); // counts change slowly: once a minute
     else if (!kindsDrawn) renderShare();
-    const lib = s.library;
-    const p = pct(lib.synced_files, lib.files);
-    setRing($("#ov-hero .ring-box svg"), p);
-    $("#ov-pct").textContent = lib.files ? `${p >= 99.95 || p === 0 ? p.toFixed(0) : p.toFixed(1)}%` : "–";
-    const left = lib.files - lib.synced_files;
-    const eta = etaText(s);
-    html(
-      $("#ov-rate"),
-      s.phase === "uploading" && s.net.up_avg > 1000
-        ? `${icon("up", "inline size-3 -mt-0.5")} ${speed(s.net.up_avg)}`
-        : "",
-    );
-    html(
-      $("#ov-hero-text"),
-      `<div class="num text-xl">${num(lib.synced_files)} <span class="text-sm font-normal text-ink-3">of ${num(lib.files)} files</span></div>
-       <div class="text-sm text-ink-2">${bytes(lib.synced_bytes)} of ${bytes(lib.bytes)}</div>
-       <div class="text-xs text-ink-3">${left ? `${bytes(lib.bytes - lib.synced_bytes)} still to back up` : "Every file is in Google Photos"}</div>`,
-    );
-    // Badges say only what is true right now: they appear, change and go as things happen.
-    html(
-      $("#ov-hero-badges"),
-      [
-        left
-          ? badge(
-              `${num(left)} to go`,
-              s.phase === "uploading" ? "info" : s.paused ? "warn" : "",
-              "hourglass",
-              s.paused ? "Waiting until uploads resume" : "Waiting for upload",
-            )
-          : badge("All backed up", "good", "ok"),
-        eta ? badge(`~${eta} left`, "info", "clock", "At the current upload speed") : "",
-        s.copies_pending
-          ? badge(
-              `${num(s.copies_pending)} copies to go`,
-              "",
-              "copy",
-              "Waiting for your other Google accounts",
-            )
-          : "",
-        s.counts.failed
-          ? `<a href="#/activity/failed">${badge(`${num(s.counts.failed)} failed`, "bad", "error")}</a>`
-          : "",
-        s.counts.gave_up
-          ? badge(`${num(s.counts.gave_up)} gave up`, "bad", "warn", "Failed 5 times; retry from Activity")
-          : "",
-      ].join(""),
-    );
-    html(
-      $("#ov-folders"),
-      Object.entries(s.folders)
-        .filter(([, f]) => f.account && f.files)
-        .map(([name, f]) => {
-          const fp = pct(f.synced_files, f.files);
-          return `<div><div class="mb-1 flex items-center justify-between text-xs"><a class="flex items-center gap-1.5 font-medium hover:underline" href="#/folders/f/${encodeURIComponent(name)}">${icon("folder", "size-3.5 text-ink-3")}${esc(name)}</a><span class="text-ink-3 tabular-nums">${num(f.synced_files)} / ${num(f.files)}</span></div><div class="bar"><i style="width:${fp}%"></i></div></div>`;
-        })
-        .join(""),
-    );
-
     const r = s.resources;
     const setTile = (id: string, v: string, sub: string, chartSvg?: string) => {
       const t = $(id);
@@ -698,27 +674,9 @@ const overview: View = {
         .join(""),
     );
 
-    const c = s.current;
-    html(
-      $("#ov-now"),
-      c
-        ? `<div class="flex items-center gap-3">${thumb(c.name, "thumb size-14")}
-             <div class="min-w-0 flex-1"><div class="truncate font-medium" title="${esc(c.name)}">${esc(fileName(c.name))}</div>
-             <div class="mt-1 flex flex-wrap gap-1">${badge(c.kind === "video" ? "Video" : "Photo", "", c.kind === "video" ? "video" : "photo")}${stepBadge(c)}</div></div></div>
-           <div class="bar active mt-3"><i style="width:${pct(c.bytes_done, c.bytes_total)}%"></i></div>
-           <div class="mt-1.5 flex justify-between text-xs text-ink-3 tabular-nums"><span>${bytes(c.bytes_done)} of ${bytes(c.bytes_total)}</span><span>${speed(s.net.up_now)}</span></div>
-           ${alsoUploading(s, c.name)}
-           ${s.total ? `<div class="mt-3 text-xs text-ink-3">File ${num(Math.min(s.done + (s.uploading?.length || 1), s.total))} of ${num(s.total)} this round${(s.uploading?.length ?? 0) > 1 ? ` · ${num(s.uploading!.length)} at once` : ""}</div>` : ""}
-           ${upNext(s, c.name)}`
-        : `<div class="flex items-center gap-3"><span class="grid size-12 shrink-0 place-items-center rounded-xl bg-panel-2 ${s.phase === "paused" ? "text-warn" : s.phase === "scanning" ? "text-accent" : "text-ink-3"}">${icon(phaseInfo(s).icon, `size-6 ${s.phase === "scanning" ? "spin" : ""}`)}</span>
-             <div class="min-w-0 flex-1"><div class="font-medium">${esc(nowTitle(s))}</div><div class="truncate text-xs text-ink-3">${esc(phaseInfo(s).detail)}</div></div>${nowAction(s)}</div>
-           <div class="mt-4 grid grid-cols-3 gap-2 text-center">
-             <div class="stat-tile"><div class="num text-lg">${num(s.counts.uploaded)}</div><div class="text-[11px] text-ink-3">Uploaded</div></div>
-             <div class="stat-tile"><div class="num text-lg">${num(s.counts.exists)}</div><div class="text-[11px] text-ink-3">Already there</div></div>
-             <div class="stat-tile"><div class="num text-lg">${num(left)}</div><div class="text-[11px] text-ink-3">Waiting</div></div>
-           </div>${upNext(s, "")}`,
-    );
-    html($("#ov-jobs"), jobsList(s));
+    html($("#ov-running"), runningList(s));
+    renderProcs(s);
+    html($("#ov-running-count"), runningCount(s));
 
     html(
       $("#ov-recent"),

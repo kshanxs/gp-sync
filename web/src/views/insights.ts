@@ -1,4 +1,13 @@
-import { get, tz, type History, type Insights, type UploadRow } from "../lib/api";
+import {
+  get,
+  tz,
+  type History,
+  type Insights,
+  type ProcessKey,
+  type Processes,
+  type UploadRow,
+} from "../lib/api";
+import { PROCESS, PROCESS_KEYS } from "../lib/processes";
 import { columns } from "../lib/charts";
 import { $, esc, html } from "../lib/dom";
 import { ago, bytes, duration, fileName, ms, num, pct, speed } from "../lib/format";
@@ -187,10 +196,80 @@ function renderWeeks(h: History): void {
   );
 }
 
+let procs: Processes | null = null;
+let proc: ProcessKey = "uploads";
+
+/** Items in the 7 days up to today, and the 7 before. */
+function weekCounts(k: ProcessKey): [number, number] {
+  const p = procs?.processes[k];
+  if (!p || !procs) return [0, 0];
+  const today = new Date(`${procs.today}T00:00:00`).getTime();
+  let now = 0;
+  let before = 0;
+  for (const d of p.days) {
+    const age = Math.round((today - new Date(`${d.day}T00:00:00`).getTime()) / 86400000);
+    if (age >= 0 && age < 7) now += d.count;
+    else if (age >= 7 && age < 14) before += d.count;
+  }
+  return [now, before];
+}
+
+/** Every process side by side, and the chosen one's busiest hours and weekdays. */
+function renderProcs(): void {
+  if (!procs) {
+    html($("#in-procs"), `<div class="empty">${icon("chart")}Couldn't load</div>`);
+    return;
+  }
+  const p = procs.processes[proc];
+  const hourNow = new Date().getHours();
+  const side = PROCESS_KEYS.map((k) => {
+    const [a, b] = weekCounts(k);
+    const change = b ? Math.round(((a - b) / b) * 100) : a ? 100 : 0;
+    return `<button class="flex min-w-0 items-center gap-3 rounded-xl border p-3 text-left transition ${k === proc ? "border-accent bg-accent/10" : "border-line hover:bg-panel-2"}" data-proc="${k}" aria-pressed="${k === proc}">
+      <span class="grid size-9 shrink-0 place-items-center rounded-lg text-white" style="background:${PROCESS[k].color}">${icon(PROCESS[k].icon, "size-4")}</span>
+      <span class="min-w-0 flex-1"><span class="block truncate text-xs text-ink-3">${PROCESS[k].label}</span><span class="num block text-lg">${num(a)}</span></span>
+      <span class="shrink-0 text-xs ${change > 0 ? "text-good" : change < 0 ? "text-bad" : "text-ink-3"}">${b ? `${change > 0 ? "+" : ""}${change}%` : a ? "New" : ""}</span>
+    </button>`;
+  }).join("");
+  html(
+    $("#in-procs"),
+    `<div class="grid grid-cols-2 gap-3 p-4 lg:grid-cols-4">${side}</div>
+    <div class="grid gap-4 border-t border-line p-4 lg:grid-cols-12">
+      <div class="lg:col-span-8"><div class="label mb-2">${PROCESS[proc].label} by hour of day</div>${
+        p.count
+          ? columns(
+              p.hours,
+              p.hours.map((_, h) => String(h)),
+              {
+                tip: (v, h) => `${h}:00–${h + 1}:00 · ${num(v)} ${PROCESS[proc].noun}`,
+                every: 3,
+                height: 120,
+                highlight: hourNow,
+                color: PROCESS[proc].color,
+              },
+            )
+          : `<div class="empty">${icon(PROCESS[proc].icon)}Nothing ${PROCESS[proc].noun} in the last year</div>`
+      }</div>
+      <div class="lg:col-span-4"><div class="label mb-2">By weekday</div>${
+        p.count
+          ? columns(p.weekdays, WEEKDAYS, {
+              tip: (v, i) => `${WEEKDAYS[i]} · ${num(v)} ${PROCESS[proc].noun}`,
+              height: 120,
+              color: PROCESS[proc].color,
+            })
+          : ""
+      }</div>
+    </div>
+    <p class="border-t border-line px-4 py-2.5 text-xs text-ink-3">Last 12 months, in your time zone. ${num(p.count)} ${PROCESS[proc].noun}${p.bytes ? ` · ${bytes(p.bytes)}` : ""}. Each process counts its own items.</p>`,
+  );
+}
+
 const insights: View = {
-  subtitle: "Upload times and sizes",
+  subtitle: "Patterns in every process",
   mount(el) {
     el.innerHTML = `
+    <section class="card mb-4 min-w-0 overflow-hidden">${cardHead("Every process", "layers", "This week vs last · pick one for its hours")}<div id="in-procs"><div class="skeleton m-4 h-44"></div></div></section>
+    <h2 class="mt-6 mb-3 px-1 text-sm font-semibold text-ink-2">Uploads in detail</h2>
     <div class="mb-3 flex justify-end" id="in-note"></div>
     <div class="grid grid-cols-2 gap-4 md:grid-cols-3 2xl:grid-cols-6" id="in-tiles">${'<div class="card skeleton h-28"></div>'.repeat(6)}</div>
     <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
@@ -202,6 +281,18 @@ const insights: View = {
       <section class="card lg:col-span-6">${cardHead("Largest uploads", "disk")}<div id="in-largest" data-gallery></div></section>
       <section class="card lg:col-span-6">${cardHead("Slowest uploads", "hourglass")}<div id="in-slowest" data-gallery></div></section>
     </div>`;
+    el.addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>("[data-proc]");
+      if (!b) return;
+      proc = b.dataset.proc as ProcessKey;
+      renderProcs();
+    });
+    void get<Processes>(`processes?days=371&tz=${tz}`)
+      .then((p) => {
+        procs = p;
+      })
+      .catch(() => undefined)
+      .finally(renderProcs);
     void get<Insights>(`insights?tz=${tz}`).then(render);
     void get<History>(`history?days=15&tz=${tz}`).then(renderWeeks);
   },

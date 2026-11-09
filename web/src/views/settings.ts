@@ -1,6 +1,7 @@
 import { get, post, type AppSourceId, type Settings, type Status } from "../lib/api";
 import { $, $$, copyText, esc, html, toast } from "../lib/dom";
-import { bytes, hour, num } from "../lib/format";
+import { bytes, clock, hour, num } from "../lib/format";
+import { currentName, offsetLabel, zoneLongName, zoneOffset, zoneOptions, zoneTitle } from "../lib/zones";
 import { icon, type IconName } from "../lib/icons";
 import { install, installHelp, installState, onInstallChange } from "../lib/install";
 import { host, refresh, status } from "../lib/store";
@@ -96,9 +97,9 @@ const SECTIONS: [string, string, IconName, string, string, string, string][] = [
     "app",
     "Appearance",
     "palette",
-    "Theme and install",
+    "Theme, time zone and install",
     "#bf5af2",
-    "How GP Sync looks, and GP Sync as an app.",
+    "How GP Sync looks, the time zone for days and times, and GP Sync as an app.",
     "App",
   ],
   [
@@ -209,7 +210,7 @@ function sectionSync(s: Status | null): string {
         <div class="seg grid w-full grid-cols-3 sm:grid-cols-6" id="set-speed">${presets.map((p) => `<button data-mbps="${p}" aria-pressed="${p === draft.speed}">${p ? `${p} Mbps` : "No limit"}</button>`).join("")}</div>
         ${field("Custom (Mbps)", `<input class="input" id="set-mbps" type="number" min="0" step="0.5" value="${draft.speed || ""}" placeholder="No limit">`, "Leave room for video calls and streaming at home. Limits the upload to Google only.")}
         <div class="flex items-center gap-2 text-sm text-ink-2" id="set-speed-note"></div>
-        ${field("Files at once", `<select class="input" id="set-workers">${[1, 2, 3, 4, 6, 8].map((n) => `<option value="${n}" ${n === draft.workers ? "selected" : ""}>${n}</option>`).join("")}</select>`, "Per account. Several small photos go up much faster side by side; the speed limit is shared between them.")}
+        ${field("Files at once", `<select class="input" id="set-workers">${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === draft.workers ? "selected" : ""}>${n}</option>`).join("")}</select>`, "Per account. Several small photos go up much faster side by side; the speed limit is shared between them.")}
       </div></section>
     <section class="card xl:col-span-2">${cardHead("How syncing works", "info")}
       <div class="card-b grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
@@ -595,6 +596,31 @@ window.addEventListener("themechange", () => {
   if (note) note.innerHTML = themeNote(currentTheme());
 });
 
+/** Time zone: the system default, or any zone. Days, upload hours, the weekly summary and every
+ * time shown follow it. */
+function timeZoneCard(): string {
+  const tz = status()?.tz;
+  const chosen = cfg?.timezone ?? "";
+  const sys = currentName(tz?.system || Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const sysOffset = zoneOffset(sys);
+  const long = zoneLongName(sys);
+  const sysLabel = `System default · ${zoneTitle(sys)}${sysOffset !== null ? ` · ${offsetLabel(sysOffset)}` : ""}${long ? ` · ${long}` : ""}`;
+  const options = zoneOptions()
+    .map(
+      (z) => `<option value="${esc(z.zone)}" ${z.zone === chosen ? "selected" : ""}>${esc(z.label)}</option>`,
+    )
+    .join("");
+  const now = clock(Date.now() / 1000);
+  return `<section class="card">${cardHead("Time zone", "clock", `<span id="set-tz-now" class="tabular-nums">${esc(now)} now</span>`)}
+    <div class="card-b space-y-3">
+      <select class="input" id="set-tz" aria-label="Time zone">
+        <option value="" ${chosen ? "" : "selected"}>${esc(sysLabel)}</option>
+        ${options}
+      </select>
+      <p class="text-xs text-ink-3">Days in History and Insights, upload hours, the weekly summary and every time shown use this zone. The system default is the app's TZ setting, or this device's zone when it has none.</p>
+    </div></section>`;
+}
+
 function sectionApp(): string {
   const theme = currentTheme();
   const opts: [string, string, IconName, string][] = [
@@ -619,6 +645,7 @@ function sectionApp(): string {
           )
           .join("")}</div>
       </div></section>
+    ${timeZoneCard()}
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
       <section class="card flex flex-col ${signIn ? "" : "md:col-span-2"}">${cardHead("Install as an app", "download", installBadge())}
         <div class="card-b flex flex-1 flex-col gap-3 text-sm text-ink-2">
@@ -982,6 +1009,14 @@ function wire(): void {
     if (doc.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches)
       doc.startViewTransition(pick);
     else pick();
+  });
+
+  on("set-tz", "change", async (e) => {
+    const zone = (e.target as HTMLSelectElement).value;
+    await save({ timezone: zone }, zone ? `Time zone: ${zoneTitle(zone)}` : "Time zone: system default");
+    await refresh(); // the new zone reaches every page with the status
+    const now = document.getElementById("set-tz-now");
+    if (now) now.textContent = `${clock(Date.now() / 1000)} now`;
   });
 
   // api

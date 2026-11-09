@@ -8,7 +8,7 @@ import {
 import { $, animateChange, esc, html, toast } from "../lib/dom";
 import { ago, fileName, folderOf, num, pct } from "../lib/format";
 import { icon } from "../lib/icons";
-import { setPauseControl, status } from "../lib/store";
+import { setPauseControl, setRefreshControl, status } from "../lib/store";
 import { confirmDialog } from "../lib/dialog";
 import {
   accountMenu,
@@ -151,7 +151,7 @@ function row(i: DateItem, r: DatesReport): string {
         : "In Google (unchecked)";
   const previousLabel = i.previous_google_source === "sent" ? "Before fix · last sent" : "Before fix";
   const hint = i.fix === "waiting" ? "" : i.error;
-  return `<div class="row flex-wrap items-start px-4 py-3 sm:flex-nowrap">
+  return `<div data-key="${esc(i.name)}" class="row flex-wrap items-start px-4 py-3 sm:flex-nowrap">
     ${canPick ? `<input type="checkbox" class="mt-3 size-4 accent-[var(--accent)]" data-pick="${esc(i.name)}" ${picked.has(i.name) ? "checked" : ""} aria-label="Pick ${esc(fileName(i.name))}">` : '<span class="w-4 shrink-0"></span>'}
     <span class="clickable" ${openAttrs(i.name)}>${thumb(i.name)}</span>
     <div class="min-w-0 flex-1 basis-48">
@@ -202,13 +202,16 @@ function render(): void {
   });
   const available = new Set(r.items.filter((i) => waiting(i) || fixable(i)).map((i) => i.name));
   for (const name of picked) if (!available.has(name)) picked.delete(name);
-  html(
-    $("#dt-refresh"),
-    r.refreshing
-      ? `${icon("loader", "spin")}<span class="page-bar-label">Reading your library…</span>`
-      : `${icon("refresh")}<span class="page-bar-label">Check dates with Google</span>`,
-  );
-  ($("#dt-refresh") as HTMLButtonElement).disabled = r.refreshing;
+  // The header's refresh button checks dates with Google here (no second button on the page).
+  setRefreshControl({
+    label: r.refreshing ? "Reading your library from Google…" : `Check dates in ${account} with Google`,
+    busy: r.refreshing,
+    run: async () => {
+      await post("dates/refresh", { account });
+      void load();
+      return "Reading your library from Google";
+    },
+  });
   html(
     $("#dt-when"),
     r.refreshed ? `Checked with Google ${ago(r.refreshed)}` : "Not checked with Google yet",
@@ -322,8 +325,7 @@ function onClick(e: Event): void {
   const t = e.target as HTMLElement;
   const b = t.closest<HTMLElement>("button");
   if (!b) return;
-  if (b.id === "dt-refresh") void act("refresh", {}, "Reading your library from Google");
-  else if (b.dataset.show) {
+  if (b.dataset.show) {
     if (b.dataset.show === show) return;
     show = b.dataset.show as DateFilter;
     shown = 60;
@@ -392,7 +394,7 @@ function linkedAccount(args: string[] | undefined): string {
 }
 
 const dates: View = {
-  subtitle: "Fix items Google dated wrong",
+  subtitle: "Photos and videos Google gave the wrong day",
   mount(el, args) {
     account = linkedAccount(args);
     picked.clear();
@@ -403,7 +405,6 @@ const dates: View = {
     <section class="page-bar card mb-4 p-3">
       <span id="dt-acc" class="page-bar-main"></span>
       <span class="page-bar-when" id="dt-when"></span>
-      <button class="btn" id="dt-refresh" aria-label="Check dates with Google">${icon("refresh")}<span class="page-bar-label">Check dates with Google</span></button>
     </section>
     <details class="mb-4 px-1 text-sm text-ink-3">
       <summary class="cursor-pointer font-medium text-ink-2">How it works</summary>
@@ -443,6 +444,7 @@ const dates: View = {
     clearInterval(timer);
     request++;
     setPauseControl(null);
+    setRefreshControl(null);
   },
 };
 

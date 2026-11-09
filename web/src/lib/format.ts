@@ -84,12 +84,26 @@ export function until(unix: number, now = Date.now() / 1000): string {
   return "in " + duration(d).replace(/ \d+ s$/, "");
 }
 
+// The time zone chosen in Settings (or the system default), from the status. Undefined: the
+// browser's own zone, until the status arrives.
+let zone: string | undefined;
+
+export function setZone(name: string | undefined): void {
+  try {
+    if (name) new Intl.DateTimeFormat([], { timeZone: name }); // unknown to this browser: keep its own
+    zone = name || undefined;
+  } catch {
+    zone = undefined;
+  }
+}
+
 export function clock(unix: number): string {
-  return new Date(unix * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(unix * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: zone });
 }
 
 export function date(unix: number, withYear = false): string {
   return new Date(unix * 1000).toLocaleDateString([], {
+    timeZone: zone,
     day: "numeric",
     month: "short",
     ...(withYear ? { year: "numeric" } : {}),
@@ -98,12 +112,22 @@ export function date(unix: number, withYear = false): string {
 
 export function dayLabel(unix: number, now = new Date()): string {
   const d = new Date(unix * 1000);
-  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diff = Math.round((start(now) - start(d)) / 86400000);
+  // The calendar day in the chosen zone, as a number of days.
+  const dayOf = (x: Date) => {
+    const [y, m, dd] = x.toLocaleDateString("sv", { timeZone: zone }).split("-").map(Number);
+    return Date.UTC(y!, m! - 1, dd!) / 86400000;
+  };
+  const diff = dayOf(now) - dayOf(d);
   if (diff === 0) return "Today";
   if (diff === 1) return "Yesterday";
-  if (diff < 7) return d.toLocaleDateString([], { weekday: "long" });
-  return d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  if (diff < 7) return d.toLocaleDateString([], { weekday: "long", timeZone: zone });
+  return d.toLocaleDateString([], {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: zone,
+  });
 }
 
 export function hour(h: number): string {

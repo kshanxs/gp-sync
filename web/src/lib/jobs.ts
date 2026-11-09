@@ -5,6 +5,7 @@ import type { Job } from "./api";
 
 const STEP: Record<string, string> = {
   downloading: "Downloading",
+  local: "Copying from Umbrel",
   deleting: "Replacing in Google",
   uploading: "Uploading",
 };

@@ -1,8 +1,8 @@
 // Shared bits of markup: phase badges, stat tiles, card headers.
 
-import type { Status } from "./api";
+import type { CheckInfo, ReclaimSummary, Status } from "./api";
 import { esc } from "./dom";
-import { ago, duration, hour, speed, until } from "./format";
+import { ago, bytes, duration, hour, num, speed, until } from "./format";
 import { icon, type IconName } from "./icons";
 
 export type Tone = "good" | "warn" | "bad" | "info" | "";
@@ -127,7 +127,7 @@ export function tile(opts: {
 }): string {
   const tag = opts.href ? "a" : "div";
   return `<${tag} class="card metric-card lift flex min-w-0 flex-col p-4${opts.href ? " tile-link" : ""}"${opts.href ? ` href="${opts.href}"` : ""}${opts.id ? ` id="${opts.id}"` : ""}>
-    <div class="flex items-center gap-2.5"><span class="metric-icon grid size-9 shrink-0 place-items-center rounded-xl">${icon(opts.ic, "size-4")}</span><span class="label">${esc(opts.label)}</span></div>
+    <div class="flex min-w-0 items-center gap-2.5"><span class="metric-icon grid size-9 shrink-0 place-items-center rounded-xl">${icon(opts.ic, "size-4")}</span><span class="label line-clamp-2 min-w-0 [overflow-wrap:anywhere]" title="${esc(opts.label)}">${esc(opts.label)}</span></div>
     <div class="num mt-3 truncate text-xl sm:text-2xl" data-v>${opts.value}</div>
     <div class="mt-0.5 truncate text-xs text-ink-3" data-s>${opts.sub ?? ""}</div>
     ${opts.chart !== undefined ? `<div class="mt-auto pt-2" data-c>${opts.chart}</div>` : ""}
@@ -178,4 +178,34 @@ export function thumbFallback(img: HTMLImageElement): void {
   span.className = `${img.className} loaded grid place-items-center text-ink-3`;
   span.innerHTML = icon(img.dataset.kind === "video" ? "video" : "photo", "size-1/2 max-h-6 max-w-6");
   img.replaceWith(span);
+}
+
+/** A note when Google didn't answer the last check of new uploads ("" otherwise). Work goes on meanwhile. */
+export function checkNote(c: CheckInfo | undefined, now = Date.now() / 1000): string {
+  if (!c?.error || !c.waiting) return "";
+  const mins = Math.max(1, Math.ceil(((c.next ?? now) - now) / 60));
+  return `<section class="card mb-4 p-4 text-sm text-warn">Google didn't answer the last check, so ${c.waiting} new upload${c.waiting === 1 ? " waits" : "s wait"} to be confirmed as free. Trying again in about ${mins} min. Other items keep moving meanwhile.</section>`;
+}
+
+/** The line under an account: what counts against storage there and how freeing goes, plus what
+ * was freed so far. */
+export function accountLine(v: ReclaimSummary | undefined): {
+  line: string;
+  freed: string;
+  tone: string;
+  live: boolean;
+} {
+  const freed = v?.done ? `${bytes(v.freed)} freed` : "";
+  if (v?.queued && v.paused)
+    return { line: `Paused · ${num(v.queued)} waiting`, freed, tone: "text-warn", live: false };
+  if (v?.queued)
+    return {
+      line: `Freeing · ${num(v.working)} at once · ${num(v.queued)} left`,
+      freed,
+      tone: "text-run",
+      live: true,
+    };
+  if (v?.counted == null) return { line: "Library not read yet", freed, tone: "text-ink-3", live: false };
+  if (!v.counted) return { line: "Nothing to free", freed, tone: "text-good", live: false };
+  return { line: `${bytes(v.counted)} to free`, freed, tone: "text-ink-3", live: false };
 }

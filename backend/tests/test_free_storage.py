@@ -124,7 +124,8 @@ def library(tmp_path, monkeypatch, media):
 def step(client):
     """One step, as if the waits between asking Google had passed."""
     sync._reclaim_checked.clear()
-    return sync.reclaim_step(lambda a: client)
+    checked = sync.check_step(ACC, lambda a: client, force=True)
+    return sync.reclaim_step(lambda a: client) or checked
 
 
 def test_report_lists_what_counts_biggest_first(library):
@@ -621,3 +622,94 @@ def test_freed_report_times_each_step(library):
     assert t["active"] == pytest.approx(finished - started)
     assert t["timing"]["phased"] == 1 and t["timing"]["phases"]["download"] is not None
     assert t["timing"]["slowest"][0]["name"] == "BIG.jpg"
+
+
+def test_more_than_four_at_once_saved_earlier_is_kept_within_four():
+    sync.meta_set("settings", '{"reclaim": {"workers": 16}, "upload_workers": 8}')
+    st = sync.get_settings()
+    assert st["reclaim"]["workers"] == 4 and st["upload_workers"] == 4
+    sync.q("DELETE FROM meta WHERE k='settings'")
+
+
+# ---- the checker runs apart, and copies already on this server are used first
+
+
+def test_new_items_start_while_the_checker_waits_for_google(library):
+    client = FakeClient(library, {b64(DATA)})
+    sync.reclaim_queue(ACC, ["BIG"])
+    for _ in range(2):
+        step(client)  # downloaded, then uploaded again: waits to be confirmed
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "checking"
+
+    def slow_read(show_progress=True):
+        raise AssertionError("starting items must not read the library")
+
+    client.update_cache = slow_read
+    sync.reclaim_queue(ACC, ["SMALL"])
+    sync.reclaim_step(lambda a: client)  # SMALL starts (its fake download fails) without a library read
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='SMALL'")[0][0] == "failed"
+
+
+def test_checker_waits_for_google_to_list_a_fresh_upload(library):
+    client = FakeClient(library, {b64(DATA)})
+    sync.reclaim_queue(ACC, ["BIG"])
+    for _ in range(2):
+        step(client)
+    sync.check_state.clear()
+    assert not sync.check_step(ACC, lambda a: client)  # uploaded a moment ago: not read yet
+    later = sync.time.time() + sync.CHECK_SETTLE + 1
+    assert sync.check_step(ACC, lambda a: client, now=later)
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "done"
+    assert not sync.check_step(ACC, lambda a: client, now=later + 5)  # nothing left to check
+    assert sync.storage_report(ACC)["check"]["waiting"] == 0
+
+
+def _on_this_server(tmp_path, data, name="IMG_1.jpg", account="other@example.com"):
+    original = tmp_path / "media" / name
+    original.parent.mkdir(parents=True, exist_ok=True)
+    original.write_bytes(data)
+    sync.os.utime(original, (1_600_000_000, 1_600_000_000))
+    sync.q("INSERT OR REPLACE INTO files (path, size, status, account, sha1, updated) VALUES (?,?,?,?,?,?)",
+           (str(original), len(data), "uploaded", account, hashlib.sha1(data).hexdigest(), 1))  # fmt: skip
+    return original
+
+
+def test_uses_the_copy_on_this_server_instead_of_downloading(library, tmp_path, monkeypatch):
+    original = _on_this_server(tmp_path, DATA)
+
+    def no_download(url, **kw):
+        raise AssertionError("downloaded from Google although the file is here")
+
+    monkeypatch.setattr("requests.get", no_download)
+    client = FakeClient(library, {b64(DATA)})
+    sync.reclaim_queue(ACC, ["BIG"])
+    for _ in range(3):
+        step(client)
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "done"
+    assert client.uploads[0][0] == DATA
+    # The original is untouched: still there, same bytes, same time.
+    assert original.read_bytes() == DATA and original.stat().st_mtime == 1_600_000_000
+
+
+def test_a_changed_copy_on_this_server_is_not_used(library, tmp_path):
+    _on_this_server(tmp_path, DATA)
+    (tmp_path / "media" / "IMG_1.jpg").write_bytes(b"x" * len(DATA))  # changed since its fingerprint
+    client = FakeClient(library, {b64(DATA)})
+    sync.reclaim_queue(ACC, ["BIG"])
+    step(client)  # downloaded from Google instead
+    state, local = sync.q("SELECT state, local FROM reclaim WHERE media_key='BIG'")[0]
+    assert state == "downloaded" and sync.Path(local).read_bytes() == DATA
+
+
+def test_each_account_reports_what_still_counts(library):
+    s = sync.storage_report(ACC)["summary"][ACC]
+    assert s["counted"] == len(DATA) + 5  # BIG and SMALL; free, partner and trashed items don't count
+    with Storage(library) as st:
+        st.update([item("BIG", quota=0), item("SMALL", data=b"small", quota=0)])
+    sync.meta_set(f"library_refreshed:{ACC}", "2")  # as every library read does
+    assert sync.storage_summary()[ACC]["counted"] == 0  # read again after the library changed
+
+
+def test_an_unread_library_reports_nothing_counted(tmp_path, monkeypatch, media):
+    monkeypatch.setattr(sync, "GPMC_HOME", tmp_path / "none")
+    assert sync.storage_summary()[ACC]["counted"] is None

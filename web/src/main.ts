@@ -7,10 +7,13 @@ import { icon, type IconName } from "./lib/icons";
 import {
   onMode,
   onPauseControl,
+  onRefreshControl,
   onStatus,
   pauseControl,
   refresh,
+  refreshControl,
   setPauseControl,
+  setRefreshControl,
   startPolling,
   status,
 } from "./lib/store";
@@ -30,6 +33,9 @@ import insights from "./views/insights";
 import library from "./views/library";
 import network from "./views/network";
 import overview from "./views/overview";
+import syncView from "./views/sync";
+import { currentName } from "./lib/zones";
+import { tabLive } from "./lib/live";
 import settings from "./views/settings";
 import dates from "./views/dates";
 import sources from "./views/sources";
@@ -49,6 +55,7 @@ interface Route {
 
 const ROUTES: Route[] = [
   { id: "overview", title: "Overview", ic: "dashboard", view: overview, group: "Backup" },
+  { id: "sync", title: "Sync", ic: "cloudUp", view: syncView, group: "Backup" },
   { id: "upload", title: "Upload", ic: "upload", view: upload, group: "Backup" },
   { id: "activity", title: "Activity", ic: "activity", view: activity, group: "Backup" },
   { id: "library", title: "Library", ic: "library", view: library, group: "Backup" },
@@ -65,7 +72,10 @@ const ROUTES: Route[] = [
   { id: "settings", title: "Settings", ic: "settings", view: settings, group: "System" },
   { id: "about", title: "About", ic: "info", view: about, group: "System" },
 ];
-const TABS = ["overview", "activity", "upload", "network"];
+const TABS = ["overview", "sync", "upload", "activity"];
+
+// A progress ring around a tab's icon (hidden until that tab's work runs).
+const TAB_RING = `<svg class="tab-ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="tab-ring-track" cx="18" cy="18" r="16"/><circle class="tab-ring-arc" cx="18" cy="18" r="16" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" transform="rotate(-90 18 18)"/></svg>`;
 
 initTheme();
 
@@ -127,7 +137,7 @@ function shell(): string {
         .map((r) =>
           r.id === "upload"
             ? `<a href="#/upload" data-nav="upload" class="tab-fab" aria-label="Add photos and videos from this device"><span>${icon("upload", "size-5")}</span></a>`
-            : `<a href="#/${r.id}" data-nav="${r.id}" class="tab"><span class="tab-ic">${icon(r.ic, "size-5")}<i class="tab-dot hidden" data-dot="${r.id}"></i></span><span>${r.title}</span></a>`,
+            : `<a href="#/${r.id}" data-nav="${r.id}" class="tab"><span class="tab-ic"><span class="tab-glyph" data-glyph="${r.id}">${icon(r.ic, "size-5")}</span>${TAB_RING}<i class="tab-dot hidden" data-dot="${r.id}"></i></span><span class="tab-label" data-label="${r.id}">${r.title}</span></a>`,
         )
         .join("")}
       <button id="btn-more" class="tab" aria-haspopup="dialog"><span class="tab-ic">${icon("more", "size-5")}<i class="tab-dot hidden" data-dot="more"></i></span><span>More</span></button>
@@ -179,6 +189,7 @@ function mountView(r: Route, rest: string[]): void {
   active?.view.unmount?.();
   unsubscribe?.();
   setPauseControl(null); // back to uploads, unless the new page takes the button
+  setRefreshControl(null); // back to scanning
   active = r;
   const el = $("#view");
   el.scrollTop = 0;
@@ -306,7 +317,7 @@ function updateShell(s: Status): void {
     health: warnHealth ? ["!", "bad"] : ["", ""],
     dates: s.dates?.waiting ? [String(s.dates.waiting), "info"] : ["", ""],
     settings: s.accounts.length ? ["", ""] : ["1", "info"],
-    overview: s.phase === "uploading" && s.total ? [`${s.done}/${s.total}`, "info"] : ["", ""],
+    sync: s.phase === "uploading" && s.total ? [`${s.done}/${s.total}`, "info"] : ["", ""],
   };
   $$("[data-count]").forEach((el) => {
     const [v, tone] = counts[el.dataset.count ?? ""] ?? ["", ""];
@@ -321,6 +332,39 @@ function updateShell(s: Status): void {
     el.classList.toggle("hidden", !on);
   });
   paintPause(s);
+  paintTabs(s);
+}
+
+let tabTurn = 0;
+
+/** Phones: the tab bar shows what runs. Sync gets a ring while files upload; Overview turns into
+ * the background work running now (Free storage, copies, date fixes) with its progress, taking
+ * turns every few seconds when several run. */
+function paintTabs(s: Status | null = status()): void {
+  if (!s) return;
+  const setTab = (id: string, ic: IconName, label: string, on: boolean, p: number | null, paused = false) => {
+    const tab = document.querySelector<HTMLElement>(`#tabbar [data-nav="${id}"]`);
+    if (!tab) return;
+    const glyph = $(`[data-glyph="${id}"]`, tab);
+    if (glyph.dataset.ic !== ic) {
+      glyph.dataset.ic = ic;
+      glyph.innerHTML = icon(ic, "size-5");
+    }
+    const text = $(`[data-label="${id}"]`, tab);
+    if (text.textContent !== label) text.textContent = label;
+    tab.classList.toggle("live", on);
+    tab.classList.toggle("live-paused", paused);
+    tab.classList.toggle("live-spin", on && p === null);
+    const arc = tab.querySelector<SVGCircleElement>(".tab-ring-arc");
+    if (arc) arc.style.strokeDashoffset = String(on && p !== null ? 100 - Math.max(4, Math.min(100, p)) : 75);
+    tab.setAttribute("aria-label", on ? `${label}, ${p !== null ? `${Math.round(p)}%` : "running"}` : label);
+  };
+  const up = s.phase === "uploading" || (s.phase !== "paused" && !!s.uploading?.length);
+  setTab("sync", up ? "upload" : "cloudUp", "Sync", up, up && s.total ? pct(s.done, s.total) : null);
+  const bg = tabLive(s, tabTurn);
+  const ics: Record<string, IconName> = { freed: "cloud", copied: "copy", fixed: "clock" };
+  if (bg) setTab("overview", ics[bg.key] ?? "dashboard", bg.verb, true, bg.pct, bg.paused);
+  else setTab("overview", "dashboard", "Overview", false, null);
 }
 
 /** The header's pause button: uploads, or what the open page says it controls (Free storage). */
@@ -352,12 +396,19 @@ let scanTimer = 0;
 
 function syncButton(s: Status | null = status()): void {
   const btn = $("#btn-sync");
-  const working = s?.phase === "scanning" || s?.phase === "starting";
+  const ctl = refreshControl();
+  const working = ctl ? ctl.busy : s?.phase === "scanning" || s?.phase === "starting";
   const busy = working || Date.now() < scanHoldUntil;
   btn.classList.toggle("busy", busy);
-  btn.classList.toggle("uploading", s?.phase === "uploading" && !busy);
+  btn.classList.toggle("uploading", !ctl && s?.phase === "uploading" && !busy);
   btn.toggleAttribute("aria-busy", busy);
-  const label = busy ? "Scanning…" : s?.phase === "uploading" ? "Uploading · scan again" : "Scan now";
+  const label = ctl
+    ? ctl.label
+    : busy
+      ? "Scanning…"
+      : s?.phase === "uploading"
+        ? "Uploading · scan again"
+        : "Scan now";
   if (btn.title !== label) {
     btn.title = label;
     btn.setAttribute("aria-label", label);
@@ -396,13 +447,14 @@ function installButtons(): void {
   $("#side-install").classList.toggle("hidden", installState() === "installed");
 }
 
-/** The server works out local days, schedule hours and dates in file names in this time zone:
- * keep it current (it used to be saved only with the Schedule or Alerts settings). */
+/** Tell the server this device's time zone: it is the system default when the app wasn't given
+ * one (TZ), and Settings › Appearance can choose another. */
 async function saveTimeZone(): Promise<void> {
-  const tz = -new Date().getTimezoneOffset();
+  const zone = currentName(Intl.DateTimeFormat().resolvedOptions().timeZone);
   try {
-    const s = await get<{ tz_offset_min: number }>("settings");
-    if (s.tz_offset_min !== tz) await post("settings", { tz_offset_min: tz });
+    const s = await get<{ system_timezone: string; tz_offset_min: number }>("settings");
+    if (zone && s.system_timezone !== zone)
+      await post("settings", { system_timezone: zone, tz_offset_min: -new Date().getTimezoneOffset() });
   } catch {
     // signed out or offline: tried again next time the dashboard opens
   }
@@ -485,8 +537,12 @@ function boot(): void {
     clearTimeout(scanTimer);
     scanTimer = window.setTimeout(() => syncButton(), 1250);
     try {
-      await post("sync");
-      toast(status()?.paused ? "Scanning (uploads stay paused)" : "Scanning for new photos and videos");
+      const ctl = refreshControl();
+      if (ctl) toast(await ctl.run());
+      else {
+        await post("sync");
+        toast(status()?.paused ? "Scanning (uploads stay paused)" : "Scanning for new photos and videos");
+      }
     } catch {
       toast("Couldn't reach the app", "bad");
     }
@@ -520,7 +576,12 @@ function boot(): void {
     offline.classList.toggle("hidden", document.documentElement.dataset.offline !== "1"),
   ).observe(document.documentElement, { attributes: true, attributeFilter: ["data-offline"] });
   onStatus(updateShell);
+  window.setInterval(() => {
+    tabTurn++;
+    paintTabs();
+  }, 4000);
   onPauseControl(() => paintPause());
+  onRefreshControl(() => syncButton());
   onStatus(askUndated);
   onMode((live) => $("#live").classList.toggle("hidden", !live));
   route();

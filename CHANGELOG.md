@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.5.7
+
+- Faster Free storage and Copy accounts:
+  - Checking with Google that new uploads don't count against storage now runs on its own, per
+    account. One library read about once a minute covers every item waiting, with a longer wait
+    each time Google doesn't answer. Downloads, uploads and new items no longer wait for it (before,
+    new items waited for a full library read every minute, which took a while on big libraries).
+  - Before downloading from Google, GP Sync looks for a file on this server with exactly the same
+    checksum and copies it instead ("Copying from Umbrel"). The checksum is checked again while
+    copying, and the original is never moved or changed.
+- Keep in sync (Copy accounts): keep one account copied into another, or both ways. GP Sync
+  compares both libraries straight away, then every hour, and copies only what's missing. Items
+  already in both accounts are skipped by checksum, and copies are never sent back.
+- A new Sync page holds normal backup: what uploads now and next, backup progress and each folder.
+- Overview: Running now at the top, then a card per process (uploads, freeing storage, copies, date
+  fixes) with what it is doing, what it did today and the last 14 days. Tap one for its page.
+- History and Insights cover every process: each one's own history, streaks, best day and heat
+  map, or everything together, and this week against last.
+- Phones: the tabs are Overview, Sync, Add files, Activity and More. Sync gets a progress ring while
+  files upload, and Overview turns into the work running now (freeing, copying, fixing dates) with
+  its progress, taking turns when several run.
+- No more flicker: pages change only what changed (numbers, bars, badges, new rows), so lists don't
+  jump, thumbnails don't reload and charts keep their hover and tooltip.
+- Free storage: each account shows "Nothing to free", "1.9 GB to free", "Freeing · 3 at once · 7
+  left" or "Paused · 7 waiting", plus what was freed so far.
+- Free storage, Fix dates and Copy accounts: the header's refresh button reads the library from
+  Google (the pages' own refresh buttons are gone). "Read my library" shows only when it hasn't been
+  read yet. The Moving now card shows the real count ("3 of 4") and how many wait in the queue.
+- "Items at once" and "Files at once" go up to 4. A saved higher number becomes 4 automatically.
+- The pause button: while work runs, two small moons orbit it and it glows softly.
+- Card labels wrap onto two lines instead of being cut off.
+- Time zone in Settings › Appearance: the system default (TZ, or the dashboard device's zone, for
+  example India Standard Time) or any zone from the list. Days, upload hours, the weekly summary
+  and the times shown follow it, daylight saving included.
+- New README screenshots: Overview, and Overview, Sync and Upload on a phone.
+- A release asks the Umbrel store to pick up the new version straight away.
+
 ## 1.5.6
 
 - Free storage: the "paused" banner fits phones. The text runs the full width under its title,

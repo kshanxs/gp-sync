@@ -9,7 +9,7 @@ import {
 } from "../lib/api";
 import { sparkline } from "../lib/charts";
 import { backupPriorityControl } from "../lib/backup-priority";
-import { $, $$, esc, html, toast } from "../lib/dom";
+import { $, $$, esc, html, toast, touched } from "../lib/dom";
 import { ago, bytes, date, fileName, num, pct } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
 import { host } from "../lib/store";
@@ -391,10 +391,13 @@ function renderFiles(): void {
   renderFilesHead();
   const body = document.getElementById("fo-files");
   if (!body) return;
-  body.innerHTML = shownFiles.length
-    ? `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8" id="fo-grid" data-gallery>${shownFiles.map(fileTile).join("")}</div>
+  html(
+    body,
+    shownFiles.length
+      ? `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8" id="fo-grid" data-gallery>${shownFiles.map(fileTile).join("")}</div>
        <div class="mt-4 flex min-h-10 justify-center" id="fo-sentinel">${moreHtml()}</div>`
-    : `<div class="empty">${icon("library")}${fStatus === "all" && fKind === "all" ? "No photos or videos here" : "Nothing matches"}</div>`;
+      : `<div class="empty">${icon("library")}${fStatus === "all" && fKind === "all" ? "No photos or videos here" : "Nothing matches"}</div>`,
+  );
   watchEnd();
 }
 
@@ -402,6 +405,8 @@ function appendFiles(more: FolderFiles["items"]): void {
   const grid = document.getElementById("fo-grid");
   if (!grid) return renderFiles();
   grid.insertAdjacentHTML("beforeend", more.map(fileTile).join(""));
+  const body = document.getElementById("fo-files");
+  if (body) touched(body);
   const end = document.getElementById("fo-sentinel");
   if (end) end.innerHTML = moreHtml();
 }

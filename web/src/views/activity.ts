@@ -37,30 +37,36 @@ function render(): void {
   const list = document.getElementById("act-list");
   if (!list) return;
   if (!items.length) {
-    list.innerHTML = `<div class="empty">${icon("inbox")}${query ? "Nothing matches your search" : "No activity here yet"}</div>`;
+    html(
+      list,
+      `<div class="empty">${icon("inbox")}${query ? "Nothing matches your search" : "No activity here yet"}</div>`,
+    );
   } else {
     let lastDay = "";
-    list.innerHTML = items
-      .map((l) => {
-        const day = dayLabel(l.time);
-        const head =
-          day !== lastDay
-            ? `<div class="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-bg/90 px-4 py-2 text-xs font-semibold text-ink-2 backdrop-blur">${icon("calendar", "size-3.5 text-ink-3")}${esc(day)}</div>`
+    html(
+      list,
+      items
+        .map((l) => {
+          const day = dayLabel(l.time);
+          const head =
+            day !== lastDay
+              ? `<div class="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-bg/90 px-4 py-2 text-xs font-semibold text-ink-2 backdrop-blur">${icon("calendar", "size-3.5 text-ink-3")}${esc(day)}</div>`
+              : "";
+          lastDay = day;
+          const m = eventMeta[l.kind] ?? eventMeta.info!;
+          const lead = l.name
+            ? thumb(l.name)
+            : `<span class="thumb grid place-items-center text-ink-3">${icon(m.icon, "size-4")}</span>`;
+          const title = l.name ? fileName(l.name) : l.text;
+          const sub = l.name
+            ? `${folderOf(l.name)}${l.kind === "failed" ? " · " + l.text.split(": ").slice(1).join(": ") : ""}`
             : "";
-        lastDay = day;
-        const m = eventMeta[l.kind] ?? eventMeta.info!;
-        const lead = l.name
-          ? thumb(l.name)
-          : `<span class="thumb grid place-items-center text-ink-3">${icon(m.icon, "size-4")}</span>`;
-        const title = l.name ? fileName(l.name) : l.text;
-        const sub = l.name
-          ? `${folderOf(l.name)}${l.kind === "failed" ? " · " + l.text.split(": ").slice(1).join(": ") : ""}`
-          : "";
-        return `${head}<div class="row ${l.name ? "clickable" : ""}" ${l.name ? openAttrs(l.name, true) : ""}><span class="w-11 shrink-0 text-[11px] leading-tight text-ink-3 tabular-nums sm:w-16 sm:text-xs">${clock(l.time)}</span>${lead}
+          return `${head}<div class="row ${l.name ? "clickable" : ""}" ${l.name ? openAttrs(l.name, true) : ""}><span class="w-11 shrink-0 text-[11px] leading-tight text-ink-3 tabular-nums sm:w-16 sm:text-xs">${clock(l.time)}</span>${lead}
           <div class="min-w-0 flex-1"><div class="truncate text-sm" title="${esc(l.text)}">${esc(title)}</div>${sub ? `<div class="truncate text-xs text-ink-3">${esc(sub)}</div>` : ""}</div>
           <span class="badge ${m.tone}" title="${esc(m.label)}">${icon(m.icon)}<span class="hidden sm:inline">${esc(m.label)}</span></span></div>`;
-      })
-      .join("");
+        })
+        .join(""),
+    );
   }
   $("#act-more").classList.toggle("hidden", !more || !items.length);
 }

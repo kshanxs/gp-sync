@@ -10,18 +10,11 @@ import {
 import { $, esc, html, toast } from "../lib/dom";
 import { ago, bytes, date, duration, num, pct, remaining, speed } from "../lib/format";
 import { icon } from "../lib/icons";
-import { setPauseControl, status } from "../lib/store";
-import {
-  accountMenu,
-  avatar,
-  freeingAccounts,
-  openingAccount,
-  rememberAccount,
-  wireAccountMenu,
-} from "../lib/account-menu";
+import { setPauseControl, setRefreshControl, status } from "../lib/store";
+import { avatar, freeingAccounts, openingAccount, rememberAccount } from "../lib/account-menu";
 import { columns } from "../lib/charts";
 import { confirmDialog } from "../lib/dialog";
-import { badge, cardHead, tile, type Tone } from "../lib/ui";
+import { accountLine, badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // Free up Google storage: items that count against it are downloaded (and proven to be Google's
@@ -43,7 +36,7 @@ let kind: "all" | "photo" | "video" = "all";
 const picked = new Set<string>();
 const KIND_NAME = { all: "photos and videos", photo: "photos", video: "videos" } as const;
 const ACTIVE = ["queued", "downloaded", "in_google", "checking"];
-const WORKER_CHOICES = [1, 2, 4, 6, 8, 10, 12, 16];
+const WORKER_CHOICES = [1, 2, 3, 4]; // more makes Google throttle and fail
 
 async function load(): Promise<void> {
   const mine = ++request;
@@ -88,6 +81,7 @@ const thumbOf = (key: string, kind: string, cls = "thumb") =>
 
 const STEP = {
   downloading: { label: "Downloading", ic: "download" },
+  local: { label: "Copying from Umbrel", ic: "server" },
   deleting: { label: "Replacing in Google", ic: "loader" },
   uploading: { label: "Uploading", ic: "upload" },
 } as const;
@@ -144,7 +138,7 @@ function gridTile(i: StorageItem, r: StorageReport, working: Map<string, Reclaim
   const hint = ["downloaded", "in_google", "failed", "counts"].includes(i.state) ? (i.error ?? "") : "";
   const pickable = i.state === "" && !r.blocked;
   const chosen = picked.has(i.key);
-  return `<figure class="media-tile group relative overflow-hidden rounded-xl border ${chosen ? "border-accent" : "border-line"} bg-panel">
+  return `<figure data-key="${esc(i.key)}" class="media-tile group relative overflow-hidden rounded-xl border ${chosen ? "border-accent" : "border-line"} bg-panel">
     <label class="shimmer relative block aspect-square overflow-hidden ${pickable ? "cursor-pointer" : "cursor-default"}">
       ${thumbOf(i.key, i.kind, "zoom-img fade-img size-full object-cover")}
       ${pickable ? `<input type="checkbox" class="peer sr-only" data-pick="${esc(i.key)}" ${chosen ? "checked" : ""} aria-label="Pick ${esc(i.name)}">` : ""}
@@ -169,23 +163,12 @@ function accountStrip(r: StorageReport): string {
   // A list on phones (one account per row, nothing cut off), columns on wider screens.
   return `<div class="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3" role="tablist" aria-label="Accounts">${accs
     .map((a, n) => {
-      const v = sum[a];
-      const line = !v
-        ? "Nothing freed yet"
-        : v.paused && v.queued
-          ? `Paused · ${num(v.queued)} waiting`
-          : v.queued
-            ? `Freeing · ${num(v.working)} at once · ${num(v.queued)} left`
-            : v.done
-              ? `${bytes(v.freed)} freed · ${num(v.done)} items`
-              : "Nothing freed yet";
-      const tone = v?.queued ? (v.paused ? "text-warn" : "text-accent") : "text-ink-3";
-      const live = v?.queued && !v.paused;
+      const { line, freed, tone, live } = accountLine(sum[a]);
       const on = a === account;
       return `<button type="button" role="tab" data-acc="${esc(a)}" aria-selected="${on}" class="acc-chip card flex min-w-0 items-center gap-3 px-3 py-2.5 text-left ${on ? "border-accent" : ""}">
         ${avatar(a, "size-8")}
         <span class="min-w-0 flex-1"><span class="flex min-w-0 items-center gap-1.5"><span class="truncate text-sm font-medium" title="${esc(a)}">${esc(a)}</span>${n === 0 ? '<span class="shrink-0 rounded-full bg-panel-2 px-1.5 text-[10px] font-medium text-ink-3">Main</span>' : ""}</span>
-        <span class="flex min-w-0 items-center gap-1.5 text-xs ${tone}">${live ? '<span class="dot live shrink-0"></span>' : ""}<span class="truncate">${esc(line)}</span></span></span>
+        <span class="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs"><span class="flex min-w-0 items-center gap-1.5 ${tone}">${live ? '<span class="dot live shrink-0"></span>' : ""}<span class="truncate">${esc(line)}</span></span>${freed ? `<span class="text-ink-3">· ${esc(freed)}</span>` : ""}</span></span>
         ${on ? icon("check", "size-4 shrink-0 text-accent") : ""}
       </button>`;
     })
@@ -212,7 +195,7 @@ function workingCard(r: StorageReport): string {
         const step = STEP[c.step];
         const known = c.step !== "deleting";
         const share = Math.floor(pct(c.done, c.total));
-        return `<li class="flex items-center gap-3 px-4 py-3">
+        return `<li data-key="${esc(c.key)}" class="flex items-center gap-3 px-4 py-3">
         <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2 text-accent">${icon(step.ic, `size-4 ${known ? "" : "spin"}`)}</span>
         <span class="min-w-0 flex-1">
           <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium" title="${esc(c.name ?? c.key)}">${esc(c.name ?? c.key)}</span><span class="ml-auto shrink-0 text-sm font-semibold tabular-nums">${known ? `${share}%` : ""}</span></span>
@@ -282,11 +265,21 @@ function renderList(r: StorageReport): void {
         : ""
     }
     ${r.error ? `<section class="card mb-4 p-4 text-sm text-bad">${esc(r.error)}</section>` : ""}
+    ${checkNote(r.check)}
     ${oursCount ? `<section class="card mb-4 flex items-start gap-3 p-4 text-sm">${icon("warn", "size-5 shrink-0 text-warn")}<div><div class="font-medium">GP Sync's uploads count against storage in this account</div><div class="mt-0.5 text-ink-3">Re-uploading wouldn't free anything, so nothing is deleted here.</div></div></section>` : ""}
     <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
-      ${tile({ label: "Counts against storage", value: bytes(r.counted_bytes), ic: "cloud", sub: `${num(r.counted)} of ${num(r.total)} items` })}
+      ${tile({ label: "Counts against storage", value: bytes(r.counted_bytes), ic: "cloud", sub: r.refreshing ? "Reading your library…" : `${num(r.counted)} of ${num(r.total)} items${r.refreshed ? ` · read ${ago(r.refreshed)}` : ""}` })}
       ${tile({ label: "Freed by GP Sync", value: bytes(r.freed.bytes), ic: "sparkles", sub: r.freed.count ? `${num(r.freed.count)} item${r.freed.count === 1 ? "" : "s"} · see details` : "Nothing freed yet", tone: r.freed.count ? "good" : "", href: `#/storage/${encodeURIComponent(account)}/freed` })}
-      ${tile({ label: "In progress", value: num(busy), ic: "hourglass", sub: r.paused && busy ? "Paused" : working.size ? `${num(working.size)} at once (up to ${workers})` : busy ? "Waiting for the next step" : "Nothing running" })}
+      ${tile({
+        label: "Moving now",
+        value: `${num(working.size)} of ${workers}`,
+        ic: "hourglass",
+        sub: r.paused
+          ? `Paused · ${num(r.left?.count ?? busy)} waiting`
+          : r.left?.count
+            ? `${num(r.left.count)} waiting in the queue`
+            : "Nothing waiting",
+      })}
       ${tile({
         label: "Left to free",
         value: bytes(r.left?.bytes ?? 0),
@@ -405,7 +398,7 @@ function renderFreed(): void {
               .map(
                 (
                   i,
-                ) => `<figure class="media-tile group relative overflow-hidden rounded-xl border border-line bg-panel">
+                ) => `<figure data-key="${esc(i.key)}" class="media-tile group relative overflow-hidden rounded-xl border border-line bg-panel">
           <a class="shimmer relative block aspect-square overflow-hidden" href="${esc(i.google_url)}" target="_blank" rel="noopener" title="Open in Google Photos">
             ${thumbOf(i.key, i.kind, "zoom-img fade-img size-full object-cover")}
             <span class="absolute top-2 right-2">${badge("Freed", "good", "ok")}</span>
@@ -517,18 +510,17 @@ function renderTime(): void {
 
 function render(): void {
   const r = report;
-  const accs = status()?.accounts ?? [];
-  // Redrawn only when it changes: a redraw would close the menu while it is open.
-  const accKey = [account, ...accs, ...(status()?.login_failed ?? [])].join("|");
-  const accBox = $("#st-acc");
-  // With several accounts the list below picks the account: no second picker up here.
-  accBox.classList.toggle("hidden", accs.length > 1);
-  if (accBox.dataset.key !== accKey) {
-    accBox.dataset.key = accKey;
-    html(accBox, accountMenu("st-account", account));
-    wireAccountMenu("st-account", pickAccount);
-  }
   if (r?.account) {
+    // The header's refresh button reads this account's library from Google here (no second button).
+    setRefreshControl({
+      label: r.refreshing ? "Reading your library from Google…" : `Refresh ${account} from Google`,
+      busy: r.refreshing,
+      run: async () => {
+        await post("storage/refresh", { account });
+        void load();
+        return "Reading your library from Google";
+      },
+    });
     // The header's pause button pauses freeing here, not uploads.
     const paused = !!r.paused;
     setPauseControl({
@@ -551,14 +543,6 @@ function render(): void {
     );
     return;
   }
-  html(
-    $("#st-refresh"),
-    r.refreshing
-      ? `${icon("loader", "spin")}<span class="page-bar-label">Reading your library…</span>`
-      : `${icon("refresh")}<span class="page-bar-label">${r.listed ? "Refresh from Google" : "Read my library"}</span>`,
-  );
-  ($("#st-refresh") as HTMLButtonElement).disabled = r.refreshing;
-  html($("#st-when"), r.refreshed ? `Updated ${ago(r.refreshed)}` : "");
   if (sub === "freed") {
     renderFreed();
     return;
@@ -573,6 +557,7 @@ function render(): void {
       `${accountStrip(r)}<section class="card p-6 text-center"><div class="mx-auto max-w-lg space-y-2">${icon("cloud", "mx-auto size-8 text-ink-3")}
         <div class="text-base font-medium">See what uses your Google storage</div>
         <p class="text-sm text-ink-3">GP Sync reads your library list (nothing changes) and shows what counts against storage. The first read can take a few minutes.</p>
+        <button class="btn primary mt-2" id="st-read" ${r.refreshing ? "disabled" : ""}>${r.refreshing ? `${icon("loader", "spin")}Reading your library…` : `${icon("refresh")}Read my library`}</button>
         ${r.error ? `<p class="text-sm text-bad">${esc(r.error)}</p>` : ""}</div></section>`,
     );
     return;
@@ -640,7 +625,7 @@ function onClick(e: Event): void {
   const t = e.target as HTMLElement;
   const b = t.closest<HTMLElement>("button");
   if (!b) return;
-  if (b.id === "st-refresh") void act("refresh", {}, "Reading your library from Google");
+  if (b.id === "st-read") void act("refresh", {}, "Reading your library from Google");
   else if (b.dataset.acc) {
     if (b.dataset.acc !== account) pickAccount(b.dataset.acc);
   } else if (b.id.startsWith("st-opt-")) toggleOption(b);
@@ -698,7 +683,7 @@ function subOf(args: string[] | undefined): typeof sub {
 }
 
 const storage: View = {
-  subtitle: "Free up Google storage",
+  subtitle: "What counts against your quota, and moving it off",
   mount(el, args) {
     // Coming back opens the account that is freeing (or the one picked last), not always the main one.
     account = openingAccount("storage", args, freeingAccounts());
@@ -707,11 +692,6 @@ const storage: View = {
     freedShown = 60;
     freed = null;
     el.innerHTML = `
-    <section class="page-bar card mb-4 p-3">
-      <span id="st-acc" class="page-bar-main"></span>
-      <span class="page-bar-when" id="st-when"></span>
-      <button class="btn" id="st-refresh" aria-label="Refresh from Google">${icon("refresh")}<span class="page-bar-label">Refresh from Google</span></button>
-    </section>
     <div id="st-body"><div class="grid grid-cols-2 gap-4 xl:grid-cols-4">${'<div class="card skeleton h-28"></div>'.repeat(4)}</div><div class="card skeleton mt-4 h-72"></div></div>`;
     el.addEventListener("click", onClick);
     el.addEventListener("change", (e) => {
@@ -754,6 +734,7 @@ const storage: View = {
     clearInterval(timer);
     request++;
     setPauseControl(null);
+    setRefreshControl(null);
   },
 };
 

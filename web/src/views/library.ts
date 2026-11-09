@@ -1,5 +1,5 @@
 import { get, type Duplicates, type FileItem, type Status } from "../lib/api";
-import { $, $$, esc, html } from "../lib/dom";
+import { $, $$, esc, html, touched } from "../lib/dom";
 import { ago, bytes, fileName, folderOf, num } from "../lib/format";
 import { icon } from "../lib/icons";
 import { host, status } from "../lib/store";
@@ -75,10 +75,13 @@ function renderFiles(): void {
   const body = document.getElementById("lib-body");
   if (!body) return;
   html($("#lib-count"), `${num(total)} file${total === 1 ? "" : "s"}`);
-  body.innerHTML = items.length
-    ? `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8" id="lib-grid" data-gallery>${items.map(tileHtml).join("")}</div>
+  html(
+    body,
+    items.length
+      ? `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8" id="lib-grid" data-gallery>${items.map(tileHtml).join("")}</div>
       <div class="mt-4 flex min-h-10 justify-center" id="lib-sentinel">${moreHtml()}</div>`
-    : `<div class="empty">${icon("library")}No files match</div>`;
+      : `<div class="empty">${icon("library")}No files match</div>`,
+  );
   watchEnd();
 }
 
@@ -87,6 +90,7 @@ function appendFiles(more: FileItem[]): void {
   const grid = document.getElementById("lib-grid");
   if (!grid) return renderFiles();
   grid.insertAdjacentHTML("beforeend", more.map(tileHtml).join(""));
+  touched($("#lib-body"));
   html($("#lib-count"), `${num(total)} file${total === 1 ? "" : "s"}`);
   const end = document.getElementById("lib-sentinel");
   if (end) end.innerHTML = moreHtml();
@@ -141,8 +145,10 @@ function show(): void {
   $$("button", $("#lib-tab")).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.t === tab)));
   $("#lib-tools").classList.toggle("hidden", tab !== "files");
   observer?.disconnect();
-  $("#lib-body").innerHTML =
-    `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">${'<div class="card overflow-hidden"><div class="shimmer media-tile aspect-square"></div><div class="space-y-1.5 p-2.5"><div class="skeleton h-3.5 w-3/4"></div><div class="skeleton h-3 w-1/2"></div></div></div>'.repeat(12)}</div>`;
+  html(
+    $("#lib-body"),
+    `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">${'<div class="card overflow-hidden"><div class="shimmer media-tile aspect-square"></div><div class="space-y-1.5 p-2.5"><div class="skeleton h-3.5 w-3/4"></div><div class="skeleton h-3 w-1/2"></div></div></div>'.repeat(12)}</div>`,
+  );
   if (tab === "files") void loadFiles(true);
   else void loadDuplicates();
 }

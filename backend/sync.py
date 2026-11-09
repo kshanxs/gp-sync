@@ -39,6 +39,19 @@ HERE = Path(__file__).resolve().parent
 # VERSION sits next to sync.py in the image, one level up (repo root) when run from backend/.
 _VERSION_FILE = next((p for p in (HERE / "VERSION", HERE.parent / "VERSION") if p.exists()), None)
 VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE else "dev"
+
+
+def _backend_version():
+    """The backend's own version (pyproject.toml): raised only when the server side changes. VERSION
+    is the release (image tag); the dashboard has its own in web/package.json."""
+    import tomllib
+
+    with contextlib.suppress(OSError, ValueError, KeyError):
+        return tomllib.loads((HERE / "pyproject.toml").read_text())["project"]["version"]
+    return VERSION
+
+
+BACKEND_VERSION = _backend_version()
 DATA = Path(os.environ.get("DATA_DIR", "/data"))
 MEDIA = Path(os.environ.get("MEDIA_DIR", "/media"))
 PORT = int(os.environ.get("PORT", "8527"))
@@ -196,6 +209,12 @@ def db():
             PRIMARY KEY (src, dst, media_key))"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS copyjobs_state ON copyjobs(state, taken)")
+    # Keep in sync: everything `src` has is copied to `dst` every so often (both ways: two rows).
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS mirrors (
+            src TEXT NOT NULL, dst TEXT NOT NULL, added REAL, last_run REAL, last_queued INTEGER DEFAULT 0,
+            error TEXT DEFAULT '', PRIMARY KEY (src, dst))"""
+    )
     have = {r[1] for r in conn.execute("PRAGMA table_info(copyjobs)")}
     for col in ("started", "finished"):  # when each copy began and ended (copy speed on the page)
         if col not in have:
@@ -249,7 +268,9 @@ def meta_set(k, v):
 DEFAULT_SETTINGS = {
     "folders": None,  # {top folder: account email or ""}; None = Photos and Videos to the first account
     "schedule": {"enabled": False, "start": 1, "end": 7},  # local hours; may wrap past midnight
-    "tz_offset_min": 0,  # viewer's time zone, saved from the dashboard
+    "tz_offset_min": 0,  # minutes east of UTC now, worked out from the time zone below
+    "timezone": "",  # IANA name chosen in Settings ("Asia/Kolkata"); "" = the system default
+    "system_timezone": "",  # the dashboard device's zone, the system default when TZ isn't set
     "speed_limit_mbps": 0,  # 0 = no limit
     "upload_workers": 3,  # files uploaded at once per account
     "albums": "off",  # off | top (first subfolder) | parent (folder the file is in)
@@ -286,8 +307,10 @@ DEFAULT_SETTINGS = {
     # and an optional album in Google for everything it freed (off: nothing is added to the library).
     "reclaim": {"confirm": True, "keep": False, "workers": 4, "album": False, "album_name": "Freed by GP Sync"},
 }
-RECLAIM_MAX_WORKERS = 16
-UPLOAD_MAX_WORKERS = 8
+# At most 4 items or files at once: more makes Google throttle and fail (tested: 16 at once broke,
+# 4 at once ran almost without errors).
+RECLAIM_MAX_WORKERS = 4
+UPLOAD_MAX_WORKERS = 4
 UNDATED_ALBUM = "Date unknown"
 SECRET_KEYS = ("ntfy_token", "telegram_token")
 
@@ -302,12 +325,60 @@ def _merge(base, extra):
     return out
 
 
+def _zone(name):
+    """The ZoneInfo for an IANA name, or None when it's empty or unknown."""
+    from zoneinfo import ZoneInfo
+
+    if not name or not isinstance(name, str):
+        return None
+    try:
+        return ZoneInfo(name)
+    except (ValueError, OSError, KeyError):  # unknown name, or no time zone data
+        return None
+
+
+def system_timezone(st=None):
+    """The system default: the TZ the app was started with, else the zone of the device the
+    dashboard was last opened on (the app's container often runs in UTC without TZ). "" when
+    neither is known: then the offset the dashboard saved is used as it is."""
+    env = os.environ.get("TZ", "").lstrip(":")
+    if _zone(env) and env not in ("UTC", "Etc/UTC"):
+        return env
+    st = st if st is not None else get_settings()
+    return st.get("system_timezone") if _zone(st.get("system_timezone")) else ""
+
+
+def timezone_name(st=None):
+    """The time zone in use: the one chosen in Settings, else the system default."""
+    st = st if st is not None else get_settings()
+    return st["timezone"] if _zone(st.get("timezone")) else system_timezone(st)
+
+
+def zone_offset_min(name, when=None):
+    """Minutes east of UTC in a zone at `when` (default now), daylight saving included."""
+    import datetime
+
+    z = _zone(name)
+    if z is None:
+        return None
+    moment = datetime.datetime.fromtimestamp(when if when is not None else time.time(), datetime.UTC)
+    return int(z.utcoffset(moment).total_seconds() // 60)
+
+
 def get_settings():
     try:
         saved = json.loads(meta_get("settings") or "{}")
     except ValueError:
         saved = {}
-    return _merge(json.loads(json.dumps(DEFAULT_SETTINGS)), saved)  # deep copy: never change the defaults
+    st = _merge(json.loads(json.dumps(DEFAULT_SETTINGS)), saved)  # deep copy: never change the defaults
+    # Days, upload hours and the weekly summary follow the chosen zone (or the system default).
+    offset = zone_offset_min(timezone_name(st))
+    if offset is not None:
+        st["tz_offset_min"] = offset
+    # Saved before the limit was lowered (up to 16): keep within it.
+    st["reclaim"]["workers"] = max(1, min(RECLAIM_MAX_WORKERS, int(st["reclaim"].get("workers") or 1)))
+    st["upload_workers"] = max(1, min(UPLOAD_MAX_WORKERS, int(st.get("upload_workers") or 1)))
+    return st
 
 
 def update_settings(changes):
@@ -336,6 +407,12 @@ def update_settings(changes):
     s["start"], s["end"] = int(s["start"]) % 24, int(s["end"]) % 24
     s["enabled"] = bool(s["enabled"])
     new["tz_offset_min"] = max(-840, min(840, int(new["tz_offset_min"])))
+    for key in ("timezone", "system_timezone"):
+        new[key] = str(new.get(key) or "").strip()
+        if new[key] and not _zone(new[key]):
+            if key == "timezone":
+                raise ValueError(f"Unknown time zone: {new[key]}")
+            new[key] = cur[key]  # a device that reports a zone this server doesn't know: keep the last one
     new["speed_limit_mbps"] = max(0.0, float(new["speed_limit_mbps"] or 0))
     new["upload_workers"] = max(1, min(UPLOAD_MAX_WORKERS, int(new["upload_workers"] or 1)))
     if new["albums"] not in ("off", "top", "parent"):
@@ -474,6 +551,7 @@ def remove_account(email):
             f.unlink(missing_ok=True)
         meta_set("account_order", json.dumps([e for e in _account_order() if e != email]))
         state["login_failed"].discard(email)  # no warning for an account that is gone
+        q("DELETE FROM mirrors WHERE src=? OR dst=?", (email, email))  # nothing to keep in sync with
         with _clients_lock:
             _clients.pop(email, None)
         log(f"Removed Google account {email}", "account")
@@ -983,6 +1061,70 @@ def history(days=365, tz_offset_min=0):
         "first": time.strftime("%Y-%m-%d", time.gmtime(first * 86400)),
         "today": time.strftime("%Y-%m-%d", time.gmtime(today * 86400)),
         "data": out,
+    }
+
+
+PROCESSES = ("uploads", "freed", "copied", "fixed")
+
+
+def process_activity(days=371, tz_offset_min=0):
+    """Each process's own history, in the viewer's time zone: items and bytes per day, and when in
+    the day and week they happen. Uploads come from the hourly statistics and the uploads list;
+    freed storage, copies and date fixes from their own records."""
+    offset = int(tz_offset_min) * 60
+    since = time.time() - int(days) * 86400
+
+    def blank():
+        return {"days": {}, "hours": [0] * 24, "weekdays": [0] * 7, "count": 0, "bytes": 0}
+
+    out = {p: blank() for p in PROCESSES}
+
+    def add(proc, when, size=0, n=1, hour_too=True):
+        if not when:
+            return
+        local = when + offset
+        day = time.strftime("%Y-%m-%d", time.gmtime(local))
+        d = out[proc]["days"].setdefault(day, {"day": day, "count": 0, "bytes": 0})
+        d["count"] += n
+        d["bytes"] += size or 0
+        out[proc]["count"] += n
+        out[proc]["bytes"] += size or 0
+        if hour_too:
+            out[proc]["hours"][int(local // 3600) % 24] += n
+            out[proc]["weekdays"][(int(local // 86400) + 3) % 7] += n  # Monday first (1970-01-01 was a Thursday)
+
+    # Uploads: daily totals from the hourly statistics, hours and weekdays from each finished file.
+    for hour, n, b in sq(
+        """SELECT hour, photos + videos, photo_bytes + video_bytes FROM hourly
+           WHERE hour * 3600 >= ? AND photos + videos > 0""",
+        (since,),
+    ):
+        add("uploads", hour * 3600, b, n, hour_too=False)
+    for (when,) in sq("SELECT time FROM uploads WHERE time >= ? AND result = 'uploaded'", (since,)):
+        local = when + offset
+        out["uploads"]["hours"][int(local // 3600) % 24] += 1
+        out["uploads"]["weekdays"][(int(local // 86400) + 3) % 7] += 1
+    for when, size in q(
+        """SELECT COALESCE(finished, updated), quota FROM reclaim
+           WHERE state = 'done' AND COALESCE(finished, updated) >= ?""",
+        (since,),
+    ):
+        add("freed", when, size)
+    for when, size in q(
+        """SELECT COALESCE(finished, updated), size FROM copyjobs WHERE state IN ('copied', 'done')
+           AND COALESCE(finished, updated) >= ?""",
+        (since,),
+    ):
+        add("copied", when, size)
+    for (when,) in sq("SELECT time FROM events WHERE kind = 'fixed' AND time >= ?", (since,)):
+        add("fixed", when)
+    for proc in out.values():
+        proc["days"] = sorted(proc["days"].values(), key=lambda d: d["day"])
+    today = int((time.time() + offset) // 86400)
+    return {
+        "today": time.strftime("%Y-%m-%d", time.gmtime(today * 86400)),
+        "tz_offset_min": int(tz_offset_min),
+        "processes": out,
     }
 
 
@@ -2525,6 +2667,13 @@ def status_json():
         "version": VERSION,
         "host": HOST_NAME,
         "auth": bool(PASSWORD),
+        # The time zone days and times are shown in: chosen in Settings, or the system default.
+        "tz": {
+            "name": timezone_name(st),
+            "offset_min": st["tz_offset_min"],
+            "chosen": st["timezone"],
+            "system": system_timezone(st),
+        },
         "phase": state["phase"],
         "error": state["error"],
         "done": state["done"],
@@ -2555,6 +2704,7 @@ def status_json():
         "copies_pending": state.get("copies_pending", 0),
         "jobs": background_jobs(),
         "reclaim": reclaim_summary(),
+        "copying": copy_summary(),
         # Files with no date of their own, and how many are queued to be fixed in Google.
         "dates": dict(
             zip(
@@ -2690,8 +2840,9 @@ def storage_report(account, limit=500, kind="all"):
         "current": next(iter(_reclaim_working(account)), None),
         "working": _reclaim_working(account),
         "paused": reclaim_paused(account),
+        "check": check_info(account),
         "prefs": get_settings()["reclaim"],
-        "summary": reclaim_summary(),
+        "summary": storage_summary(),
         "free_space": shutil.disk_usage(DATA).free if DATA.exists() else 0,
     }
     rows = _library_rows(
@@ -2956,7 +3107,63 @@ def _download(client, account, key, dedup, name, size, taken, folder=None, track
     Google reports that copy's checksum too. `track` is the dict whose "current" shows progress."""
     track = reclaim_state[account] if track is None else track
     with _disk_space(size):
+        found = _from_umbrel(key, dedup, name, size, taken, folder or RECLAIM_DIR / account / key, track)
+        if found:
+            return found
         return _fetch(client, account, key, dedup, name, size, taken, folder, track)
+
+
+def _umbrel_copies(dedup):
+    """Files on this server with the item's exact SHA-1 (its dedup key), from GP Sync's own records."""
+    try:
+        sha1 = _digest(dedup).hex()
+    except (ValueError, TypeError):
+        return []
+    return [p for (p,) in q("SELECT path FROM files WHERE sha1=? ORDER BY updated DESC", (sha1,))]
+
+
+def _from_umbrel(key, dedup, name, size, taken, folder, track):
+    """Use a file already on this server instead of downloading it from Google: copied into the work
+    folder (never moved, so the original stays exactly as it was) and checked again while copying.
+    Returns (path, dedup key), or None when no file here matches byte for byte."""
+    for source in _umbrel_copies(dedup):
+        try:
+            if os.path.getsize(source) != size and size:
+                continue  # changed since it was fingerprinted
+        except OSError:
+            continue
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / (clean_name(name) or f"{key}.bin")
+        tmp = target.with_suffix(target.suffix + ".part")
+        digest = hashlib.sha1()
+        done = 0
+        try:
+            stop = track.get("stop")
+            with open(source, "rb") as src, open(tmp, "wb") as f:
+                while block := src.read(1024 * 1024):
+                    if stop and stop():
+                        raise Paused
+                    f.write(block)
+                    digest.update(block)
+                    done += len(block)
+                    track["current"] = {**(track.get("current") or {}), "key": key, "step": "local",
+                                        "done": done, "total": size}  # fmt: skip
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            continue
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        if _b64_hash(digest.digest()) != dedup:
+            tmp.unlink(missing_ok=True)
+            continue
+        tmp.replace(target)
+        if taken:
+            os.utime(target, (taken, taken))  # only the copy's time changes, never the original's
+        track["from_umbrel"] = True
+        log(f"Used the copy of {name} already on this server instead of downloading it", "local")
+        return target, dedup
+    return None
 
 
 def _item_hashes(response, dedup):
@@ -3047,7 +3254,9 @@ def reclaim_paused(account):
 
 # Items being worked on, several per account at once (Settings: reclaim.workers). Each item's steps
 # are saved as they happen, so a restart or an update resumes where it stopped.
-_reclaim_pool = concurrent.futures.ThreadPoolExecutor(RECLAIM_MAX_WORKERS * 2, thread_name_prefix="free storage")
+_reclaim_pool = concurrent.futures.ThreadPoolExecutor(
+    RECLAIM_MAX_WORKERS * 5, thread_name_prefix="free storage"
+)  # 4 per account, several accounts
 _reclaim_jobs = {}  # (account, media key) -> Future
 _reclaim_jobs_lock = threading.Lock()
 
@@ -3075,8 +3284,9 @@ def _reclaim_item(account, row, make_client):
             _set_reclaim(account, key, "downloaded", local=str(path), local_hash="" if got == dedup else got,
                          downloaded_at=time.time())  # fmt: skip
             reclaim_state[account]["error"] = ""
-            edited = " (Google's edited copy)" if got != dedup else ""
-            log(f"Downloaded {name} from Google ({fmt_bytes(size)}){edited} to free its storage", "downloaded")
+            if not track.get("from_umbrel"):
+                edited = " (Google's edited copy)" if got != dedup else ""
+                log(f"Downloaded {name} from Google ({fmt_bytes(size)}){edited} to free its storage", "downloaded")
             return True
         have = local_hash or dedup  # the file here: Google's original, or the copy Google serves now
         hashes = list(dict.fromkeys([dedup, have]))
@@ -3101,6 +3311,7 @@ def _reclaim_item(account, row, make_client):
             return True
         _restore_details(client, have, fav, arch, cap)
         _set_reclaim(account, key, "checking", new_key=result, checks=0, uploaded_at=time.time())
+        check_lanes.wake([account])
         return True
     except Paused:  # stopped mid-download: nothing changed in Google, it waits in the queue
         log(f"Paused: stopped downloading {name}; it stays queued", "pause")
@@ -3135,61 +3346,12 @@ def _reclaim_finished(account, key):
         account_lanes.nudge(account)
 
 
-def _reclaim_check_uploads(make_client, account, now):
-    """Items re-uploaded a moment ago: once Google lists them, check they don't count against storage.
-    One library read per account per minute covers every item waiting there."""
-    rows = q(
-        """SELECT account, media_key, name, size, taken, local, new_key, checks, keep, quota FROM reclaim
-           WHERE state = 'checking' AND (? IS NULL OR account = ?)""",
-        (account, account),
-    )
-    ready = [r for r in rows if now - _reclaim_checked.get(r[1], 0) >= 60]  # Google needs a moment
-    did = False
-    clients = {}
-    album = get_settings()["reclaim"]
-    freed = collections.defaultdict(list)
-    for acc in dict.fromkeys(r[0] for r in ready):
-        try:
-            clients[acc] = make_client(acc)
-            update_library(clients[acc], acc)
-        except Exception as e:
-            print(f"Free storage: couldn't read {acc}'s library: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-    for acc, key, name, size, taken, local, new_key, checks, keep, quota in ready:
-        if acc not in clients:
-            continue
-        _reclaim_checked[key] = now
-        did = True
-        found = _library_rows(acc, "SELECT quota_charged_bytes FROM remote_media WHERE media_key=?", (new_key,))
-        if not found:
-            if (checks or 0) >= 10:
-                _set_reclaim(acc, key, "failed", "Uploaded, but Google hasn't listed it yet. Check later")
-            else:
-                _set_reclaim(acc, key, "checking", checks=(checks or 0) + 1)
-            continue
-        if found[0][0]:
-            _set_reclaim(acc, key, "counts", "Google counted this upload too, so nothing was freed")
-            log(f"Free upload didn't work for {acc}: stopped freeing storage", "error")
-            alert("Freeing storage stopped", f"Google counted the new upload of {name} against storage.")
-            continue
-        if keep:  # the user wants the copy: it goes to Downloads
-            _keep_download(acc, Path(local), new_key, size, taken)
-        shutil.rmtree(Path(local).parent, ignore_errors=True)
-        _set_reclaim(acc, key, "done", local="", finished=time.time())
-        log(f"Freed {fmt_bytes(quota or size)} of Google storage: re-uploaded {name} for free ({acc})", "freed")
-        freed[acc].append(new_key)
-    if album["album"]:
-        for acc, keys in freed.items():
-            add_to_album(clients[acc], acc, album["album_name"], keys)
-    return did
-
-
 def reclaim_step(make_client=None, account=None, wait=True):
     """Start the next items (for one account, or all), up to Settings' reclaim.workers at once per
     account. `wait`: return once they finish (tests); the background lanes don't wait, and a
     finished item wakes its lane so the next one starts. Returns True if there was something to do."""
     make_client = make_client or _reclaim_client
     now = time.time()
-    checked = _reclaim_check_uploads(make_client, account, now)
     started = False
     rows = q(
         """SELECT account, media_key, dedup_key, name, size, taken, state, local, favorite, archived, caption,
@@ -3235,9 +3397,9 @@ def reclaim_step(make_client=None, account=None, wait=True):
     with _reclaim_jobs_lock:
         mine = [f for (a, _), f in _reclaim_jobs.items() if account is None or a == account]
     if not wait:
-        return checked or started or bool(mine)
+        return started or bool(mine)
     done, _ = concurrent.futures.wait(mine)
-    return checked or any(f.result() for f in done if not f.exception())
+    return any(f.result() for f in done if not f.exception())
 
 
 _reclaim_checked = {}  # media key -> when Google was last asked about it
@@ -3268,6 +3430,47 @@ def reclaim_summary():
     for acc, a in out.items():
         a["working"] = len(_reclaim_working(acc))
         a["paused"] = reclaim_paused(acc)
+    return out
+
+
+_counted_cache = {}  # account -> (library file times, bytes counted against storage)
+
+
+def counted_bytes(account):
+    """Bytes that count against Google storage in an account (each item once, not once per album),
+    from its library list here. None when the library hasn't been read. Worked out again only when
+    the library list changes."""
+    path = _library_db(account)
+    try:
+        files = tuple(
+            (st.st_mtime_ns, st.st_size) for f in (path, Path(f"{path}-wal")) if f.exists() for st in [os.stat(f)]
+        )
+    except OSError:
+        files = ()
+    if not files:
+        return None
+    stamp = (files, meta_get(f"library_refreshed:{account}"))  # every library read sets the second
+    cached = _counted_cache.get(account)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    rows = _library_rows(
+        account,
+        """SELECT COALESCE(SUM(q), 0) FROM (SELECT MAX(quota_charged_bytes) AS q FROM remote_media
+           WHERE origin = 'self' AND COALESCE(trash_timestamp, 0) = 0 AND COALESCE(is_locked, 0) = 0
+           GROUP BY dedup_key)""",
+    )
+    value = None if rows is None else int(rows[0][0] or 0)
+    _counted_cache[account] = (stamp, value)
+    return value
+
+
+def storage_summary():
+    """Free storage for every connected account, for the account list: what still counts against
+    storage, and how freeing is going."""
+    out = reclaim_summary()
+    blank = {"queued": 0, "working": 0, "done": 0, "freed": 0, "failed": 0, "paused": False}
+    for acc, _ in accounts():
+        out.setdefault(acc, {**blank, "paused": reclaim_paused(acc)})["counted"] = counted_bytes(acc)
     return out
 
 
@@ -4500,7 +4703,6 @@ def sources_accept_dates(names):
 # the free way, bring back favourite, archive and caption. Nothing is deleted anywhere.
 
 COPY_DIR = DATA / "copy"
-COPY_CHECK_EVERY = 25  # after this many copies, check with Google that they don't count
 # Progress and the last error per (source, destination): each pair copies on its own worker.
 copy_state = collections.defaultdict(lambda: {"current": None, "error": "", "jobs": {}})
 copy_wake = threading.Event()
@@ -4626,6 +4828,8 @@ def copy_report(src, dst):
         "recent": [item(r) for r in recent],
         "failed": [item(r) for r in failed],
         "free_space": shutil.disk_usage(DATA).free if DATA.exists() else 0,
+        "check": check_info(dst),
+        "mirror": mirror_info(src, dst),
     }
 
 
@@ -4661,8 +4865,17 @@ def copy_candidates(src, dst, kinds=("photo", "video"), from_year=None, to_year=
     }
 
 
-def copy_start(src, dst, kinds=("photo", "video"), from_year=None, to_year=None, keys=None):
-    """Queue everything `src` owns that `dst` doesn't have yet (with the chosen filters)."""
+def copy_summary():
+    """Copy accounts across every pair, for the status: items waiting, copies Google hasn't
+    confirmed yet, and whether copying is paused."""
+    counts = dict(q("SELECT state, COUNT(*) FROM copyjobs WHERE state IN ('queued', 'copied') GROUP BY state"))
+    return {"queued": counts.get("queued", 0), "checking": counts.get("copied", 0),
+            "paused": meta_get("copy_paused") == "1"}  # fmt: skip
+
+
+def copy_start(src, dst, kinds=("photo", "video"), from_year=None, to_year=None, keys=None, skip=()):
+    """Queue everything `src` owns that `dst` doesn't have yet (with the chosen filters). `skip`:
+    source media keys never to queue (copies GP Sync made into `src` from `dst`)."""
     if meta_get("copy_paused") == "1" and q("SELECT 1 FROM copyjobs WHERE state='counts' LIMIT 1"):
         raise ValueError("Copying is paused because Google counted a copy against storage; review and resume first")
     src_rows = _library_rows(
@@ -4689,6 +4902,8 @@ def copy_start(src, dst, kinds=("photo", "video"), from_year=None, to_year=None,
         y = _year(t)
         if dedup in have or dedup in handled or k not in kinds or (keys is not None and key not in keys):
             continue  # duplicates (already there) are never copied
+        if key in skip:
+            continue
         if (from_year and (not y or y < from_year)) or (to_year and (not y or y > to_year)):
             continue
         handled.add(dedup)  # the same file twice: copy it once
@@ -4708,6 +4923,104 @@ def copy_start(src, dst, kinds=("photo", "video"), from_year=None, to_year=None,
     if queued:
         log(f"Copying {queued} items from {src} to {dst}", "account")
     return {"queued": queued}
+
+
+# ---- keep two accounts in sync
+
+MIRROR_EVERY = 3600  # seconds between comparing the libraries of a pair kept in sync
+
+
+def mirror_get(src, dst):
+    """Keep in sync for a pair: "off", "one" (src → dst) or "both"."""
+    on = {(a, b) for a, b in q("SELECT src, dst FROM mirrors WHERE (src=? AND dst=?) OR (src=? AND dst=?)",
+                                (src, dst, dst, src))}  # fmt: skip
+    return "both" if len(on) == 2 else "one" if (src, dst) in on else "reverse" if on else "off"
+
+
+def mirror_set(src, dst, mode):
+    """Turn Keep in sync on (one way or both ways) or off for two accounts. Turning it on compares the
+    libraries straight away."""
+    if mode not in ("off", "one", "both"):
+        raise ValueError("Choose off, one way or both ways")
+    q("DELETE FROM mirrors WHERE (src=? AND dst=?) OR (src=? AND dst=?)", (src, dst, dst, src))
+    pairs = [] if mode == "off" else [(src, dst)] if mode == "one" else [(src, dst), (dst, src)]
+    now = time.time()
+    for a, b in pairs:
+        q("INSERT INTO mirrors (src, dst, added, last_run) VALUES (?, ?, ?, NULL)", (a, b, now))
+    arrow = {"off": "stopped", "one": f"{src} → {dst}", "both": f"{src} ↔ {dst}"}[mode]
+    log(f"Keep in sync: {arrow}", "account")
+    mirror_wake.set()
+    return {"mode": mirror_get(src, dst)}
+
+
+def mirror_info(src, dst):
+    """Keep in sync for the Copy accounts page: the mode, and when the libraries are compared."""
+    rows = q("SELECT src, dst, last_run, last_queued, error FROM mirrors WHERE (src=? AND dst=?) OR (src=? AND dst=?)",
+             (src, dst, dst, src))  # fmt: skip
+    last = max((r[2] or 0 for r in rows), default=0) or None
+    return {
+        "mode": mirror_get(src, dst),
+        "last_run": last,
+        "next_run": (min((r[2] or 0) for r in rows) + MIRROR_EVERY) if rows else None,
+        "queued": sum(r[3] or 0 for r in rows if r[2] == last) if last else 0,
+        "error": next((r[4] for r in rows if r[4]), ""),
+    }
+
+
+def mirror_run(src, dst, make_client=None):
+    """Compare both libraries and queue what `src` has and `dst` lacks. Items already in both are
+    skipped by checksum, and so are copies GP Sync made into `src` from `dst` (no copying back).
+    The copies then go through the usual copy queue: the file on this server first, 4 at a time,
+    confirmed by the checker. Returns how many items were queued."""
+    make_client = make_client or _reclaim_client
+    connected = dict(accounts())
+    try:
+        if src not in connected or dst not in connected:
+            raise RuntimeError(f"{src if src not in connected else dst} is no longer connected")
+        for acc in (src, dst):
+            update_library(make_client(acc), acc)
+        came_back = {k for (k,) in q("SELECT new_key FROM copyjobs WHERE src=? AND dst=? AND new_key IS NOT NULL",
+                                     (dst, src))}  # fmt: skip
+        queued = copy_start(src, dst, skip=came_back)["queued"]
+        q("UPDATE mirrors SET last_run=?, last_queued=?, error='' WHERE src=? AND dst=?",
+          (time.time(), queued, src, dst))  # fmt: skip
+        return queued
+    except Exception as e:
+        msg = outage_kind(e) or f"{type(e).__name__}: {e}"[:300]
+        print(f"Keep in sync {src} → {dst}: {msg}", file=sys.stderr, flush=True)
+        # Tried again in a quarter of the usual wait.
+        q("UPDATE mirrors SET last_run=?, error=? WHERE src=? AND dst=?",
+          (time.time() - MIRROR_EVERY * 3 / 4, msg, src, dst))  # fmt: skip
+        return 0
+    finally:
+        notify_change()
+
+
+def mirror_step(make_client=None, now=None):
+    """Compare the pairs that are due (every MIRROR_EVERY, or straight away once turned on). Nothing
+    is compared while copying is paused. Returns True if a pair was compared."""
+    now = time.time() if now is None else now
+    if meta_get("copy_paused") == "1":
+        return False
+    due = q("SELECT src, dst FROM mirrors WHERE last_run IS NULL OR last_run <= ?", (now - MIRROR_EVERY,))
+    for src, dst in due:
+        mirror_run(src, dst, make_client)
+    if due:
+        copy_wake.set()
+    return bool(due)
+
+
+mirror_wake = threading.Event()
+
+
+def mirror_worker():
+    while True:
+        mirror_wake.clear()
+        try:
+            mirror_step()
+        except Exception as e:
+            print(f"Keep in sync: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        mirror_wake.wait(60)
 
 
 def copy_stop(src, dst):
@@ -4733,35 +5046,10 @@ def _set_copy(src, dst, key, state_, error="", **cols):
     notify_change()
 
 
-def _verify_copies(dst_client, src, dst, force=False):
-    """Check with Google that copies made so far don't count against storage. Pauses if they do."""
-    rows = q(
-        "SELECT media_key, new_key, name, checks FROM copyjobs WHERE src=? AND dst=? AND state='copied'", (src, dst)
-    )
-    if not rows or (len(rows) < COPY_CHECK_EVERY and not force):
-        return False
-    update_library(dst_client, dst)
-    for key, new_key, name, checks in rows:
-        found = _library_rows(dst, "SELECT quota_charged_bytes FROM remote_media WHERE media_key=?", (new_key,))
-        if found and found[0][0]:
-            _set_copy(src, dst, key, "counts", "Google counted this copy against storage")
-            meta_set("copy_paused", "1")
-            log(f"Copy to {dst} paused: Google counted {name} against storage", "error")
-            alert("Account copy paused", f"Google counted the copy of {name} against the storage of {dst}.")
-            return True
-        if found:
-            _set_copy(src, dst, key, "done")
-        elif (checks or 0) >= 10:
-            _set_copy(src, dst, key, "done", "Copied, but Google hasn't listed it yet")
-        else:
-            q("UPDATE copyjobs SET checks=COALESCE(checks, 0)+1 WHERE src=? AND dst=? AND media_key=?", (src, dst, key))
-    return True
-
-
 def copy_step(make_client=None, pair=None):
     """Copy the next items (of one (source, destination) pair, or any): up to Settings'
-    reclaim.workers at once, the same "Items at once" as Free storage. Returns True if there was
-    something to do."""
+    reclaim.workers at once, the same "Items at once" as Free storage. The checker (check_step)
+    confirms the copies are free, apart from this. Returns True if there was something to do."""
     make_client = make_client or _reclaim_client
     if meta_get("copy_paused") == "1":
         return False
@@ -4771,12 +5059,7 @@ def copy_step(make_client=None, pair=None):
            WHERE state='queued' AND (? IS NULL OR (src=? AND dst=?)) ORDER BY taken DESC LIMIT ?""",
         (src_, src_, dst_, get_settings()["reclaim"]["workers"]),
     )
-    if not rows:  # the list is done: check the last copies (once a minute until Google lists them)
-        for s_, d in q(
-            "SELECT DISTINCT src, dst FROM copyjobs WHERE state='copied' AND (? IS NULL OR (src=? AND dst=?))",
-            (src_, src_, dst_),
-        ):
-            _verify_copies(make_client(d), s_, d, force=True)
+    if not rows:
         return False
     connected = dict(accounts())
     for src, dst, *_ in rows:
@@ -4791,11 +5074,7 @@ def copy_step(make_client=None, pair=None):
     else:  # several at once, each on its own thread
         with concurrent.futures.ThreadPoolExecutor(len(rows), thread_name_prefix="account copy") as pool:
             results = list(pool.map(lambda r: _copy_one(r, make_client), rows))
-    for s_, d in dict.fromkeys((r[0], r[1]) for r in rows):
-        try:  # the copies are made: a failed check is tried again later, it doesn't fail them
-            _verify_copies(make_client(d), s_, d)
-        except Exception as e:
-            print(f"Account copy: check failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    check_lanes.wake(dict.fromkeys(r[1] for r in rows))  # the checker confirms the copies are free
     return any(results)
 
 
@@ -4855,6 +5134,129 @@ def copy_worker():
         except Exception as e:
             print(f"Account copy: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         copy_wake.wait(30)
+
+
+# ---------------------------------------------------------------- the checker
+# Free uploads (Free storage) and copies (Copy accounts) are confirmed with Google once it lists
+# them: one library read per account covers every item waiting there. This runs on a lane of its
+# own per account, so downloads, uploads and new items never wait for a library read.
+
+CHECK_EVERY = 60  # seconds between library reads while items wait to be confirmed
+CHECK_MAX_WAIT = 15 * 60  # longest wait after Google didn't answer (it doubles from CHECK_EVERY)
+CHECK_SETTLE = 30  # Google needs a moment after an upload before it lists the item
+check_state = collections.defaultdict(lambda: {"next": 0.0, "wait": CHECK_EVERY, "error": "", "last": None})
+
+
+def _waiting_checks(account):
+    """Free uploads and copies into this account that Google hasn't confirmed yet."""
+    freed = q(
+        """SELECT media_key, name, size, taken, local, new_key, checks, keep, quota, uploaded_at FROM reclaim
+           WHERE state='checking' AND account=?""",
+        (account,),
+    )
+    copies = q(
+        "SELECT src, media_key, new_key, name, checks, finished FROM copyjobs WHERE dst=? AND state='copied'",
+        (account,),
+    )
+    return freed, copies
+
+
+def check_info(account):
+    """How checking with Google is going in one account, for the pages."""
+    freed, copies = _waiting_checks(account)
+    st = check_state[account]
+    return {"waiting": len(freed) + len(copies), "last": st["last"], "next": st["next"] or None,
+            "error": st["error"]}  # fmt: skip
+
+
+def check_step(account, make_client=None, now=None, force=False):
+    """Confirm, in one library read, that this account's recent free uploads and copies don't count
+    against storage. At most once a minute; after a failed read the wait doubles (up to 15 minutes).
+    `force`: read now, and check items uploaded a moment ago too (tests). Returns True if it read."""
+    now = time.time() if now is None else now
+    freed, copies = _waiting_checks(account)
+    if not freed and not copies:
+        check_state[account].update(error="", wait=CHECK_EVERY)
+        return False
+    st = check_state[account]
+    settled = now - (0 if force else CHECK_SETTLE)
+    if not force and (now < st["next"] or all((r[-1] or 0) > settled for r in [*freed, *copies])):
+        return False
+    try:
+        client = (make_client or _reclaim_client)(account)
+        update_library(client, account)
+    except Exception as e:
+        st["wait"] = min(st["wait"] * 2, CHECK_MAX_WAIT)
+        st["next"] = now + st["wait"]
+        st["error"] = f"{type(e).__name__}: {e}"[:300]
+        print(f"Checker: couldn't read {account}'s library: {st['error']}", file=sys.stderr, flush=True)
+        return False
+    st.update(next=now + CHECK_EVERY, wait=CHECK_EVERY, error="", last=now)
+
+    def charged(new_key):
+        rows = _library_rows(account, "SELECT quota_charged_bytes FROM remote_media WHERE media_key=?", (new_key,))
+        return None if not rows else rows[0][0]
+
+    done = []
+    for key, name, size, taken, local, new_key, checks, keep, quota, uploaded in freed:
+        if (uploaded or 0) > settled:
+            continue
+        quota_ = charged(new_key)
+        if quota_ is None:
+            if (checks or 0) >= 10:
+                _set_reclaim(account, key, "failed", "Uploaded, but Google hasn't listed it yet. Check later")
+            else:
+                _set_reclaim(account, key, "checking", checks=(checks or 0) + 1)
+            continue
+        if quota_:
+            _set_reclaim(account, key, "counts", "Google counted this upload too, so nothing was freed")
+            log(f"Free upload didn't work for {account}: stopped freeing storage", "error")
+            alert("Freeing storage stopped", f"Google counted the new upload of {name} against storage.")
+            continue
+        if keep:  # the user wants the copy: it goes to Downloads
+            _keep_download(account, Path(local), new_key, size, taken)
+        shutil.rmtree(Path(local).parent, ignore_errors=True)
+        _set_reclaim(account, key, "done", local="", finished=time.time())
+        log(f"Freed {fmt_bytes(quota or size)} of Google storage: re-uploaded {name} for free ({account})", "freed")
+        done.append(new_key)
+    album = get_settings()["reclaim"]
+    if done and album["album"]:
+        add_to_album(client, account, album["album_name"], done)
+    for src, key, new_key, name, checks, finished in copies:
+        if (finished or 0) > settled:
+            continue
+        quota_ = charged(new_key)
+        if quota_:
+            _set_copy(src, account, key, "counts", "Google counted this copy against storage")
+            meta_set("copy_paused", "1")
+            log(f"Copy to {account} paused: Google counted {name} against storage", "error")
+            alert("Account copy paused", f"Google counted the copy of {name} against the storage of {account}.")
+        elif quota_ is not None:
+            _set_copy(src, account, key, "done")
+        elif (checks or 0) >= 10:
+            _set_copy(src, account, key, "done", "Copied, but Google hasn't listed it yet")
+        else:
+            q("UPDATE copyjobs SET checks=COALESCE(checks, 0)+1 WHERE src=? AND dst=? AND media_key=?",
+              (src, account, key))  # fmt: skip
+    notify_change()
+    return True
+
+
+check_lanes = Lanes("Google check", check_step)
+
+
+def check_worker():
+    """Keeps a checker lane going for every account with items waiting to be confirmed."""
+    while True:
+        try:
+            accs = q(
+                """SELECT account FROM reclaim WHERE state='checking'
+                   UNION SELECT dst FROM copyjobs WHERE state='copied'"""
+            )
+            check_lanes.wake([a for (a,) in accs])
+        except Exception as e:
+            print(f"Checker: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        time.sleep(30)
 
 
 # ---------------------------------------------------------------- uploads from phones
@@ -5068,6 +5470,7 @@ def about():
     packages = ("gpmc", "pyturso", "pillow", "pillow-heif", "requests", "rich", "redis")
     return {
         "version": VERSION,
+        "backend_version": BACKEND_VERSION,
         "host": HOST_NAME,
         "commit": os.environ.get("BUILD_COMMIT", ""),
         "built": os.environ.get("BUILD_DATE", ""),
@@ -5377,6 +5780,9 @@ class Handler(BaseHTTPRequestHandler):
             saw_viewer()
         if path == "/api/status":
             self.send(200, status_body())
+        elif path == "/api/processes":
+            days, tz = arg("days", 371, 1, 3660), arg("tz", 0, -840, 840)
+            self.cached(f"processes:{days}:{tz}", 60, lambda: process_activity(days, tz))
         elif path == "/api/history":
             days, tz = arg("days", 365, 1, 3660), arg("tz", 0, -840, 840)
             self.cached(f"history:{days}:{tz}", 60, lambda: history(days, tz))
@@ -5655,6 +6061,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.json(copy_start(src, dst, kinds, *years, keys=req.get("keys")))
                 except (ValueError, TypeError) as e:
                     self.json({"error": str(e)}, 400)
+            elif path == "/api/copy/mirror":
+                try:
+                    self.json(mirror_set(src, dst, str(req.get("mode", ""))))
+                except ValueError as e:
+                    self.json({"error": str(e)}, 400)
             elif path == "/api/copy/stop":
                 self.json(copy_stop(src, dst))
             elif path == "/api/copy/retry":
@@ -5804,6 +6215,8 @@ def main():
         import gpmc.client  # noqa: F401
     threading.Thread(target=reclaim_worker, daemon=True).start()
     threading.Thread(target=copy_worker, daemon=True).start()
+    threading.Thread(target=check_worker, daemon=True).start()
+    threading.Thread(target=mirror_worker, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     worker()  # gpmc installs signal handlers, so it must run on the main thread

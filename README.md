@@ -19,7 +19,7 @@ Back up any folder on your server, NAS, Immich library or Umbrel in original qua
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/overview-dark.webp">
-  <img src="docs/overview-light.webp" alt="GP Sync dashboard: backup progress, network speed and status at a glance" width="100%">
+  <img src="docs/overview-light.webp" alt="GP Sync dashboard: everything running now, a card per process, speed and status at a glance" width="100%">
 </picture>
 
 </div>
@@ -41,9 +41,9 @@ Back up any folder on your server, NAS, Immich library or Umbrel in original qua
 
 <div align="center">
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/phone-overview-dark.webp"><img src="docs/phone-overview-light.webp" alt="GP Sync on a phone: backup progress" width="32%"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/phone-overview-dark.webp"><img src="docs/phone-overview-light.webp" alt="GP Sync on a phone: everything running now and a card per process" width="32%"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/phone-sync-dark.webp"><img src="docs/phone-sync-light.webp" alt="GP Sync on a phone: backup progress and the files uploading now" width="32%"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/phone-upload-dark.webp"><img src="docs/phone-upload-light.webp" alt="GP Sync on a phone: upload from the gallery or camera" width="32%"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/phone-network-dark.webp"><img src="docs/phone-network-light.webp" alt="GP Sync on a phone: live network speed" width="32%"></picture>
 
 <br>
 
@@ -84,7 +84,7 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   caption are kept. **Albums made by hand, shared links and comments are lost.** Items shared with
   you, in the Trash or in the Locked folder are never touched.
 - **Downloads need space.** Free storage downloads each item to this server first (it checks the
-  free space). With "Delete the downloaded copy" turned off, copies stay under **Downloads** until
+  free space), unless the same file is already on the server: then that file is copied instead. With "Delete the downloaded copy" turned off, copies stay under **Downloads** until
   you delete them.
 - **iPhone Live Photos** are uploaded as a photo plus a separate 2–3 second video for now: Google
   doesn't join the two halves when they arrive as separate files. Sending them as one Google-style
@@ -93,8 +93,9 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   server doesn't delete it in Google Photos, and GP Sync never deletes files on the server (only
   its own downloads and thumbnails in `/data`).
 - **Dates.** Photos with no date inside (Snapchat saves, screenshots, chat pictures) get the best
-  date GP Sync can find; Google Photos dates them by the upload otherwise. Days and schedule hours
-  use the time zone of the browser that last opened the dashboard.
+  date GP Sync can find; Google Photos dates them by the upload otherwise. Days, upload hours and
+  times use the time zone in **Settings → Appearance** (by default the system's: `TZ`, or the
+  zone of the device that opened the dashboard when `TZ` isn't set).
 - **No password by default.** Without `PASSWORD`, anyone who can reach the dashboard can use it.
   Keep it on your home network or behind a VPN such as Tailscale.
 
@@ -117,7 +118,7 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   Photos and Videos go to the first account by default (or every folder, if those don't exist).
 - **Upload hours, speed limit and files at once:** only upload between set hours, cap the upload
   speed so the rest of your internet stays fast, and upload several files side by side (3 by
-  default, up to 8 per account; the speed limit is shared between them).
+  default, up to 4 per account; the speed limit is shared between them).
 - **Albums:** put new uploads in Google Photos albums named after their folder.
 - **Files:** search and filter everything that was backed up, with thumbnails (iPhone HEIC too) and
   a link to each item in Google Photos. A duplicates tab lists identical files.
@@ -126,14 +127,22 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   counts. Arrival dates are inferred from filesystem timestamps, which can change.
 - **Free storage:** lists what counts against your Google storage, biggest first, photos and videos
   apart. Free single items, the 10 biggest, or everything of a kind (photos only, videos only, or
-  both). Several at once (4 by default, up to 16), GP Sync downloads an item, checks it against
+  both). Several at once (up to 4), GP Sync gets an item, checks it against
   the checksum Google gives for it, deletes it in Google Photos (Trash included), uploads it again
   the free way and checks it no longer counts. Each step is saved, so a restart resumes safely. It
   stops if Google counts a re-upload, and deletes nothing in an account where its own uploads
-  count. Every account's progress shows at the top; the header's pause button pauses freeing on
-  that page. **Options** set whether to ask first, keep the copies, how many at once, and an
+  count. Each account shows its status at the top: "Nothing to free", "1.9 GB to free",
+  "Freeing · 3 at once · 7 left" or "Paused · 7 waiting", plus what was freed so far. The
+  header's pause button pauses freeing on that page. **Options** set whether to ask first, keep the copies, how many at once, and an
   optional "Freed by GP Sync" album. Click **Freed by GP Sync** for what was freed: totals, time
   taken, per day, and each item with a link to check it in Google Photos. See [Attention](#attention).
+- **Fast moving:** before downloading anything from Google (Free storage, Copy accounts), GP Sync
+  looks for a file on this server with exactly the same checksum, from its own backup records. If
+  there is one, it copies that file instead of downloading it, checking the checksum again while
+  copying; the original is never moved or changed. Checking with Google that new uploads don't
+  count against storage runs on its own, per account: one library read about once a minute
+  covers every item waiting, with a longer wait each time Google doesn't answer. Downloads,
+  uploads and new items never wait for it.
 - **Downloads:** turn off "Delete the downloaded copy after the upload" when freeing storage, and
   the copies are kept on the server, per account, to save to your device or delete.
 - **Fix dates:** photos and videos with no date inside (Snapchat saves, screenshots) that Google
@@ -147,6 +156,11 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   account. Albums and people names don't come over: the connected login cannot list source albums.
   Several items copy at once (Free storage › Options, Items at once); the page shows each one,
   the average speed and the time left, and the header's pause button pauses copying there.
+- **Keep in sync:** on Copy accounts, keep one account copied into another (this way) or both
+  into each other (both ways). GP Sync compares both libraries straight away and then every hour,
+  and copies only what's missing: items already in both are skipped by checksum, copies are
+  never sent back, and files on this server are used before downloading. It waits while copying
+  is paused and stops for an account you remove.
 - **Sources:** where every photo and video came from (camera, Snapchat, Instagram, TikTok,
   WhatsApp, Telegram, screenshot or "saved from an app"), with the evidence. Items saved from apps
   can go into an album per app, get a searchable caption, or be archived. Snapchat saves get an
@@ -158,7 +172,17 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   traffic per day, with day details, streaks and 30-day charts.
 - **Alerts:** ntfy or Telegram messages when Google rejects a login, a file fails 5 times or a
   backup finishes, plus a weekly summary every Monday.
-- **Overview at a glance:** progress ring, live upload/download, today, streak, CPU and memory, health badges and recent activity.
+- **Overview at a glance:** everything running now (uploads, freeing storage, copies, date fixes,
+  library reads) in one list at the top, then a card per process with what it is doing, what it
+  did today and the last 14 days; tap one for its page. Below: live upload/download, today,
+  streak, CPU and memory, health badges and recent activity.
+- **Sync:** normal backup on its own page: what uploads now (and next), backup progress of the
+  whole library, and each folder's progress.
+- **Smooth live updates:** pages change only what changed (numbers, bars, badges, new rows), so
+  lists don't jump, thumbnails don't reload and a chart keeps your hover.
+- **History:** each process has its own history (uploads, freeing storage, copies, date fixes, or
+  everything together): totals, active days, current and longest streak, best day, a heat map of
+  the year, a daily chart and a table per month.
 - **Network:** speed gauges, live traffic, Google response time, data used per day.
 - **Activity:** saved for 90 days in Turso, grouped by day, with filters, search and thumbnails.
   Each entry says what happened: uploaded, date fixed, re-uploaded free, copied, deleted in Google.
@@ -167,16 +191,23 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   from the Android gallery to the installed app). They're saved in the upload folder
   (`<year>/<month>/`), files already there are recognised, and everything is then
   backed up to Google Photos like the rest.
-- **Insights:** total time spent uploading, average time per photo and per video, average photo and
-  video size, uploads by hour and weekday, file types, largest and slowest uploads.
+- **Insights:** every process this week against last, and the chosen one's busiest hours and
+  weekdays; for uploads, total time spent uploading, average time per photo and per video,
+  average photo and video size, file types, largest and slowest uploads.
 - **App log and diagnostics:** everything the app prints is kept for 30 days in Turso, searchable,
   errors and warnings only, or saved as a text file. **Diagnostics (JSON)** on the Health page (or
   `gpsync diagnostics`) puts versions, checks, settings, what each worker is doing and the last
   48 hours of log and activity in one file, without Google logins. See
   [Command line and diagnostics](#command-line-and-diagnostics).
-- **About:** app, build and package versions, and credits for the technology used.
+- **About:** release, backend and dashboard versions, build and package versions, and credits for
+  the technology used.
+- **Time zone:** choose any time zone in **Settings → Appearance**, or keep the system default
+  (for example India Standard Time). History, Insights, upload hours, the weekly summary and every
+  time shown follow it, daylight saving included.
 - **Install as an app:** add the dashboard to a phone's home screen.
-- Sidebar on desktop, bottom tabs and a "More" menu on phones; dark and light themes.
+- Sidebar on desktop, bottom tabs and a "More" menu on phones; dark and light themes. The phone
+  tabs show what's running: Sync gets a progress ring while files upload, and Overview turns into
+  the background work running now (freeing storage, copying, fixing dates) with its progress.
 
 ## Statistics and REST API
 
@@ -195,8 +226,9 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/totals` | All-time totals and fastest upload |
 | `GET /api/files?q=&status=all&folder=&sort=new&limit=60&offset=0` | Search backed-up files |
 | `GET /api/folders?group=folders&path=Photos&days=30&tz=330` | Counts and files added per day for a folder, or `group=devices` |
-| `GET /api/copy?src=&dst=` | What one account has that another lacks, and copying progress |
-| `GET /api/storage?account=` | What counts against Google storage, biggest first, and progress of moving it |
+| `GET /api/copy?src=&dst=` | What one account has that another lacks, copying progress, the checker and Keep in sync |
+| `POST /api/copy/mirror` | Keep in sync: `{"src", "dst", "mode": "off"\|"one"\|"both"}` |
+| `GET /api/storage?account=` | What counts against Google storage, biggest first, progress of moving it, each account's status and the checker |
 | `POST /api/storage/download` | Free storage: `{"account", "keys": [...]}` or `{"account", "kind": "photo"\|"video"\|"all"}`, plus `"keep": true` to keep the copies |
 | `GET /api/storage/freed?account=` | What Free storage freed: totals, time taken, per day, and each item |
 | `POST /api/storage/pause` | Pause or resume Free storage in an account: `{"account", "paused": true}` |
@@ -211,7 +243,8 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/insights?tz=330` | Upload times, average sizes, busiest hours and weekdays, file types |
 | `GET /api/metrics?hours=24` | Per-minute speed, CPU, memory and Google response time (up to 14 days) |
 | `GET /api/logs?level=all&q=&before=&limit=200` | App log (`level` = all, info or error; error includes warnings) |
-| `GET /api/about` | App, build and package versions |
+| `GET /api/about` | Release, backend, build and package versions |
+| `GET /api/processes?days=371&tz=330` | Each process's items per day, by hour and by weekday |
 | `GET /api/upload` | Whether phone uploads are possible, and free space |
 | `POST /api/upload?name=IMG_1.jpg&mtime=<ms>` | Upload one photo or video (raw file as the body) |
 
@@ -329,7 +362,7 @@ also skip its other folders: `EXCLUDE: "@eaDir,#recycle,encoded-video,thumbs,pro
 
 | Variable | Default | What it does |
 |---|---|---|
-| `TZ` | `UTC` | Time zone for upload hours, history and the weekly summary |
+| `TZ` | `UTC` | The system default time zone for upload hours, history and the weekly summary (Settings → Appearance can choose another; without `TZ`, the dashboard device's zone is used) |
 | `HOST_NAME` | `this server` | What the dashboard calls the machine ("Folders on My NAS") |
 | `PASSWORD` | none | Shows a sign-in page before the dashboard (remembered for a year; works in the installed app). Scripts use `curl -u any:PASSWORD` |
 | `FOLDERS` | `Photos,Videos` | Folders under `/media` backed up until you choose in Settings; if none exist, all are |
@@ -368,7 +401,7 @@ web/            TypeScript dashboard (Vite+, Tailwind CSS)
 scripts/        dependency updater used by the release workflow
 docs/           README screenshots, PROMPTS.md (AI assistant prompts)
 Dockerfile      builds web/, then the Python image
-VERSION         app version; CHANGELOG.md lists what changed
+VERSION         release version (backend and dashboard have their own); CHANGELOG.md lists changes
 ```
 
 The sync engine and REST API are Python, in `backend/`. The dashboard is TypeScript in `web/`,
@@ -396,7 +429,15 @@ uv run pytest              # tests (build the dashboard first), including checks
 
 ## Releases
 
-- `VERSION` is the app version. Raise it (and add a section to `CHANGELOG.md`) to release.
+- Three version numbers, each raised only when its part changes:
+  - `VERSION`: the release (Docker tag, GitHub release, what Umbrel offers). It goes up with every
+    release, because Umbrel only offers an update for a new tag. Add a `CHANGELOG.md` section too.
+  - `backend/pyproject.toml` `version`: the server (`sync.py` and friends). Raised only when the
+    backend changes.
+  - `web/package.json` `version`: the dashboard. Raised only when the dashboard changes.
+
+  A dashboard-only release raises `VERSION` and the dashboard version; the backend version stays.
+  About shows all three (Release, Backend, Dashboard).
 - `.github/workflows/release.yml` lints and tests every push (`vp check`, `vp test`, `vp build`,
   ruff, pytest). When `VERSION` has no git tag yet, it builds the image
   `kshanxs/gp-sync:<version>` on Docker Hub and `ghcr.io/kshanxs/gp-sync:<version>` (amd64 and arm64), tags the commit `v<version>` and makes a

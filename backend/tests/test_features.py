@@ -654,3 +654,24 @@ def test_parallel_uploads(media):
     assert sorted(statuses.values()) == ["exists", "uploaded", "uploaded"]
     assert sync.state["done"] == 3 and sync.state["uploading"] == {} and sync.state["current"] is None
     assert sync.update_settings({"upload_workers": 99})["upload_workers"] == sync.UPLOAD_MAX_WORKERS
+
+
+def test_time_zone_setting(monkeypatch):
+    monkeypatch.delenv("TZ", raising=False)
+    sync.q("DELETE FROM meta WHERE k='settings'")
+    assert sync.timezone_name() == ""  # nothing known yet: the saved offset is used as it is
+    sync.update_settings({"system_timezone": "Asia/Kolkata"})  # the dashboard device's zone
+    st = sync.get_settings()
+    assert sync.timezone_name(st) == "Asia/Kolkata" and st["tz_offset_min"] == 330
+    sync.update_settings({"timezone": "America/New_York"})  # chosen in Settings: wins
+    jan, jul = 1_767_225_600, 1_783_036_800  # 2026-01-01 and 2026-07-01
+    assert sync.zone_offset_min("America/New_York", jan) == -300
+    assert sync.zone_offset_min("America/New_York", jul) == -240  # daylight saving
+    assert sync.status_json()["tz"]["name"] == "America/New_York"
+    with pytest.raises(ValueError, match="Unknown time zone"):
+        sync.update_settings({"timezone": "Mars/Olympus"})
+    sync.update_settings({"timezone": ""})  # back to the system default
+    assert sync.timezone_name() == "Asia/Kolkata"
+    monkeypatch.setenv("TZ", "Europe/Berlin")  # TZ given to the app: that is the system default
+    assert sync.system_timezone() == "Europe/Berlin"
+    sync.q("DELETE FROM meta WHERE k='settings'")

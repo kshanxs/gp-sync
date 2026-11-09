@@ -53,6 +53,7 @@
   --s5: #d667a1;
   --good: #3ccf6e;
   --warn: #f5b04c;
+  --run: #ff8a3d; /* orange: work running (Free storage) */
   --bad: #ff6b63;
   --shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 12px 32px -18px rgb(0 0 0 / 0.7);
   --h1: #1a2140;
@@ -86,6 +87,7 @@
   --s5: #d45a8f;
   --good: #23853b;
   --warn: #a95400;
+  --run: #c2410c;
   --bad: #cf1f2a;
   --shadow: 0 1px 2px rgb(60 45 20 / 0.05), 0 10px 28px -16px rgb(60 45 20 / 0.22);
   --h1: #f6e3c6;
@@ -892,27 +894,43 @@ body::before {
   @apply animate-pulse rounded-md bg-panel-2;
 }
 
-/* The header's pause button while work runs: a slow light ring and a soft glow. Paused or idle,
+/* The header's pause button while work runs: two small moons orbit it (Saturn-style, different
+   orbits and speeds) over a faint orbit line, and the button breathes a soft glow. Paused or idle,
    it stays still. */
 #btn-pause.is-working {
   position: relative;
+  overflow: visible;
   color: var(--accent);
-  animation: pause-glow 2.6s ease-in-out infinite;
+  animation: pause-glow 3s ease-in-out infinite;
 }
-#btn-pause.is-working::before {
+#btn-pause.is-working::before,
+#btn-pause.is-working::after {
   content: "";
   position: absolute;
-  inset: -3px;
   border-radius: 9999px;
-  padding: 2px;
-  background: conic-gradient(transparent 0 55%, var(--accent) 85%, transparent 100%);
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: spin-slow 2.8s linear infinite;
   pointer-events: none;
+}
+/* The outer moon, on a faint orbit line. */
+#btn-pause.is-working::before {
+  inset: -7px;
+  border: 1px solid color-mix(in oklab, var(--accent) 22%, transparent);
+  background: radial-gradient(circle at 50% 0, var(--accent) 0 3px, transparent 3.5px);
+  animation: orbit 3.2s linear infinite;
+}
+/* The inner moon: smaller, closer, the other way round and faster. */
+#btn-pause.is-working::after {
+  inset: -3px;
+  background: radial-gradient(
+    circle at 50% 100%,
+    color-mix(in oklab, var(--accent) 75%, white) 0 2px,
+    transparent 2.5px
+  );
+  animation: orbit 2.1s linear infinite reverse;
+}
+@keyframes orbit {
+  to {
+    transform: rotate(360deg);
+  }
 }
 @keyframes pause-glow {
   0%,
@@ -920,12 +938,15 @@ body::before {
     box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 0%, transparent);
   }
   50% {
-    box-shadow: 0 0 14px 1px color-mix(in oklab, var(--accent) 38%, transparent);
+    box-shadow:
+      0 0 12px 1px color-mix(in oklab, var(--accent) 35%, transparent),
+      inset 0 0 6px color-mix(in oklab, var(--accent) 18%, transparent);
   }
 }
 @media (prefers-reduced-motion: reduce) {
   #btn-pause.is-working,
-  #btn-pause.is-working::before {
+  #btn-pause.is-working::before,
+  #btn-pause.is-working::after {
     animation: none;
   }
 }
@@ -1203,8 +1224,54 @@ html.theme-reveal::view-transition-old(gt-live) {
 .tab.on .tab-ic {
   background: color-mix(in oklab, var(--accent) 18%, transparent);
 }
-.tab.on .tab-ic svg {
+.tab.on .tab-glyph svg {
   animation: tab-pop 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tab-glyph {
+  @apply grid place-items-center;
+}
+/* Live tabs: a progress ring around the icon while that tab's work runs (Sync: uploads; Overview:
+   freeing storage, copies or date fixes). Unknown progress turns a short arc instead. */
+.tab-ring {
+  @apply pointer-events-none absolute top-1/2 left-1/2 size-[30px] opacity-0 transition-opacity duration-300;
+  translate: -50% -50%;
+}
+.tab-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+.tab-ring-track {
+  stroke: color-mix(in oklab, var(--accent) 16%, transparent);
+}
+.tab-ring-arc {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tab.live .tab-ring {
+  opacity: 1;
+}
+.tab.live .tab-glyph svg {
+  @apply size-4;
+}
+.tab.live {
+  @apply text-accent;
+}
+.tab.live-paused .tab-ring-arc {
+  stroke: var(--warn);
+}
+.tab.live-spin .tab-ring {
+  animation: tab-spin 1.4s linear infinite;
+}
+@keyframes tab-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab.live-spin .tab-ring {
+    animation: none;
+  }
 }
 .tab-dot {
   @apply absolute top-0.5 right-3 size-2 rounded-full bg-bad ring-2 ring-bg;
@@ -1732,4 +1799,13 @@ svg:hover .donut-arc:not(:hover) {
     --w: 54px;
     --h: 30px;
   }
+}
+
+/* ---- Overview process cards: a soft accent edge while that process runs */
+.proc-card.is-running {
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+}
+
+.text-run {
+  color: var(--run);
 }

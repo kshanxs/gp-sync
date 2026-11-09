@@ -29,6 +29,9 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
+# Time zone data, for the time zone chosen in Settings (slim images leave it out).
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata && rm -rf /var/lib/apt/lists/*
+
 # Exact package versions from uv.lock (cached layer unless the lock changes).
 COPY backend/pyproject.toml backend/uv.lock backend/.python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
