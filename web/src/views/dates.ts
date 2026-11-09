@@ -17,7 +17,7 @@ import {
   rememberAccount,
   wireAccountMenu,
 } from "../lib/account-menu";
-import { badge, openAttrs, thumb, type Tone } from "../lib/ui";
+import { badge, openAttrs, pauseBtn, thumb, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // Fix dates: photos and videos with no date of their own get their date in Google Photos from the
@@ -188,7 +188,7 @@ function render(): void {
     );
     return;
   }
-  // The header's pause button pauses fixing dates in this account here, not uploads.
+  // The page's Pause/Resume buttons pause fixing dates in this account.
   const paused = !!r.paused;
   setPauseControl({
     paused,
@@ -234,11 +234,12 @@ function render(): void {
   };
   html(
     $("#dt-body"),
-    `${paused ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Fixing dates is paused in this account</div><div class="mt-0.5 text-ink-3">${r.waiting ? `${num(r.waiting)} wait. ` : ""}Nothing is deleted or uploaded again until you resume.</div></div><span class="flex shrink-0 items-center gap-1.5 text-xs text-ink-3">${icon("play", "size-3.5")}Resume with the play button at the top</span></section>` : ""}
+    `${paused ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Fixing dates is paused in this account</div><div class="mt-0.5 text-ink-3">${r.waiting ? `${num(r.waiting)} wait. ` : ""}Nothing is deleted or uploaded again until you resume.</div></div>${pauseBtn(true)}</section>` : ""}
     <section class="card min-w-0 overflow-hidden">
         <div class="flex flex-wrap items-center gap-3 border-b border-line p-4">
           <div class="min-w-0 flex-1 basis-64"><h2 class="font-semibold">Files without a date</h2>
             <p class="mt-1 text-xs text-ink-3">${num(r.undated)} files · ${num(r.wrong)} with different dates · ${num(r.waiting)} in progress</p></div>
+          ${!paused && r.waiting ? pauseBtn(false, "fixing") : ""}
           <span class="text-xs text-ink-3">Album: ${r.album ? esc(r.album) : "Off"} · <a class="underline" href="#/settings/dates">Settings</a> · <a class="underline" href="#/sources">Sources</a></span>
         </div>
         ${r.error ? `<p class="border-b border-line px-4 py-3 text-sm text-bad" role="alert">${esc(r.error)}</p>` : ""}

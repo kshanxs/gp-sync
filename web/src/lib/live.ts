@@ -36,6 +36,12 @@ const VERB: Record<ProcessKey, string> = {
   fixed: "Fixing",
 };
 
+/** How far through the queue: items finished out of finished plus waiting. It only moves forward
+ * as items finish, so it doesn't jump back each time a new item starts. */
+function queuePct(done: number, waiting: number): number | null {
+  return done + waiting > 0 ? pct(done, done + waiting) : null;
+}
+
 /** Average progress of the items moving now (each has done/total), or null. */
 function itemsPct(items: { done?: number; total?: number }[]): number | null {
   const known = items.filter((i) => i.total);
@@ -78,18 +84,22 @@ export function liveProcesses(s: Status): Live[] {
     href: PROCESS_HREF.uploads,
   });
 
-  // Free storage, every account added up. Paused counts only when every waiting account is paused.
+  // Free storage, every account added up. Paused when everything is paused, or every waiting
+  // account is.
   const accs = Object.values(s.reclaim ?? {});
   const freeWaiting = accs.reduce((a, r) => a + r.queued, 0);
   const freeJobs = jobs.filter((j) => j.kind === "storage");
   const waitingAccs = accs.filter((r) => r.queued);
-  const freePaused = waitingAccs.length > 0 && waitingAccs.every((r) => r.paused);
+  const freePaused = waitingAccs.length > 0 && (!!s.paused || waitingAccs.every((r) => r.paused));
   out.push({
     key: "freed",
     running: freeJobs.length > 0,
     paused: freePaused,
     waiting: freeWaiting,
-    pct: itemsPct(freeJobs),
+    pct: queuePct(
+      accs.reduce((a, r) => a + r.done, 0),
+      freeWaiting,
+    ),
     detail: line(
       freeJobs.length > 0,
       freePaused,
@@ -104,13 +114,16 @@ export function liveProcesses(s: Status): Live[] {
   // Copy accounts, every pair.
   const copyJobs = jobs.filter((j) => j.kind === "copy");
   const copyWaiting = s.copying?.queued ?? 0;
-  const copyPaused = !!s.copying?.paused && copyWaiting > 0;
+  const copyPaused = (!!s.copying?.paused || !!s.paused) && copyWaiting > 0;
   out.push({
     key: "copied",
     running: copyJobs.length > 0,
     paused: copyPaused,
     waiting: copyWaiting,
-    pct: itemsPct(copyJobs),
+    pct:
+      s.copying?.done !== undefined
+        ? queuePct(s.copying.done, copyWaiting + copyJobs.length)
+        : itemsPct(copyJobs),
     detail: line(
       copyJobs.length > 0,
       copyPaused,
@@ -128,10 +141,10 @@ export function liveProcesses(s: Status): Live[] {
   out.push({
     key: "fixed",
     running: dateJobs.length > 0,
-    paused: false,
+    paused: !!s.paused && dateWaiting > 0,
     waiting: dateWaiting,
     pct: itemsPct(dateJobs),
-    detail: line(dateJobs.length > 0, false, dateWaiting, "Fixing a date", "Nothing to fix"),
+    detail: line(dateJobs.length > 0, !!s.paused, dateWaiting, "Fixing a date", "Nothing to fix"),
     verb: VERB.fixed,
     href: PROCESS_HREF.fixed,
   });

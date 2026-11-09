@@ -18,7 +18,7 @@ export function status(): Status | null {
   return current;
 }
 
-/** The machine's name for messages: "Umbrel" on Umbrel, otherwise "this server". */
+/** The machine's name for messages: HOST_NAME, "Umbrel" on Umbrel, otherwise "this server". */
 export function host(): string {
   return current?.host || "this server";
 }
@@ -120,8 +120,9 @@ export function startPolling(): void {
   });
 }
 
-/** What the header's pause button controls on the open page, when not uploads (Free storage
- * pauses freeing there). Pages set it on mount and clear it on unmount. */
+/** The open page's own pause (Free storage in one account, copies, date fixes), run by the page's
+ * Pause/Resume buttons (pauseBtn). The header's button always pauses everything. Pages set it on
+ * mount and clear it on unmount. */
 export interface PauseControl {
   paused: boolean;
   /** "Pause freeing storage", "Resume freeing storage"… */

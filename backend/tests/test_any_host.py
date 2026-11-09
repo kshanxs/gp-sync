@@ -23,6 +23,14 @@ def test_status_says_what_the_machine_is_called(media):
     assert json.loads(sync.status_body())["host"] == sync.HOST_NAME == "this server"
 
 
+def test_platform_is_generic_unless_set(media):
+    body = json.loads(sync.status_body())
+    assert body["platform"] == sync.PLATFORM == "docker"
+    space = body["space"]
+    assert space["media"]["total"] >= space["media"]["free"] > 0
+    assert space["data"] and isinstance(space["same"], bool)
+
+
 def test_excluded_folders_are_not_backed_up(media, monkeypatch):
     for d in ("@eaDir", "encoded-video", "#recycle"):
         (media / "Photos" / d).mkdir(exist_ok=True)

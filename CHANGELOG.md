@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.5.8
+
+- One Pause for everything: the header's pause button now stops uploads, Free storage, copies, Keep
+  in sync and date fixes (items under way finish their step). Before, it paused only uploads, so
+  Free storage kept working while everything looked paused. A banner says when everything is paused,
+  with a Resume button. Each page still has its own Pause and Resume for its job alone.
+- Overview shows only what is live: Running now and Recent activity appear when they have something,
+  and a process card shows only while it runs, waits, is paused or did something today. The cards
+  left share the row evenly. Upload speed, download speed, CPU, memory, Network and At a glance stay.
+- The upload history moved to the Sync page: Today, Streak, Where your photos are, Upload times and
+  sizes, and Uploads per day.
+- Free space on this machine, read from the disk the photos are on (any host): a Space card on Sync
+  and a row in At a glance, amber when it runs low and red when almost full. A separate data disk
+  gets its own row.
+- Progress bars glide between updates instead of jumping and stopping, without the endless shine.
+  Process cards show progress through the whole queue, so the bar only moves forward.
+- Phones: the tab you tap gets a round highlight that fits the icon (no pill, no ripple).
+- Copy accounts: the cards say "family@gmail.com has everything" or "Nothing copied yet" instead of
+  "0 B", and "What to copy" says what to do when nothing is chosen.
+- Works the same on any Docker host: Umbrel's name and hints show only with PLATFORM=umbrel, which
+  the Umbrel app sets (HOST_NAME=Umbrel counts too). Elsewhere it says "this server" or HOST_NAME.
+- Running now: the arrows point the right way.
+
 ## 1.5.7
 
 - Faster Free storage and Copy accounts:

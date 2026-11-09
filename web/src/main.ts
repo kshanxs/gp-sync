@@ -6,7 +6,6 @@ import { pct } from "./lib/format";
 import { icon, type IconName } from "./lib/icons";
 import {
   onMode,
-  onPauseControl,
   onRefreshControl,
   onStatus,
   pauseControl,
@@ -127,6 +126,7 @@ function shell(): string {
         <a class="btn primary hidden sm:inline-flex" href="#/upload" aria-label="Add photos and videos from this device" title="Add photos and videos from this device">${icon("upload")}<span>Add files</span></a>
       </header>
       <div id="ptr" aria-hidden="true" style="top:calc(4rem + env(safe-area-inset-top))"><svg viewBox="0 0 40 40"><circle class="ptr-track" cx="20" cy="20" r="11"/><circle class="ptr-arc" cx="20" cy="20" r="11" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" transform="rotate(-90 20 20)"/></svg></div>
+      <div id="all-paused" class="hidden border-b border-warn/30 bg-warn/10 px-4 py-2 text-sm lg:px-6" role="status"><div class="flex items-center gap-2">${icon("pause", "size-4 shrink-0 text-warn")}<span class="min-w-0 flex-1">Everything is paused: uploads, Free storage, copies and date fixes.</span><button type="button" class="btn sm primary shrink-0" id="all-resume">${icon("play", "size-3.5")}Resume</button></div></div>
       <main id="view" class="scroll-thin flex-1 overflow-y-auto px-4 pt-4 pb-28 lg:px-6 lg:pt-6 lg:pb-8"></main>
     </div>
   </div>
@@ -188,7 +188,7 @@ function route(): void {
 function mountView(r: Route, rest: string[]): void {
   active?.view.unmount?.();
   unsubscribe?.();
-  setPauseControl(null); // back to uploads, unless the new page takes the button
+  setPauseControl(null); // the new page sets its own, if it has one
   setRefreshControl(null); // back to scanning
   active = r;
   const el = $("#view");
@@ -331,6 +331,7 @@ function updateShell(s: Status): void {
     const on = (id === "activity" && failed > 0) || (id === "more" && (warnHealth || !s.accounts.length));
     el.classList.toggle("hidden", !on);
   });
+  $("#all-paused").classList.toggle("hidden", !s.paused);
   paintPause(s);
   paintTabs(s);
 }
@@ -367,18 +368,16 @@ function paintTabs(s: Status | null = status()): void {
   else setTab("overview", "dashboard", "Overview", false, null);
 }
 
-/** The header's pause button: uploads, or what the open page says it controls (Free storage). */
+/** The header's pause button: one switch for everything (uploads, Free storage, copies, Keep in
+ * sync, date fixes). Each page also has a Pause for its own job. */
 function paintPause(s: Status | null = status()): void {
   const pause = $("#btn-pause");
-  const ctl = pauseControl();
-  const paused = ctl ? ctl.paused : !!s?.paused;
-  const label = ctl ? ctl.label : paused ? "Resume uploads" : "Pause uploads";
+  const paused = !!s?.paused;
+  const label = paused ? "Resume everything" : "Pause everything";
   // Glows while work runs (uploads, a scan, or anything in the background); still when paused.
   const working =
     !paused &&
-    (ctl
-      ? !!ctl.working
-      : s?.phase === "uploading" || s?.phase === "scanning" || !!s?.uploading?.length || !!s?.jobs?.length);
+    (s?.phase === "uploading" || s?.phase === "scanning" || !!s?.uploading?.length || !!s?.jobs?.length);
   pause.classList.toggle("is-working", working);
   if (pause.title !== label || pause.dataset.paused !== String(paused)) {
     pause.title = label;
@@ -421,8 +420,7 @@ function haptic(): void {
 
 /** Touch feedback: a ripple from where the finger lands. */
 function ripples(): void {
-  const SEL =
-    ".btn, .tab, .nav-item, .set-item, .set-tab, a.card, .row.clickable, .seg button, figure[data-open]";
+  const SEL = ".btn, .nav-item, .set-item, .set-tab, a.card, .row.clickable, .seg button, figure[data-open]";
   document.addEventListener(
     "pointerdown",
     (e) => {
@@ -552,12 +550,11 @@ function boot(): void {
     const btn = $<HTMLButtonElement>("#btn-pause");
     btn.disabled = true;
     try {
-      const ctl = pauseControl();
-      if (ctl) toast(await ctl.toggle(), "good");
-      else {
-        await post("pause");
-        toast(status()?.paused ? "Uploads resumed" : "Uploads paused", "good");
-      }
+      await post("pause");
+      toast(
+        status()?.paused ? "Everything resumed" : "Everything paused: items under way finish their step",
+        "good",
+      );
       await refresh();
     } catch (e) {
       toast((e as Error).message || "Couldn't reach the app", "bad");
@@ -565,6 +562,7 @@ function boot(): void {
       btn.disabled = false;
     }
   });
+  $("#all-resume").addEventListener("click", () => $("#btn-pause").click());
   $("#btn-install").addEventListener("click", () => void install());
   $("#side-install").addEventListener("click", () => void install());
   installButtons();
@@ -580,7 +578,21 @@ function boot(): void {
     tabTurn++;
     paintTabs();
   }, 4000);
-  onPauseControl(() => paintPause());
+  // A page's own Pause/Resume (its job only).
+  document.addEventListener("click", async (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-page-pause]");
+    const ctl = pauseControl();
+    if (!b || !ctl) return;
+    b.disabled = true;
+    try {
+      toast(await ctl.toggle(), "good");
+      await refresh();
+    } catch (err) {
+      toast((err as Error).message || "Couldn't reach the app", "bad");
+    } finally {
+      b.disabled = false;
+    }
+  });
   onRefreshControl(() => syncButton());
   onStatus(askUndated);
   onMode((live) => $("#live").classList.toggle("hidden", !live));

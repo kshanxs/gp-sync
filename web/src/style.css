@@ -431,20 +431,17 @@ body::before {
   .bar {
     @apply block h-2 overflow-hidden rounded-full bg-panel-2;
   }
+  /* Linear and about as long as the gap between updates, so the bar glides instead of jumping
+     and stopping. */
   .bar > i {
-    @apply relative block h-full overflow-hidden rounded-full transition-[width] duration-700 ease-out;
+    @apply relative block h-full overflow-hidden rounded-full;
+    transition: width 1.2s linear;
     background: linear-gradient(90deg, var(--accent-fill), var(--accent-fill-2));
   }
   /* No byte count yet: a short bar slides across. */
   .bar.indeterminate > i {
     width: 35%;
     animation: bar-slide 1.3s ease-in-out infinite;
-  }
-  .bar.active > i::after {
-    content: "";
-    @apply absolute inset-0;
-    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.35), transparent);
-    animation: shimmer 1.6s linear infinite;
   }
 
   .row {
@@ -987,14 +984,6 @@ body::before {
     transform: translateX(290%);
   }
 }
-@keyframes shimmer {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(100%);
-  }
-}
 @keyframes pop {
   from {
     opacity: 0;
@@ -1207,11 +1196,13 @@ html.theme-reveal::view-transition-old(gt-live) {
 
 /* ---- Phone tab bar */
 .tab {
-  @apply relative flex flex-col items-center justify-center gap-0.5 overflow-hidden py-2 text-[11px] font-medium text-ink-3 transition-colors duration-200 select-none;
+  @apply relative flex flex-col items-center justify-center gap-0 overflow-hidden py-1.5 text-[11px] font-medium text-ink-3 transition-colors duration-200 select-none;
   -webkit-touch-callout: none;
 }
+/* A circle behind the icon (the icons are round or square, so a pill looked off), the same
+   size as the ring a live tab draws. */
 .tab-ic {
-  @apply relative grid h-7 w-14 place-items-center rounded-full transition-[background-color,transform] duration-300;
+  @apply relative grid size-9 place-items-center rounded-full transition-[background-color,transform] duration-300;
   transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .tab:active .tab-ic {
@@ -1233,7 +1224,7 @@ html.theme-reveal::view-transition-old(gt-live) {
 /* Live tabs: a progress ring around the icon while that tab's work runs (Sync: uploads; Overview:
    freeing storage, copies or date fixes). Unknown progress turns a short arc instead. */
 .tab-ring {
-  @apply pointer-events-none absolute top-1/2 left-1/2 size-[30px] opacity-0 transition-opacity duration-300;
+  @apply pointer-events-none absolute top-1/2 left-1/2 size-[34px] opacity-0 transition-opacity duration-300;
   translate: -50% -50%;
 }
 .tab-ring circle {
@@ -1808,4 +1799,17 @@ svg:hover .donut-arc:not(:hover) {
 
 .text-run {
   color: var(--run);
+}
+
+/* Overview cards with nothing to show right now (no work running, no activity yet). */
+.is-idle {
+  display: none !important;
+}
+
+/* A disk bar that turns amber when space runs low and red when it is almost full. */
+.bar.space-warn > i {
+  background: var(--warn);
+}
+.bar.space-bad > i {
+  background: var(--bad);
 }

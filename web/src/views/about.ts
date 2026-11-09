@@ -2,6 +2,7 @@ import { get, type About } from "../lib/api";
 import { $, esc, html } from "../lib/dom";
 import { date, duration } from "../lib/format";
 import { icon } from "../lib/icons";
+import { status } from "../lib/store";
 import { badge, cardHead } from "../lib/ui";
 import type { View } from "./view";
 
@@ -122,7 +123,7 @@ const about: View = {
           <p><b class="text-ink">App:</b> designed, built and maintained by <a class="text-accent" href="https://github.com/kshanxs" target="_blank" rel="noopener">kshanxs</a>, under the MIT license.</p>
           <p><b class="text-ink">Uploads:</b> <a class="text-accent" href="https://github.com/xob0t/google_photos_mobile_client" target="_blank" rel="noopener">gpmc</a> by xob0t (MIT), which talks to Google Photos like the Android app, so uploads keep their original quality. Signing in uses <a class="text-accent" href="https://revanced.app" target="_blank" rel="noopener">ReVanced</a> and GmsCore.</p>
           <p><b class="text-ink">Data:</b> <a class="text-accent" href="https://github.com/tursodatabase/turso" target="_blank" rel="noopener">Turso</a> and SQLite store statistics and upload state; answers are cached in the app's own memory (or <a class="text-accent" href="https://redis.io" target="_blank" rel="noopener">Redis</a> if you set one up); Pillow and pillow-heif make thumbnails.</p>
-          <p><b class="text-ink">Dashboard:</b> TypeScript built with <a class="text-accent" href="https://viteplus.dev" target="_blank" rel="noopener">Vite+</a> by VoidZero, Tailwind CSS and Lucide icons. Runs on <a class="text-accent" href="https://umbrel.com" target="_blank" rel="noopener">Umbrel</a>.</p>
+          <p><b class="text-ink">Dashboard:</b> TypeScript built with <a class="text-accent" href="https://viteplus.dev" target="_blank" rel="noopener">Vite+</a> by VoidZero, Tailwind CSS and Lucide icons. Runs on any Docker host${status()?.platform === "umbrel" ? `, here on <a class="text-accent" href="https://umbrel.com" target="_blank" rel="noopener">Umbrel</a>` : ""}.</p>
         </div>
         <div class="flex flex-wrap gap-2 border-t border-line p-4"><a class="btn" href="https://github.com/kshanxs/gp-sync" target="_blank" rel="noopener">${icon("branch")}Source code</a><a class="btn" href="#/settings/api">${icon("code")}REST API</a></div>
       </section>

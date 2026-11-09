@@ -1,13 +1,254 @@
-// Normal sync on its own page: what uploads now, how much of the library is backed up, and each
-// folder's progress. (The Overview shows every process side by side and links here.)
+// Normal sync on its own page: what uploads now, how much of the library is backed up, each
+// folder's progress, and the upload history (today, streak, where the photos are, times, the year).
+// The Overview shows only what runs now, for every process, and links here.
 
-import type { Status } from "../lib/api";
-import { ring, setRing } from "../lib/charts";
-import { $, esc, html } from "../lib/dom";
-import { bytes, fileName, num, pct, speed } from "../lib/format";
+import { get, tz, type FolderReport, type History, type Insights, type Status } from "../lib/api";
+import { donut, heatLegend, heatmap, ring, setRing, sparkline, type Slice } from "../lib/charts";
+import { $, $$, animateChange, esc, html } from "../lib/dom";
+import { ago, bytes, duration, fileName, ms, num, pct, speed } from "../lib/format";
 import { icon } from "../lib/icons";
-import { badge, cardHead, etaText, openAttrs, phaseInfo, thumb } from "../lib/ui";
+import { host } from "../lib/store";
+import { badge, cardHead, etaText, openAttrs, phaseInfo, spaceTone, thumb, tile } from "../lib/ui";
 import type { View } from "./view";
+
+let hist: History | null = null;
+let ins: Insights | null = null;
+let slowTimer = 0;
+let slowSynced = -1; // uploaded count the heat map and streak were last loaded for
+let slowAt = 0;
+let last: Status | null = null;
+
+// ---- where the photos are: pie charts per device (or folder) and photos vs videos
+let share: FolderReport | null = null;
+let shareBy: "devices" | "folders" = "devices";
+let shareMetric: "files" | "bytes" = "files";
+let shareAt = 0;
+let shareRequest = 0;
+let shareError = false;
+let kindsDrawn = false; // the photos/videos donut needs the status, which can come later
+const SLICE_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"];
+const OTHER = "var(--ink-3)";
+
+async function loadShare(interactive = false): Promise<void> {
+  shareAt = Date.now();
+  const mine = ++shareRequest;
+  const by = shareBy;
+  if (interactive) {
+    share = null;
+    shareError = false;
+    renderShare();
+  }
+  const r = await get<FolderReport>(`folders?group=${by}&days=30&tz=${tz}`).catch(() => null);
+  if (mine !== shareRequest || by !== shareBy) return;
+  share = r;
+  shareError = !r;
+  renderShare();
+  if (interactive) animateChange(document.getElementById("sy-share-body"));
+}
+
+function pctText(part: number, whole: number): string {
+  const p = whole ? (part / whole) * 100 : 0;
+  return p > 0 && p < 1 ? "<1%" : `${Math.round(p)}%`;
+}
+
+function legendRow(color: string, name: string, value: number, total: number, extra = "", href = ""): string {
+  const label = href
+    ? `<a class="truncate hover:underline" href="${href}">${esc(name)}</a>`
+    : `<span class="truncate">${esc(name)}</span>`;
+  return `<li class="flex items-center gap-2 py-1.5 text-sm"><i class="size-2.5 shrink-0 rounded-full" style="background:${color}"></i>${label}
+    <span class="ml-auto shrink-0 tabular-nums">${pctText(value, total)}</span>
+    <span class="w-16 shrink-0 text-right text-xs text-ink-3 tabular-nums sm:w-20">${shareMetric === "files" ? num(value) : bytes(value)}</span>${extra}</li>`;
+}
+
+function renderShare(): void {
+  const el = document.getElementById("sy-share-body");
+  if (!el) return;
+  $$("button", $("#sy-share-by")).forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.by === shareBy)),
+  );
+  $$("button", $("#sy-share-metric")).forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.m === shareMetric)),
+  );
+  const m = (f: { files: number; bytes: number }) => (shareMetric === "files" ? f.files : f.bytes);
+  const fmt = (v: number) => (shareMetric === "files" ? num(v) : bytes(v));
+  // Groups: biggest first; past five slices the rest is one grey "Other", so colours never repeat.
+  const groups = [...(share?.children ?? [])].filter((c) => c.name && m(c) > 0).sort((a, b) => m(b) - m(a));
+  const shown = groups.length > 5 ? groups.slice(0, 4) : groups;
+  const rest = groups.slice(shown.length);
+  const total = groups.reduce((a, g) => a + m(g), 0);
+  const link = (g: (typeof groups)[number]) =>
+    `#/folders/${shareBy === "devices" || g.device ? "d" : "f"}/${(g.folders[0] ?? g.name).split("/").map(encodeURIComponent).join("/")}`;
+  const slices: Slice[] = shown.map((g, i) => ({
+    label: g.name,
+    value: m(g),
+    color: SLICE_COLORS[i]!,
+    tip: `${g.name}\n${fmt(m(g))} · ${pctText(m(g), total)}\n${Math.round(pct(g.synced, g.files))}% in Google Photos\nClick to open`,
+    href: link(g),
+  }));
+  const restValue = rest.reduce((a, g) => a + m(g), 0);
+  if (rest.length)
+    slices.push({
+      label: "Other",
+      value: restValue,
+      color: OTHER,
+      tip: `${rest.length} more\n${fmt(restValue)} · ${pctText(restValue, total)}\nClick to see all`,
+      href: shareBy === "devices" ? "#/folders" : "#/folders/f",
+    });
+  const backed = (g: (typeof groups)[number]) => {
+    const p = Math.round(pct(g.synced, g.files));
+    return `<span class="flex w-16 shrink-0 items-center gap-1.5 sm:w-24" title="${p}% in Google Photos"><span class="bar h-1.5 flex-1"><i style="width:${p}%"></i></span><span class="w-8 text-right text-[11px] text-ink-3 tabular-nums">${p}%</span></span>`;
+  };
+  const lib = last?.library;
+  kindsDrawn = !!lib;
+  const kinds = lib
+    ? [
+        {
+          label: "Photos",
+          value: shareMetric === "files" ? (lib.photos ?? 0) : (lib.photo_bytes ?? 0),
+          color: "var(--s1)",
+          href: "#/folders/f/~photo",
+        },
+        {
+          label: "Videos",
+          value: shareMetric === "files" ? (lib.videos ?? 0) : (lib.video_bytes ?? 0),
+          color: "var(--s2)",
+          href: "#/folders/f/~video",
+        },
+      ]
+    : [];
+  const kindTotal = kinds.reduce((a, k) => a + k.value, 0);
+  const center = (v: number, sub: string) =>
+    `<div><div class="num text-xl">${shareMetric === "files" ? num(v) : bytes(v)}</div><div class="text-[11px] text-ink-3">${sub}</div></div>`;
+  html(
+    el,
+    `<div class="grid gap-6 md:grid-cols-2">
+      <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+        ${donut(slices, center(total, shareBy === "devices" ? "on devices" : "in folders"))}
+        <div class="w-full min-w-0 flex-1"><div class="label mb-1">${shareBy === "devices" ? "By device" : "By folder"}</div>
+          ${
+            groups.length
+              ? `<ul>${shown.map((g, i) => legendRow(SLICE_COLORS[i]!, g.name, m(g), total, backed(g), link(g))).join("")}${rest.length ? legendRow(OTHER, `Other (${rest.length})`, restValue, total, "", shareBy === "devices" ? "#/folders" : "#/folders/f") : ""}</ul>`
+              : `<p class="py-2 text-sm text-ink-3">${share ? (shareBy === "devices" ? "No device folders found. Try Folders." : "No folders found.") : shareError ? "Couldn't load this view." : "Loading…"}</p>`
+          }</div>
+      </div>
+      <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+        ${donut(
+          kinds.map((k) => ({
+            ...k,
+            tip: `${k.label}\n${fmt(k.value)} · ${pctText(k.value, kindTotal)}\nClick to open`,
+          })),
+          center(kindTotal, "backed-up library"),
+        )}
+        <div class="w-full min-w-0 flex-1"><div class="label mb-1">Photos and videos</div>
+          <ul>${kinds.map((k) => legendRow(k.color, k.label, k.value, kindTotal, "", k.href)).join("")}</ul>
+          ${lib ? `<p class="mt-2 text-xs text-ink-3">${shareMetric === "files" ? `Videos are ${pctText(lib.videos ?? 0, lib.files)} of the files but ${pctText(lib.video_bytes ?? 0, lib.bytes)} of the space.` : `Photos take ${bytes(lib.photo_bytes)} and videos ${bytes(lib.video_bytes)}.`}</p>` : ""}
+        </div>
+      </div>
+    </div>`,
+  );
+}
+
+function streak(h: History): number {
+  // Same count as the heat map, so the streak and the coloured days agree.
+  const byDay = new Map(h.data.map((d) => [d.day, d.photos + d.videos]));
+  let n = 0;
+  const d = new Date(h.today + "T00:00:00");
+  if (!byDay.get(h.today)) d.setDate(d.getDate() - 1); // today may still be coming
+  for (;;) {
+    const key = d.toLocaleDateString("sv"); // YYYY-MM-DD
+    if (!byDay.get(key)) return n;
+    n++;
+    d.setDate(d.getDate() - 1);
+  }
+}
+
+async function loadSlow(): Promise<void> {
+  slowAt = Date.now();
+  [hist, ins] = await Promise.all([
+    get<History>(`history?days=371&tz=${tz}`),
+    get<Insights>(`insights?tz=${tz}`),
+  ]);
+  renderSlow();
+}
+
+function renderSlow(): void {
+  if (!hist || !document.getElementById("sy-year")) return;
+  const today = hist.data.find((d) => d.day === hist?.today);
+  const last14 = (() => {
+    const m = new Map(hist.data.map((d) => [d.day, d.photos + d.videos]));
+    return Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(hist!.today + "T00:00:00");
+      d.setDate(d.getDate() - 13 + i);
+      return m.get(d.toLocaleDateString("sv")) ?? 0;
+    });
+  })();
+  const t = $("#sy-today");
+  html($("[data-v]", t), num((today?.photos ?? 0) + (today?.videos ?? 0)));
+  html(
+    $("[data-s]", t),
+    `${num(today?.photos ?? 0)} photos · ${num(today?.videos ?? 0)} videos · ${bytes((today?.photo_bytes ?? 0) + (today?.video_bytes ?? 0))}`,
+  );
+  html($("[data-c]", t), sparkline(last14, "var(--s1)"));
+  const st = streak(hist);
+  const k = $("#sy-streak");
+  html($("[data-v]", k), `${st} day${st === 1 ? "" : "s"}`);
+  const active = hist.data.filter((d) => d.photos + d.videos > 0).length;
+  html($("[data-s]", k), `${num(active)} active day${active === 1 ? "" : "s"} this year`);
+  html(
+    $("[data-c]", k),
+    `<div class="flex gap-1">${last14
+      .slice(-14)
+      .map(
+        (v) =>
+          `<i class="h-3 flex-1 rounded-[3px]" style="background:${v ? "var(--s1)" : "var(--panel-2)"}"></i>`,
+      )
+      .join("")}</div>`,
+  );
+
+  // Year of uploads
+  const days: { day: string; value: number; tip: string }[] = [];
+  const byDay = new Map(hist.data.map((d) => [d.day, d]));
+  const end = new Date(hist.today + "T00:00:00");
+  for (let i = 364; i >= 0; i--) {
+    const d = new Date(end);
+    d.setDate(d.getDate() - i);
+    const key = d.toLocaleDateString("sv");
+    const row = byDay.get(key);
+    const n = (row?.photos ?? 0) + (row?.videos ?? 0);
+    days.push({
+      day: key,
+      value: n,
+      tip: `${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })}\n${n ? `${row?.photos ?? 0} photos, ${row?.videos ?? 0} videos · ${bytes((row?.photo_bytes ?? 0) + (row?.video_bytes ?? 0))}` : "Nothing uploaded"}`,
+    });
+  }
+  const yearTotal = days.reduce((a, d) => a + d.value, 0);
+  html($("#sy-year-sub"), `${num(yearTotal)} files in the last year`);
+  const year = $("#sy-year");
+  const first = !year.dataset.html;
+  html(year, heatmap(days));
+  if (first) year.scrollLeft = year.scrollWidth; // phones: start at today
+
+  if (ins) {
+    const rows: [string, string, string][] = [
+      ["Time spent uploading", duration(ins.upload_ms / 1000), "timer"],
+      ["Average per photo", ins.photo.avg_ms ? ms(ins.photo.avg_ms) : "–", "photo"],
+      ["Average per video", ins.video.avg_ms ? ms(ins.video.avg_ms) : "–", "video"],
+      ["Average photo size", bytes(ins.photo.avg_bytes), "photo"],
+      ["Average video size", bytes(ins.video.avg_bytes), "video"],
+      ["Average upload speed", ins.avg_speed ? speed(ins.avg_speed) : "–", "gauge"],
+    ];
+    html(
+      $("#sy-times"),
+      `<div class="grid grid-cols-2 gap-2">${rows
+        .map(
+          ([l, v, ic]) =>
+            `<div class="stat-tile"><div class="flex items-center gap-1.5 text-xs text-ink-3">${icon(ic as "timer", "size-3.5")}${esc(l)}</div><div class="num text-lg">${esc(v)}</div></div>`,
+        )
+        .join("")}</div>
+       ${ins.timed_files < ins.uploaded ? `<p class="mt-3 text-xs text-ink-3">${icon("info", "inline size-3.5 -mt-0.5")} Upload times are known for ${num(ins.timed_files)} of ${num(ins.uploaded)} uploads (older ones weren't timed).</p>` : ""}`,
+    );
+  }
+}
 
 const STEPS: Record<string, string> = {
   hashing: "Fingerprinting",
@@ -144,7 +385,7 @@ function folderList(s: Status): string {
 }
 
 const sync: View = {
-  subtitle: "Backing up your Umbrel folders to Google Photos: what uploads now and how far each folder is.",
+  subtitle: "Backing up your folders to Google Photos: what uploads now and how far each folder is.",
   mount(el) {
     el.innerHTML = `
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-12">
@@ -160,17 +401,65 @@ const sync: View = {
         ${cardHead("Now", "cloudUp", '<a href="#/upload" class="hover:text-ink">Upload from phone ›</a>')}
         <div class="card-b" id="sy-now"><div class="skeleton h-24"></div></div>
       </section>
-      <section class="card lg:col-span-12">
+
+      <section class="grid grid-cols-2 gap-4 lg:col-span-12 xl:grid-cols-4">
+        ${tile({ id: "sy-today", label: "Today", value: "–", ic: "calendar", chart: "", href: "#/activity/uploaded" })}
+        ${tile({ id: "sy-streak", label: "Streak", value: "–", ic: "flame", chart: "", href: "#/history" })}
+        ${tile({ id: "sy-space", label: "Space here", value: "–", ic: "disk", chart: "" })}
+        ${tile({ id: "sy-scan", label: "Last scan", value: "–", ic: "search" })}
+      </section>
+
+      <section class="card lg:col-span-7">
         ${cardHead("Folders", "folder", '<a href="#/folders" class="hover:text-ink">All folders ›</a>')}
         <div id="sy-folders"><div class="card-b"><div class="skeleton h-24"></div></div></div>
+      </section>
+      <section class="card lg:col-span-5">
+        ${cardHead("Upload times and sizes", "timer", '<a href="#/insights" class="hover:text-ink">Insights ›</a>')}
+        <div class="card-b" id="sy-times"><div class="skeleton h-40"></div></div>
+      </section>
+
+      <section class="card lg:col-span-12">
+        ${cardHead("Where your photos are", "chart", `<div class="seg" id="sy-share-by"><button data-by="devices">Devices</button><button data-by="folders">Folders</button></div><div class="seg ml-2" id="sy-share-metric"><button data-m="files">Files</button><button data-m="bytes">Size</button></div>`)}
+        <div class="card-b" id="sy-share-body" aria-live="polite"><div class="skeleton h-44"></div></div>
+      </section>
+
+      <section class="card lg:col-span-12">
+        ${cardHead("Uploads per day", "calendar", `<span id="sy-year-sub"></span>`)}
+        <div class="card-b"><div class="scroll-thin overflow-x-auto pb-1" id="sy-year"><div class="skeleton h-28"></div></div><div class="mt-2 flex justify-end">${heatLegend()}</div></div>
       </section>
     </div>`;
     $("#sy-now").addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>("[data-now]");
       if (b) document.getElementById(b.dataset.now === "resume" ? "btn-pause" : "btn-sync")?.click();
     });
+    $("#sy-share-by").addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
+      if (!b || shareBy === b.dataset.by) return;
+      shareBy = b.dataset.by as "devices" | "folders";
+      void loadShare(true);
+    });
+    $("#sy-share-metric").addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
+      if (!b || shareMetric === b.dataset.m) return;
+      shareMetric = b.dataset.m as "files" | "bytes";
+      renderShare();
+      animateChange(document.getElementById("sy-share-body"));
+    });
+    kindsDrawn = false;
+    void loadShare();
+    slowSynced = -1;
+    void loadSlow();
+    slowTimer = window.setInterval(loadSlow, 60_000);
   },
   update(s) {
+    last = s;
+    // New uploads: refresh the heat map and streak now instead of waiting for the minute timer.
+    if (s.library.synced_files !== slowSynced && Date.now() - slowAt > 10_000) {
+      if (slowSynced >= 0) void loadSlow();
+      slowSynced = s.library.synced_files;
+    }
+    if (Date.now() - shareAt > 60_000) void loadShare(); // counts change slowly: once a minute
+    else if (!kindsDrawn) renderShare();
     const lib = s.library;
     const p = pct(lib.synced_files, lib.files);
     setRing($("#sy-hero .ring-box svg"), p);
@@ -191,6 +480,28 @@ const sync: View = {
     html($("#sy-badges"), heroBadges(s));
     html($("#sy-now"), nowCard(s));
     html($("#sy-folders"), folderList(s));
+    // Room left on the disk the photos are on, read from the system (any host).
+    const space = $("#sy-space");
+    const d = s.space?.media;
+    $(".label", space).textContent = `Space on ${host()}`;
+    html($("[data-v]", space), d ? `${bytes(d.free)} free` : "–");
+    html(
+      $("[data-s]", space),
+      d ? `${pct(d.used, d.total).toFixed(0)}% of ${bytes(d.total)} used` : "Couldn't read the disk",
+    );
+    html(
+      $("[data-c]", space),
+      d
+        ? `<span class="bar block h-1.5 ${spaceTone(d) === "good" ? "" : `space-${spaceTone(d)}`}"><i style="width:${pct(d.used, d.total)}%"></i></span>`
+        : "",
+    );
+    const scan = $("#sy-scan");
+    html($("[data-v]", scan), ago(s.last_scan, s.now));
+    html($("[data-s]", scan), `Every ${num(s.interval)} min${s.paused ? " · paused" : ""}`);
+  },
+  unmount() {
+    clearInterval(slowTimer);
+    shareRequest++;
   },
 };
 

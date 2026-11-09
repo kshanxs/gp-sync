@@ -39,20 +39,20 @@ describe("live processes", () => {
     expect(tabLive(s)).toBeNull(); // uploads have the Sync tab
   });
 
-  it("adds up Free storage across accounts and averages the items moving", () => {
+  it("adds up Free storage across accounts, with progress through the queue", () => {
     const s = status({
       jobs: [
         { kind: "storage", account: "a", done: 50, total: 100 },
         { kind: "storage", account: "b", done: 100, total: 100 },
       ],
       reclaim: {
-        a: { queued: 4, working: 1, done: 0, freed: 0, failed: 0, paused: false },
-        b: { queued: 3, working: 1, done: 0, freed: 0, failed: 0, paused: false },
+        a: { queued: 4, working: 1, done: 20, freed: 0, failed: 0, paused: false },
+        b: { queued: 3, working: 1, done: 1, freed: 0, failed: 0, paused: false },
       },
     });
     const f = by(s).freed!;
     expect(f.running).toBe(true);
-    expect(f.pct).toBe(75);
+    expect(f.pct).toBe(75); // 21 done of 28
     expect(f.detail).toBe("2 moving · 7 waiting");
     expect(tabLive(s)?.verb).toBe("Freeing");
   });
@@ -76,5 +76,18 @@ describe("live processes", () => {
     expect(tabLive(s, 1)?.key).toBe("copied");
     expect(tabLive(s, 2)?.key).toBe("freed");
     expect(by(s).copied!.pct).toBeNull(); // no sizes known: the ring turns instead
+  });
+
+  it("shows every job as paused when everything is paused", () => {
+    const s = status({
+      paused: true,
+      jobs: [{ kind: "storage", account: "a", done: 1, total: 2 }],
+      reclaim: { a: { queued: 5, working: 1, done: 0, freed: 0, failed: 0, paused: false } },
+      copying: { queued: 2, checking: 0, paused: false },
+    } as never);
+    const l = by(s);
+    expect(l.freed!.paused).toBe(true);
+    expect(l.freed!.detail).toBe("Paused · 5 waiting");
+    expect(l.copied!.paused).toBe(true);
   });
 });

@@ -98,8 +98,15 @@ DEFAULT_FOLDERS = tuple(f.strip() for f in os.environ.get("FOLDERS", "Photos,Vid
 # system clutter, and Immich's transcoded videos. Hidden names (starting with ".") are skipped too.
 DEFAULT_EXCLUDE = "@eaDir,#recycle,#snapshot,$RECYCLE.BIN,System Volume Information,lost+found,encoded-video"
 EXCLUDE = tuple(p.strip() for p in os.environ.get("EXCLUDE", DEFAULT_EXCLUDE).split(",") if p.strip())
-# What the dashboard calls the machine the files are on ("Umbrel" on Umbrel).
-HOST_NAME = os.environ.get("HOST_NAME", "").strip() or "this server"
+# Where the app is deployed. Nothing assumes a platform unless this says so: PLATFORM=umbrel turns
+# on Umbrel's wording and hints (the Umbrel app sets it). Empty: any Docker host. Older Umbrel
+# installs only set HOST_NAME=Umbrel, which counts as PLATFORM=umbrel.
+PLATFORM = os.environ.get("PLATFORM", "").strip().lower()
+if not PLATFORM and os.environ.get("HOST_NAME", "").strip().lower() == "umbrel":
+    PLATFORM = "umbrel"
+PLATFORM = PLATFORM or "docker"
+# What the dashboard calls the machine the files are on ("My NAS"); Umbrel's name on Umbrel.
+HOST_NAME = os.environ.get("HOST_NAME", "").strip() or ("Umbrel" if PLATFORM == "umbrel" else "this server")
 # Optional password for the dashboard and API (any user name). Umbrel has its own login.
 PASSWORD = os.environ.get("PASSWORD", "")
 
@@ -2520,6 +2527,32 @@ def check_logins():
     return out
 
 
+_space_cache = [0.0, None]
+
+
+def local_space():
+    """Room on the disks here, read from the system (any host): where the photos are (MEDIA) and
+    where the app keeps its data and downloads (DATA). `same`: both on one disk. Cached 30 s."""
+    now = time.monotonic()
+    if _space_cache[1] is not None and now - _space_cache[0] < 30:
+        return _space_cache[1]
+
+    def disk(path):
+        try:
+            u = shutil.disk_usage(path)
+            return {"total": u.total, "used": u.total - u.free, "free": u.free}
+        except OSError:
+            return None
+
+    media, data = disk(MEDIA), disk(DATA)
+    try:
+        same = os.stat(MEDIA).st_dev == os.stat(DATA).st_dev
+    except OSError:
+        same = False
+    _space_cache[:] = [now, {"media": media, "data": data, "same": same}]
+    return _space_cache[1]
+
+
 def _dir_size(root):
     return sum(f.stat().st_size for f in root.rglob("*.webp")) if root.exists() else 0
 
@@ -2666,6 +2699,8 @@ def status_json():
     return {
         "version": VERSION,
         "host": HOST_NAME,
+        "platform": PLATFORM,
+        "space": local_space(),
         "auth": bool(PASSWORD),
         # The time zone days and times are shown in: chosen in Settings, or the system default.
         "tz": {
@@ -3107,13 +3142,13 @@ def _download(client, account, key, dedup, name, size, taken, folder=None, track
     Google reports that copy's checksum too. `track` is the dict whose "current" shows progress."""
     track = reclaim_state[account] if track is None else track
     with _disk_space(size):
-        found = _from_umbrel(key, dedup, name, size, taken, folder or RECLAIM_DIR / account / key, track)
+        found = _from_local(key, dedup, name, size, taken, folder or RECLAIM_DIR / account / key, track)
         if found:
             return found
         return _fetch(client, account, key, dedup, name, size, taken, folder, track)
 
 
-def _umbrel_copies(dedup):
+def _local_copies(dedup):
     """Files on this server with the item's exact SHA-1 (its dedup key), from GP Sync's own records."""
     try:
         sha1 = _digest(dedup).hex()
@@ -3122,11 +3157,11 @@ def _umbrel_copies(dedup):
     return [p for (p,) in q("SELECT path FROM files WHERE sha1=? ORDER BY updated DESC", (sha1,))]
 
 
-def _from_umbrel(key, dedup, name, size, taken, folder, track):
+def _from_local(key, dedup, name, size, taken, folder, track):
     """Use a file already on this server instead of downloading it from Google: copied into the work
     folder (never moved, so the original stays exactly as it was) and checked again while copying.
     Returns (path, dedup key), or None when no file here matches byte for byte."""
-    for source in _umbrel_copies(dedup):
+    for source in _local_copies(dedup):
         try:
             if os.path.getsize(source) != size and size:
                 continue  # changed since it was fingerprinted
@@ -3160,7 +3195,7 @@ def _from_umbrel(key, dedup, name, size, taken, folder, track):
         tmp.replace(target)
         if taken:
             os.utime(target, (taken, taken))  # only the copy's time changes, never the original's
-        track["from_umbrel"] = True
+        track["from_local"] = True
         log(f"Used the copy of {name} already on this server instead of downloading it", "local")
         return target, dedup
     return None
@@ -3247,6 +3282,12 @@ def _digest(dedup):
     return base64.urlsafe_b64decode(dedup + "=" * (-len(dedup) % 4))
 
 
+def all_paused():
+    """The header's Pause: every job holds (uploads, Free storage, copies, Keep in sync, Fix dates).
+    Each job's own pause still works on its page."""
+    return PAUSE_FILE.exists()
+
+
 def reclaim_paused(account):
     """The user paused Free storage for this account: items under way finish their step, nothing new starts."""
     return meta_get(f"reclaim_paused:{account}") == "1"
@@ -3271,7 +3312,7 @@ def _reclaim_item(account, row, make_client):
     """Move one item a step on, on a worker thread: download it, or replace it in Google.
     Returns True if it did something."""
     key, dedup, name, size, taken, st_, local, fav, arch, cap, local_hash = row
-    track = {"current": None, "stop": _stop_check(lambda: reclaim_paused(account))}
+    track = {"current": None, "stop": _stop_check(lambda: reclaim_paused(account) or all_paused())}
     with _reclaim_jobs_lock:
         reclaim_state[account]["jobs"][key] = track
     try:
@@ -3284,7 +3325,7 @@ def _reclaim_item(account, row, make_client):
             _set_reclaim(account, key, "downloaded", local=str(path), local_hash="" if got == dedup else got,
                          downloaded_at=time.time())  # fmt: skip
             reclaim_state[account]["error"] = ""
-            if not track.get("from_umbrel"):
+            if not track.get("from_local"):
                 edited = " (Google's edited copy)" if got != dedup else ""
                 log(f"Downloaded {name} from Google ({fmt_bytes(size)}){edited} to free its storage", "downloaded")
             return True
@@ -3366,7 +3407,8 @@ def reclaim_step(make_client=None, account=None, wait=True):
         if acc not in per:
             with _reclaim_jobs_lock:
                 running = sum(1 for a, _ in _reclaim_jobs if a == acc)
-            per[acc] = {"slots": 0 if reclaim_paused(acc) else workers - running, "blocked": None, "ours": None}
+            held = reclaim_paused(acc) or all_paused()
+            per[acc] = {"slots": 0 if held else workers - running, "blocked": None, "ours": None}
         p = per[acc]
         if p["slots"] <= 0:
             continue
@@ -3429,7 +3471,7 @@ def reclaim_summary():
             a["failed"] += n
     for acc, a in out.items():
         a["working"] = len(_reclaim_working(acc))
-        a["paused"] = reclaim_paused(acc)
+        a["paused"] = reclaim_paused(acc) or all_paused()  # this account, or everything
     return out
 
 
@@ -4317,7 +4359,7 @@ def datefix_step(make_client=None, only=None):
         account = _main_account(found[0][2]) if found else ""
         if only is not None and account != only:
             continue  # another account's worker does it
-        if dates_paused(account):
+        if dates_paused(account) or all_paused():
             continue
         with _dates_checked_lock:
             if now - _dates_checked.get(path, 0) < 100:
@@ -4868,8 +4910,9 @@ def copy_candidates(src, dst, kinds=("photo", "video"), from_year=None, to_year=
 def copy_summary():
     """Copy accounts across every pair, for the status: items waiting, copies Google hasn't
     confirmed yet, and whether copying is paused."""
-    counts = dict(q("SELECT state, COUNT(*) FROM copyjobs WHERE state IN ('queued', 'copied') GROUP BY state"))
+    counts = dict(q("SELECT state, COUNT(*) FROM copyjobs GROUP BY state"))
     return {"queued": counts.get("queued", 0), "checking": counts.get("copied", 0),
+            "done": counts.get("done", 0) + counts.get("exists", 0),
             "paused": meta_get("copy_paused") == "1"}  # fmt: skip
 
 
@@ -5000,7 +5043,7 @@ def mirror_step(make_client=None, now=None):
     """Compare the pairs that are due (every MIRROR_EVERY, or straight away once turned on). Nothing
     is compared while copying is paused. Returns True if a pair was compared."""
     now = time.time() if now is None else now
-    if meta_get("copy_paused") == "1":
+    if meta_get("copy_paused") == "1" or all_paused():
         return False
     due = q("SELECT src, dst FROM mirrors WHERE last_run IS NULL OR last_run <= ?", (now - MIRROR_EVERY,))
     for src, dst in due:
@@ -5051,7 +5094,7 @@ def copy_step(make_client=None, pair=None):
     reclaim.workers at once, the same "Items at once" as Free storage. The checker (check_step)
     confirms the copies are free, apart from this. Returns True if there was something to do."""
     make_client = make_client or _reclaim_client
-    if meta_get("copy_paused") == "1":
+    if meta_get("copy_paused") == "1" or all_paused():
         return False
     src_, dst_ = pair or (None, None)
     rows = q(
@@ -5088,7 +5131,8 @@ def _copy_one(row, make_client):
     Returns False when Google or the internet is down (it stays queued)."""
     src, dst, key, dedup, name, size, taken, fav, arch, cap = row
     state_ = copy_state[(src, dst)]
-    track = state_["jobs"][key] = {"current": None, "stop": _stop_check(lambda: meta_get("copy_paused") == "1")}
+    held = _stop_check(lambda: meta_get("copy_paused") == "1" or all_paused())
+    track = state_["jobs"][key] = {"current": None, "stop": held}
     folder = COPY_DIR / f"{dst}-{key}"  # the same item can be copied to two accounts at once
     started = time.time()
     try:
@@ -6026,10 +6070,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/pause":
             if PAUSE_FILE.exists():
                 PAUSE_FILE.unlink()
-                log("Resumed", "resume")
-                wake.set()
+                log("Resumed everything", "resume")
+                for ev in (wake, reclaim_wake, copy_wake, mirror_wake):
+                    ev.set()
             else:
                 PAUSE_FILE.touch()
+                log("Paused everything: items under way finish their step", "pause")
                 if state["phase"] != "uploading":
                     state["phase"] = "paused"
             notify_change()

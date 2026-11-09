@@ -1,264 +1,28 @@
-import {
-  get,
-  tz,
-  type FolderReport,
-  type History,
-  type Insights,
-  type Processes,
-  type Status,
-} from "../lib/api";
-import { donut, heatLegend, heatmap, sparkline, type Slice } from "../lib/charts";
-import { $, $$, animateChange, esc, html } from "../lib/dom";
-import { ago, bytes, clock, duration, fileName, ms, num, pct, speed } from "../lib/format";
+// The Overview: only what is live. A card shows while its work runs, waits or ran today, and the
+// rest stay out of the way; the cards left share the row evenly. Upload history (today, streak,
+// where the photos are, the year) is on the Sync page.
+
+import { get, tz, type Disk, type Processes, type Status } from "../lib/api";
+import { host } from "../lib/store";
+import { sparkline } from "../lib/charts";
+import { $, $$, esc, html } from "../lib/dom";
+import { bytes, clock, fileName, num, pct, speed } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
 import { NetChart, rangeButtons, type Range } from "../lib/netchart";
 import { jobLink, jobStep, jobTitle } from "../lib/jobs";
-import { badge, cardHead, eventMeta, openAttrs, thumb, tile } from "../lib/ui";
+import { badge, cardHead, eventMeta, openAttrs, spaceTone, thumb, tile } from "../lib/ui";
 import { liveProcesses, PROCESS_HREF } from "../lib/live";
 import { PROCESS, PROCESS_KEYS } from "../lib/processes";
 import type { View } from "./view";
 
 let chart: NetChart | null = null;
-let hist: History | null = null;
-let ins: Insights | null = null;
-let slowTimer = 0;
-let slowSynced = -1; // uploaded count the heat map and streak were last loaded for
-let slowAt = 0;
+let procTimer = 0;
 let last: Status | null = null;
 let procs: Processes | null = null;
 
-// ---- where the photos are: pie charts per device (or folder) and photos vs videos
-let share: FolderReport | null = null;
-let shareBy: "devices" | "folders" = "devices";
-let shareMetric: "files" | "bytes" = "files";
-let shareAt = 0;
-let shareRequest = 0;
-let shareError = false;
-let kindsDrawn = false; // the photos/videos donut needs the status, which can come later
-const SLICE_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"];
-const OTHER = "var(--ink-3)";
-
-async function loadShare(interactive = false): Promise<void> {
-  shareAt = Date.now();
-  const mine = ++shareRequest;
-  const by = shareBy;
-  if (interactive) {
-    share = null;
-    shareError = false;
-    renderShare();
-  }
-  const r = await get<FolderReport>(`folders?group=${by}&days=30&tz=${tz}`).catch(() => null);
-  if (mine !== shareRequest || by !== shareBy) return;
-  share = r;
-  shareError = !r;
-  renderShare();
-  if (interactive) animateChange(document.getElementById("ov-share-body"));
-}
-
-function pctText(part: number, whole: number): string {
-  const p = whole ? (part / whole) * 100 : 0;
-  return p > 0 && p < 1 ? "<1%" : `${Math.round(p)}%`;
-}
-
-function legendRow(color: string, name: string, value: number, total: number, extra = "", href = ""): string {
-  const label = href
-    ? `<a class="truncate hover:underline" href="${href}">${esc(name)}</a>`
-    : `<span class="truncate">${esc(name)}</span>`;
-  return `<li class="flex items-center gap-2 py-1.5 text-sm"><i class="size-2.5 shrink-0 rounded-full" style="background:${color}"></i>${label}
-    <span class="ml-auto shrink-0 tabular-nums">${pctText(value, total)}</span>
-    <span class="w-16 shrink-0 text-right text-xs text-ink-3 tabular-nums sm:w-20">${shareMetric === "files" ? num(value) : bytes(value)}</span>${extra}</li>`;
-}
-
-function renderShare(): void {
-  const el = document.getElementById("ov-share-body");
-  if (!el) return;
-  $$("button", $("#ov-share-by")).forEach((b) =>
-    b.setAttribute("aria-pressed", String(b.dataset.by === shareBy)),
-  );
-  $$("button", $("#ov-share-metric")).forEach((b) =>
-    b.setAttribute("aria-pressed", String(b.dataset.m === shareMetric)),
-  );
-  const m = (f: { files: number; bytes: number }) => (shareMetric === "files" ? f.files : f.bytes);
-  const fmt = (v: number) => (shareMetric === "files" ? num(v) : bytes(v));
-  // Groups: biggest first; past five slices the rest is one grey "Other", so colours never repeat.
-  const groups = [...(share?.children ?? [])].filter((c) => c.name && m(c) > 0).sort((a, b) => m(b) - m(a));
-  const shown = groups.length > 5 ? groups.slice(0, 4) : groups;
-  const rest = groups.slice(shown.length);
-  const total = groups.reduce((a, g) => a + m(g), 0);
-  const link = (g: (typeof groups)[number]) =>
-    `#/folders/${shareBy === "devices" || g.device ? "d" : "f"}/${(g.folders[0] ?? g.name).split("/").map(encodeURIComponent).join("/")}`;
-  const slices: Slice[] = shown.map((g, i) => ({
-    label: g.name,
-    value: m(g),
-    color: SLICE_COLORS[i]!,
-    tip: `${g.name}\n${fmt(m(g))} · ${pctText(m(g), total)}\n${Math.round(pct(g.synced, g.files))}% in Google Photos\nClick to open`,
-    href: link(g),
-  }));
-  const restValue = rest.reduce((a, g) => a + m(g), 0);
-  if (rest.length)
-    slices.push({
-      label: "Other",
-      value: restValue,
-      color: OTHER,
-      tip: `${rest.length} more\n${fmt(restValue)} · ${pctText(restValue, total)}\nClick to see all`,
-      href: shareBy === "devices" ? "#/folders" : "#/folders/f",
-    });
-  const backed = (g: (typeof groups)[number]) => {
-    const p = Math.round(pct(g.synced, g.files));
-    return `<span class="flex w-16 shrink-0 items-center gap-1.5 sm:w-24" title="${p}% in Google Photos"><span class="bar h-1.5 flex-1"><i style="width:${p}%"></i></span><span class="w-8 text-right text-[11px] text-ink-3 tabular-nums">${p}%</span></span>`;
-  };
-  const lib = last?.library;
-  kindsDrawn = !!lib;
-  const kinds = lib
-    ? [
-        {
-          label: "Photos",
-          value: shareMetric === "files" ? (lib.photos ?? 0) : (lib.photo_bytes ?? 0),
-          color: "var(--s1)",
-          href: "#/folders/f/~photo",
-        },
-        {
-          label: "Videos",
-          value: shareMetric === "files" ? (lib.videos ?? 0) : (lib.video_bytes ?? 0),
-          color: "var(--s2)",
-          href: "#/folders/f/~video",
-        },
-      ]
-    : [];
-  const kindTotal = kinds.reduce((a, k) => a + k.value, 0);
-  const center = (v: number, sub: string) =>
-    `<div><div class="num text-xl">${shareMetric === "files" ? num(v) : bytes(v)}</div><div class="text-[11px] text-ink-3">${sub}</div></div>`;
-  html(
-    el,
-    `<div class="grid gap-6 md:grid-cols-2">
-      <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
-        ${donut(slices, center(total, shareBy === "devices" ? "on devices" : "in folders"))}
-        <div class="w-full min-w-0 flex-1"><div class="label mb-1">${shareBy === "devices" ? "By device" : "By folder"}</div>
-          ${
-            groups.length
-              ? `<ul>${shown.map((g, i) => legendRow(SLICE_COLORS[i]!, g.name, m(g), total, backed(g), link(g))).join("")}${rest.length ? legendRow(OTHER, `Other (${rest.length})`, restValue, total, "", shareBy === "devices" ? "#/folders" : "#/folders/f") : ""}</ul>`
-              : `<p class="py-2 text-sm text-ink-3">${share ? (shareBy === "devices" ? "No device folders found. Try Folders." : "No folders found.") : shareError ? "Couldn't load this view." : "Loading…"}</p>`
-          }</div>
-      </div>
-      <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
-        ${donut(
-          kinds.map((k) => ({
-            ...k,
-            tip: `${k.label}\n${fmt(k.value)} · ${pctText(k.value, kindTotal)}\nClick to open`,
-          })),
-          center(kindTotal, "backed-up library"),
-        )}
-        <div class="w-full min-w-0 flex-1"><div class="label mb-1">Photos and videos</div>
-          <ul>${kinds.map((k) => legendRow(k.color, k.label, k.value, kindTotal, "", k.href)).join("")}</ul>
-          ${lib ? `<p class="mt-2 text-xs text-ink-3">${shareMetric === "files" ? `Videos are ${pctText(lib.videos ?? 0, lib.files)} of the files but ${pctText(lib.video_bytes ?? 0, lib.bytes)} of the space.` : `Photos take ${bytes(lib.photo_bytes)} and videos ${bytes(lib.video_bytes)}.`}</p>` : ""}
-        </div>
-      </div>
-    </div>`,
-  );
-}
-
-function streak(h: History): number {
-  // Same count as the heat map, so the streak and the coloured days agree.
-  const byDay = new Map(h.data.map((d) => [d.day, d.photos + d.videos]));
-  let n = 0;
-  const d = new Date(h.today + "T00:00:00");
-  if (!byDay.get(h.today)) d.setDate(d.getDate() - 1); // today may still be coming
-  for (;;) {
-    const key = d.toLocaleDateString("sv"); // YYYY-MM-DD
-    if (!byDay.get(key)) return n;
-    n++;
-    d.setDate(d.getDate() - 1);
-  }
-}
-
-async function loadSlow(): Promise<void> {
-  slowAt = Date.now();
-  [hist, ins, procs] = await Promise.all([
-    get<History>(`history?days=371&tz=${tz}`),
-    get<Insights>(`insights?tz=${tz}`),
-    get<Processes>(`processes?days=14&tz=${tz}`).catch(() => procs),
-  ]);
-  renderSlow();
+async function loadProcs(): Promise<void> {
+  procs = await get<Processes>(`processes?days=14&tz=${tz}`).catch(() => procs);
   if (last) renderProcs(last);
-}
-
-function renderSlow(): void {
-  if (!hist || !document.getElementById("ov-year")) return;
-  const today = hist.data.find((d) => d.day === hist?.today);
-  const last14 = (() => {
-    const m = new Map(hist.data.map((d) => [d.day, d.photos + d.videos]));
-    return Array.from({ length: 14 }, (_, i) => {
-      const d = new Date(hist!.today + "T00:00:00");
-      d.setDate(d.getDate() - 13 + i);
-      return m.get(d.toLocaleDateString("sv")) ?? 0;
-    });
-  })();
-  const t = $("#k-today");
-  html($("[data-v]", t), num((today?.photos ?? 0) + (today?.videos ?? 0)));
-  html(
-    $("[data-s]", t),
-    `${num(today?.photos ?? 0)} photos · ${num(today?.videos ?? 0)} videos · ${bytes((today?.photo_bytes ?? 0) + (today?.video_bytes ?? 0))}`,
-  );
-  html($("[data-c]", t), sparkline(last14, "var(--s1)"));
-  const st = streak(hist);
-  const k = $("#k-streak");
-  html($("[data-v]", k), `${st} day${st === 1 ? "" : "s"}`);
-  const active = hist.data.filter((d) => d.photos + d.videos > 0).length;
-  html($("[data-s]", k), `${num(active)} active day${active === 1 ? "" : "s"} this year`);
-  html(
-    $("[data-c]", k),
-    `<div class="flex gap-1">${last14
-      .slice(-14)
-      .map(
-        (v) =>
-          `<i class="h-3 flex-1 rounded-[3px]" style="background:${v ? "var(--s1)" : "var(--panel-2)"}"></i>`,
-      )
-      .join("")}</div>`,
-  );
-
-  // Year of uploads
-  const days: { day: string; value: number; tip: string }[] = [];
-  const byDay = new Map(hist.data.map((d) => [d.day, d]));
-  const end = new Date(hist.today + "T00:00:00");
-  for (let i = 364; i >= 0; i--) {
-    const d = new Date(end);
-    d.setDate(d.getDate() - i);
-    const key = d.toLocaleDateString("sv");
-    const row = byDay.get(key);
-    const n = (row?.photos ?? 0) + (row?.videos ?? 0);
-    days.push({
-      day: key,
-      value: n,
-      tip: `${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })}\n${n ? `${row?.photos ?? 0} photos, ${row?.videos ?? 0} videos · ${bytes((row?.photo_bytes ?? 0) + (row?.video_bytes ?? 0))}` : "Nothing uploaded"}`,
-    });
-  }
-  const yearTotal = days.reduce((a, d) => a + d.value, 0);
-  html($("#ov-year-sub"), `${num(yearTotal)} files in the last year`);
-  const year = $("#ov-year");
-  const first = !year.dataset.html;
-  html(year, heatmap(days));
-  if (first) year.scrollLeft = year.scrollWidth; // phones: start at today
-
-  if (ins) {
-    const rows: [string, string, string][] = [
-      ["Time spent uploading", duration(ins.upload_ms / 1000), "timer"],
-      ["Average per photo", ins.photo.avg_ms ? ms(ins.photo.avg_ms) : "–", "photo"],
-      ["Average per video", ins.video.avg_ms ? ms(ins.video.avg_ms) : "–", "video"],
-      ["Average photo size", bytes(ins.photo.avg_bytes), "photo"],
-      ["Average video size", bytes(ins.video.avg_bytes), "video"],
-      ["Average upload speed", ins.avg_speed ? speed(ins.avg_speed) : "–", "gauge"],
-    ];
-    html(
-      $("#ov-times"),
-      `<div class="grid grid-cols-2 gap-2">${rows
-        .map(
-          ([l, v, ic]) =>
-            `<div class="stat-tile"><div class="flex items-center gap-1.5 text-xs text-ink-3">${icon(ic as "timer", "size-3.5")}${esc(l)}</div><div class="num text-lg">${esc(v)}</div></div>`,
-        )
-        .join("")}</div>
-       ${ins.timed_files < ins.uploaded ? `<p class="mt-3 text-xs text-ink-3">${icon("info", "inline size-3.5 -mt-0.5")} Upload times are known for ${num(ins.timed_files)} of ${num(ins.uploaded)} uploads (older ones weren't timed).</p>` : ""}`,
-    );
-  }
 }
 
 /** Every kind of work running now, in one list: normal sync first, then the background jobs. */
@@ -312,13 +76,49 @@ function runningItems(s: Status): {
   return items;
 }
 
-/** One card per process: what it is doing now and what it did today, with the last 14 days. */
+/** Free space on the disk the photos are on, and on the app's data disk when it is another one. */
+function spaceRows(s: Status): [string, string, string][] {
+  const sp = s.space;
+  const row = (label: string, d: Disk | null): [string, string, string] => [
+    "disk",
+    label,
+    d
+      ? `<span class="text-ink-2 tabular-nums">${bytes(d.free)} free</span> ${spaceTone(d) === "good" ? "" : badge(spaceTone(d) === "bad" ? "Almost full" : "Low", spaceTone(d))}`
+      : `<span class="text-ink-3">Unknown</span>`,
+  ];
+  if (!sp) return [];
+  const rows = [row(`Space on ${host()}`, sp.media)];
+  if (!sp.same && sp.data) rows.push(row("App data disk", sp.data));
+  return rows;
+}
+
+// Columns for the process cards in use, so they always fill the row.
+const PROC_COLS: Record<number, string> = {
+  1: "",
+  2: "sm:grid-cols-2",
+  3: "md:grid-cols-3",
+  4: "sm:grid-cols-2 xl:grid-cols-4",
+};
+
+/** One card per process in use: what it is doing now and what it did today, with the last 14 days. */
 function renderProcs(s: Status): void {
   if (!document.getElementById("ov-procs")) return;
   const today = procs?.today;
-  for (const l of liveProcesses(s)) {
+  const all = liveProcesses(s);
+  const todayCount = (k: string) =>
+    procs?.processes[k as keyof Processes["processes"]]?.days.find((d) => d.day === today)?.count ?? 0;
+  // In use: running, waiting, paused with items left, or did something today.
+  const used = new Set(
+    all.filter((l) => l.running || l.paused || l.waiting > 0 || todayCount(l.key) > 0).map((l) => l.key),
+  );
+  if (!used.size) used.add("uploads"); // all quiet: still show how the backup stands
+  const grid = $("#ov-procs");
+  grid.className = `grid grid-cols-1 gap-4 lg:col-span-12 ${PROC_COLS[used.size] ?? PROC_COLS[4]}`;
+  for (const l of all) {
     const el = document.querySelector<HTMLElement>(`[data-proc="${l.key}"]`);
     if (!el) continue;
+    el.classList.toggle("is-idle", !used.has(l.key));
+    if (!used.has(l.key)) continue;
     const p = PROCESS[l.key];
     const hist = procs?.processes[l.key];
     const day = hist?.days.find((d) => d.day === today);
@@ -347,7 +147,7 @@ function renderProcs(s: Status): void {
         <div class="h-8 w-24 shrink-0">${sparkline(last14, p.color)}</div>
       </div>
       <div class="mt-3 truncate text-xs text-ink-2" title="${esc(l.detail)}">${esc(l.detail)}</div>
-      ${l.running && l.pct !== null ? `<span class="bar active mt-1.5 block h-1.5"><i style="width:${l.pct}%"></i></span>` : `<span class="mt-1.5 block h-1.5"></span>`}`,
+      <span class="bar mt-1.5 block h-1.5 ${l.running && l.pct !== null ? "" : "invisible"}"><i style="width:${l.pct ?? 0}%"></i></span>`,
     );
   }
 }
@@ -372,7 +172,7 @@ function runningList(s: Status): string {
           ${i.step ? `<span class="block truncate text-xs text-ink-3">${esc(i.step)}</span>` : ""}
           ${i.pct !== null ? `<span class="bar mt-1.5 block h-1.5"><i style="width:${i.pct}%"></i></span>` : ""}
         </span>
-        ${icon("chevron", "size-4 shrink-0 -rotate-90 text-ink-3")}
+        ${icon("chevron", "size-4 shrink-0 text-ink-3")}
       </a></li>`,
     )
     .join("")}</ul>`;
@@ -383,16 +183,13 @@ function runningList(s: Status): string {
 const CARDS: [string, string][] = [
   ["ov-running", "Running now"],
   ["ov-procs", "Uploads, Free storage, Copies, Date fixes"],
-  ["ov-kpis", "Speed, today, streak, CPU, memory"],
-  ["ov-share", "Where your photos are"],
+  ["ov-kpis", "Upload, download, CPU, memory"],
   ["ov-network", "Network"],
   ["ov-glance", "At a glance"],
   ["ov-recent", "Recent activity"],
-  ["ov-times", "Upload times and sizes"],
-  ["ov-year", "Uploads per day"],
 ];
-// Saved under a new name since the Sync page took Backup progress and Now: the new cards come first.
-const LAYOUT_KEY = "ov-layout-2";
+// Saved under a new name since the upload history cards moved to the Sync page.
+const LAYOUT_KEY = "ov-layout-3";
 
 interface Layout {
   order: string[];
@@ -489,27 +286,20 @@ const overview: View = {
       <button class="link-btn" data-ov-custom aria-label="Customize overview">${icon("sliders")}Edit</button>
     </div>
     <div class="grid grid-flow-row-dense grid-cols-1 gap-4 lg:grid-cols-12" id="ov-grid">
-      <section class="card lg:col-span-12" data-card="ov-running">
+      <section class="card is-idle lg:col-span-12" data-card="ov-running" id="ov-running-card">
         ${cardHead("Running now", "loader", '<span id="ov-running-count"></span>')}
         <div id="ov-running"></div>
       </section>
 
-      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-12 xl:grid-cols-4" data-card="ov-procs" id="ov-procs">
-        ${PROCESS_KEYS.map((k) => `<a href="${PROCESS_HREF[k]}" class="card proc-card block p-4" data-proc="${k}"><div class="skeleton h-28"></div></a>`).join("")}
+      <section class="grid grid-cols-1 gap-4 lg:col-span-12" data-card="ov-procs" id="ov-procs">
+        ${PROCESS_KEYS.map((k) => `<a href="${PROCESS_HREF[k]}" class="card proc-card block p-4 ${k === "uploads" ? "" : "is-idle"}" data-proc="${k}"><div class="skeleton h-28"></div></a>`).join("")}
       </section>
 
-      <section class="grid grid-cols-2 gap-4 md:grid-cols-3 lg:col-span-12 xl:grid-cols-6" data-card="ov-kpis">
+      <section class="grid grid-cols-2 gap-4 lg:col-span-12 xl:grid-cols-4" data-card="ov-kpis">
         ${tile({ id: "k-up", label: "Upload", value: "–", ic: "up", chart: "", href: "#/network" })}
         ${tile({ id: "k-down", label: "Download", value: "–", ic: "down", chart: "", href: "#/network" })}
-        ${tile({ id: "k-today", label: "Today", value: "–", ic: "calendar", chart: "", href: "#/activity/uploaded" })}
-        ${tile({ id: "k-streak", label: "Streak", value: "–", ic: "flame", chart: "", href: "#/history" })}
         ${tile({ id: "k-cpu", label: "App CPU", value: "–", ic: "cpu", chart: "", href: "#/health" })}
         ${tile({ id: "k-mem", label: "App memory", value: "–", ic: "memory", chart: "", href: "#/health" })}
-      </section>
-
-      <section class="card lg:col-span-12" data-card="ov-share">
-        ${cardHead("Where your photos are", "chart", `<div class="seg" id="ov-share-by"><button data-by="devices">Devices</button><button data-by="folders">Folders</button></div><div class="seg ml-2" id="ov-share-metric"><button data-m="files">Files</button><button data-m="bytes">Size</button></div>`)}
-        <div class="card-b" id="ov-share-body" aria-live="polite"><div class="skeleton h-44"></div></div>
       </section>
 
       <section class="card flex min-w-0 flex-col lg:col-span-8" data-card="ov-network">
@@ -522,39 +312,13 @@ const overview: View = {
         <div class="px-4 py-1" id="ov-glance"></div>
       </section>
 
-      <section class="card lg:col-span-6 xl:col-span-8" data-card="ov-recent">
+      <section class="card is-idle lg:col-span-12" data-card="ov-recent" id="ov-recent-card">
         ${cardHead("Recent activity", "activity", '<a href="#/activity" class="hover:text-ink">See all ›</a>')}
-        <div id="ov-recent" data-gallery></div>
-      </section>
-
-      <section class="card lg:col-span-12 xl:col-span-4" data-card="ov-times">
-        ${cardHead("Upload times and sizes", "timer", '<a href="#/insights" class="hover:text-ink">Insights ›</a>')}
-        <div class="card-b" id="ov-times"><div class="skeleton h-40"></div></div>
-      </section>
-
-      <section class="card lg:col-span-12" data-card="ov-year">
-        ${cardHead("Uploads per day", "calendar", `<span id="ov-year-sub"></span>`)}
-        <div class="card-b"><div class="scroll-thin overflow-x-auto pb-1" id="ov-year"><div class="skeleton h-28"></div></div><div class="mt-2 flex justify-end">${heatLegend()}</div></div>
+        <div id="ov-recent" class="lg:grid lg:grid-cols-2 lg:gap-x-4" data-gallery></div>
       </section>
     </div>`;
     applyLayout();
     $$("[data-ov-custom]").forEach((b) => b.addEventListener("click", openCustomize));
-    $("#ov-share-by").addEventListener("click", (e) => {
-      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
-      if (!b) return;
-      if (shareBy === b.dataset.by) return;
-      shareBy = b.dataset.by as "devices" | "folders";
-      void loadShare(true);
-    });
-    $("#ov-share-metric").addEventListener("click", (e) => {
-      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
-      if (!b) return;
-      if (shareMetric === b.dataset.m) return;
-      shareMetric = b.dataset.m as "files" | "bytes";
-      renderShare();
-      animateChange(document.getElementById("ov-share-body"));
-    });
-    void loadShare();
     chart = new NetChart($("#ov-net"), matchMedia("(max-width: 640px)").matches ? 200 : 300);
     $("#ov-range").addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-range]");
@@ -562,19 +326,11 @@ const overview: View = {
       $$("button", $("#ov-range")).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       chart?.setRange(b.dataset.range as Range, last);
     });
-    slowSynced = -1;
-    void loadSlow();
-    slowTimer = window.setInterval(loadSlow, 60_000);
+    void loadProcs();
+    procTimer = window.setInterval(loadProcs, 60_000);
   },
   update(s) {
     last = s;
-    // New uploads: refresh the heat map and streak now instead of waiting for the minute timer.
-    if (s.library.synced_files !== slowSynced && Date.now() - slowAt > 10_000) {
-      if (slowSynced >= 0) void loadSlow();
-      slowSynced = s.library.synced_files;
-    }
-    if (Date.now() - shareAt > 60_000) void loadShare(); // counts change slowly: once a minute
-    else if (!kindsDrawn) renderShare();
     const r = s.resources;
     const setTile = (id: string, v: string, sub: string, chartSvg?: string) => {
       const t = $(id);
@@ -628,6 +384,8 @@ const overview: View = {
           ? badge("Unreachable", "bad", "cloudOff")
           : `<span class="text-ink-2 tabular-nums">${Math.round(lat)} ms</span> ${badge(latTone === "good" ? "Fast" : latTone === "warn" ? "OK" : "Slow", latTone)}`,
       ],
+      ["pause", "Work", s.paused ? badge("All paused", "warn", "pause") : badge("Running", "good", "play")],
+      ...spaceRows(s),
       [
         "error",
         "Failed files",
@@ -635,7 +393,6 @@ const overview: View = {
           ? `<a href="#/activity/failed">${badge(num(s.counts.failed), "bad")}</a>`
           : `<span class="text-ink-2">None</span>`,
       ],
-      ["search", "Last scan", `<span class="text-ink-2">${ago(s.last_scan, s.now)}</span>`],
       [
         "clock",
         "Upload hours",
@@ -654,11 +411,6 @@ const overview: View = {
           : `<span class="text-ink-2">No limit</span>`,
       ],
       [
-        "cloudUp",
-        "This session",
-        `<span class="text-ink-2 tabular-nums">${num(s.session.uploaded_files)} · ${bytes(s.session.uploaded_bytes)}</span>`,
-      ],
-      [
         "database",
         "Statistics",
         `<span class="truncate text-ink-2">${esc(s.stats_engine.split(" (")[0])}</span>`,
@@ -674,29 +426,29 @@ const overview: View = {
         .join(""),
     );
 
+    const running = runningItems(s);
+    $("#ov-running-card").classList.toggle("is-idle", !running.length);
     html($("#ov-running"), runningList(s));
-    renderProcs(s);
     html($("#ov-running-count"), runningCount(s));
+    renderProcs(s);
 
+    $("#ov-recent-card").classList.toggle("is-idle", !s.log.length);
     html(
       $("#ov-recent"),
-      s.log.length
-        ? s.log
-            .slice(0, 6)
-            .map((l) => {
-              const m = eventMeta[l.kind] ?? eventMeta.info!;
-              const lead = l.name
-                ? thumb(l.name)
-                : `<span class="thumb grid place-items-center text-ink-3">${icon(m.icon, "size-4")}</span>`;
-              return `<div class="row ${l.name ? "clickable" : ""}" ${l.name ? openAttrs(l.name, true) : ""}>${lead}<div class="min-w-0 flex-1"><div class="truncate text-sm">${esc(l.name ? fileName(l.name) : l.text)}</div><div class="text-xs text-ink-3">${clock(l.time)}</div></div>${badge(m.label, m.tone)}</div>`;
-            })
-            .join("")
-        : `<div class="empty">${icon("inbox")}No activity yet</div>`,
+      s.log
+        .slice(0, 6)
+        .map((l) => {
+          const m = eventMeta[l.kind] ?? eventMeta.info!;
+          const lead = l.name
+            ? thumb(l.name)
+            : `<span class="thumb grid place-items-center text-ink-3">${icon(m.icon, "size-4")}</span>`;
+          return `<div class="row ${l.name ? "clickable" : ""}" ${l.name ? openAttrs(l.name, true) : ""}>${lead}<div class="min-w-0 flex-1"><div class="truncate text-sm">${esc(l.name ? fileName(l.name) : l.text)}</div><div class="text-xs text-ink-3">${clock(l.time)}</div></div>${badge(m.label, m.tone)}</div>`;
+        })
+        .join(""),
     );
   },
   unmount() {
-    clearInterval(slowTimer);
-    shareRequest++;
+    clearInterval(procTimer);
     chart = null;
     document.getElementById("ov-sheet")?.remove();
   },

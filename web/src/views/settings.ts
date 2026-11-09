@@ -191,7 +191,7 @@ function sectionSync(s: Status | null): string {
       <div class="card-b flex flex-col gap-4 md:flex-row md:items-center">
         <div class="min-w-0 flex-1"><div class="flex flex-wrap gap-1.5" id="set-chips">${s ? syncChips(s) : ""}</div></div>
         <div class="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
-          <span class="col-span-2 flex items-center justify-between gap-3 rounded-xl border border-line px-3 py-1.5 text-sm">Paused ${sw("set-pause", !!s?.paused)}</span>
+          <span class="col-span-2 flex items-center justify-between gap-3 rounded-xl border border-line px-3 py-1.5 text-sm">Pause everything ${sw("set-pause", !!s?.paused)}</span>
           <button class="btn" id="set-scan">${icon("refresh")}Scan now</button>
           <button class="btn" id="set-retry">${icon("retry")}Retry failed${s?.counts.failed ? ` <span class="count bad">${s.counts.failed}</span>` : ""}</button>
         </div>

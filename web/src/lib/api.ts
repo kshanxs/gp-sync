@@ -57,10 +57,19 @@ export interface Resources {
   latency_now: number | null;
   latency_avg: number | null;
 }
+export interface Disk {
+  total: number;
+  used: number;
+  free: number;
+}
 export interface Status {
   version: string;
-  /** What the machine is called ("Umbrel", or "this server"). */
+  /** What the machine is called (HOST_NAME, "Umbrel" on Umbrel, or "this server"). */
   host: string;
+  /** Where the app runs: "umbrel" (PLATFORM=umbrel) or "docker" (any other host). */
+  platform?: string;
+  /** Room on the disks here: where the photos are, and where the app keeps its data. */
+  space?: { media: Disk | null; data: Disk | null; same: boolean };
   /** True when the dashboard asks for a password. */
   auth?: boolean;
   /** The time zone days and times are shown in: chosen in Settings ("" = system default), or the system's. */
@@ -85,8 +94,8 @@ export interface Status {
   jobs?: Job[];
   /** Free storage per account: items waiting or under way, items freed, and whether it is paused. */
   reclaim?: Record<string, ReclaimSummary>;
-  /** Copy accounts, all pairs: items waiting, copies Google hasn't confirmed yet, paused. */
-  copying?: { queued: number; checking: number; paused: boolean };
+  /** Copy accounts, all pairs: items waiting, copies Google hasn't confirmed yet, copies made, paused. */
+  copying?: { queued: number; checking: number; done?: number; paused: boolean };
   /** Files with no date of their own, and fixes waiting for the user to delete the item in Google. */
   dates?: { undated: number; waiting: number };
   /** The user has seen the "album for files without a date" choice. */

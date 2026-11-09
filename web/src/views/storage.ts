@@ -10,11 +10,11 @@ import {
 import { $, esc, html, toast } from "../lib/dom";
 import { ago, bytes, date, duration, num, pct, remaining, speed } from "../lib/format";
 import { icon } from "../lib/icons";
-import { setPauseControl, setRefreshControl, status } from "../lib/store";
+import { host, setPauseControl, setRefreshControl, status } from "../lib/store";
 import { avatar, freeingAccounts, openingAccount, rememberAccount } from "../lib/account-menu";
 import { columns } from "../lib/charts";
 import { confirmDialog } from "../lib/dialog";
-import { accountLine, badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
+import { accountLine, badge, cardHead, checkNote, pauseBtn, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // Free up Google storage: items that count against it are downloaded (and proven to be Google's
@@ -81,7 +81,7 @@ const thumbOf = (key: string, kind: string, cls = "thumb") =>
 
 const STEP = {
   downloading: { label: "Downloading", ic: "download" },
-  local: { label: "Copying from Umbrel", ic: "server" },
+  local: { label: "Copying from this server", ic: "server" }, // named with host() where shown
   deleting: { label: "Replacing in Google", ic: "loader" },
   uploading: { label: "Uploading", ic: "upload" },
 } as const;
@@ -90,7 +90,12 @@ function stateOf(
   i: StorageItem,
   cur: ReclaimProgress | undefined,
 ): { label: string; tone: Tone; ic: Parameters<typeof icon>[0] } {
-  if (cur) return { ...STEP[cur.step], tone: "info" };
+  if (cur)
+    return {
+      ...STEP[cur.step],
+      ...(cur.step === "local" ? { label: `Copying from ${host()}` } : {}),
+      tone: "info",
+    };
   switch (i.state) {
     case "queued":
       return { label: "Queued", tone: "", ic: "hourglass" };
@@ -189,10 +194,10 @@ function workingCard(r: StorageReport): string {
   if (!w.length) return "";
   const pausing = r.paused;
   return `<section class="card mt-4 min-w-0 overflow-hidden">
-    ${cardHead(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", pausing ? `${num(w.length)} finishing their step` : `${num(w.length)} at once`)}
+    ${cardHead(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", pausing ? `${num(w.length)} finishing their step` : `${num(w.length)} at once ${pauseBtn(false)}`)}
     <ul class="divide-y divide-line">${w
       .map((c) => {
-        const step = STEP[c.step];
+        const step = c.step === "local" ? { ...STEP.local, label: `Copying from ${host()}` } : STEP[c.step];
         const known = c.step !== "deleting";
         const share = Math.floor(pct(c.done, c.total));
         return `<li data-key="${esc(c.key)}" class="flex items-center gap-3 px-4 py-3">
@@ -256,7 +261,7 @@ function renderList(r: StorageReport): void {
     `${accountStrip(r)}
     ${
       r.paused
-        ? `<section class="card mb-4 flex gap-3 border-warn/40 p-4">${icon("pause", "mt-0.5 size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1"><span class="font-medium">Freeing storage is paused in this account</span><span class="text-xs text-ink-3">${icon("play", "mr-1 inline size-3 align-[-1px]")}Resume with the play button at the top</span></div><p class="mt-1.5 text-ink-3">${r.left?.count ? `${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} wait. ` : ""}Downloads stop at once and wait in the queue. An item already deleted in Google finishes its upload first, so nothing is lost.</p></div></section>`
+        ? `<section class="card mb-4 flex gap-3 border-warn/40 p-4">${icon("pause", "mt-0.5 size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1"><span class="font-medium">Freeing storage is paused in this account</span>${pauseBtn(true)}</div><p class="mt-1.5 text-ink-3">${r.left?.count ? `${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} wait. ` : ""}Downloads stop at once and wait in the queue. An item already deleted in Google finishes its upload first, so nothing is lost.</p></div></section>`
         : ""
     }
     ${
@@ -521,7 +526,7 @@ function render(): void {
         return "Reading your library from Google";
       },
     });
-    // The header's pause button pauses freeing here, not uploads.
+    // The page's Pause/Resume buttons pause freeing in this account.
     const paused = !!r.paused;
     setPauseControl({
       paused,

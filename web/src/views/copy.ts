@@ -9,10 +9,10 @@ import {
 import { $, esc, html, toast } from "../lib/dom";
 import { ago, bytes, date, duration, num, pct, speed, until } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
-import { setPauseControl, setRefreshControl, status } from "../lib/store";
+import { host, setPauseControl, setRefreshControl, status } from "../lib/store";
 import { accountMenu, wireAccountMenu } from "../lib/account-menu";
 import { confirmDialog } from "../lib/dialog";
-import { badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
+import { badge, cardHead, checkNote, pauseBtn, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // Copy one Google account to another: what the second one lacks, original files, nothing deleted.
@@ -188,7 +188,7 @@ function mirrorCard(r: CopyReport): string {
       <div class="seg w-full" id="cp-mirror">${btn("off", "Off")}${btn("one", `${icon("up", "rotate-90")}This way`)}${btn("both", `${icon("swap")}Both ways`)}</div>
       <p class="text-sm text-ink-2">${esc(when)}</p>
       ${m.error ? `<p class="text-sm text-warn">${esc(m.error)}. Trying again soon.</p>` : ""}
-      <p class="text-xs text-ink-3">Items already in both accounts are skipped by checksum, and copies are never sent back. Files on your Umbrel are used before downloading.</p>
+      <p class="text-xs text-ink-3">Items already in both accounts are skipped by checksum, and copies are never sent back. Files already on ${esc(host())} are used before downloading.</p>
     </div></section>`;
 }
 
@@ -212,7 +212,7 @@ function startCard(r: CopyReport): string {
              <label><span class="text-ink-3">To year</span><select class="input mt-1" id="cp-to">${opt(toYear)}</select></label></div>`
           : ""
       }
-      <div class="rounded-xl bg-panel-2 p-3 text-sm"><b>${num(sel.count)}</b> item${sel.count === 1 ? "" : "s"} · ${bytes(sel.bytes)} from <b>${esc(r.src)}</b> to <b>${esc(r.dst)}</b>.</div>
+      <div class="rounded-xl bg-panel-2 p-3 text-sm">${sel.count ? `<b>${num(sel.count)}</b> item${sel.count === 1 ? "" : "s"} · ${bytes(sel.bytes)} from <b>${esc(r.src)}</b> to <b>${esc(r.dst)}</b>.` : `<span class="text-ink-3">${mode === "all" ? "Nothing matches these choices." : "Nothing chosen yet. Pick photos and videos on the right, or choose All matching."}</span>`}</div>
       <button class="btn primary w-full justify-center" id="cp-start" ${sel.count ? "" : "disabled"}>${icon("copy")}Start copying</button>
       <p class="text-xs text-ink-3">Copies keep quality, date, favourite, archive and caption. Nothing is deleted. Albums aren't copied.</p>
     </div></section>`;
@@ -264,7 +264,7 @@ function progressCard(r: CopyReport): string {
   return `<section class="card">${cardHead(
     r.paused ? "Paused" : busy ? "Copying" : "Finished",
     r.paused ? "pause" : busy ? "loader" : "ok",
-    `${r.paused ? `<span class="text-xs text-ink-3">Resume with the play button at the top</span>` : ""}${busy ? `<button class="btn sm" id="cp-stop">${icon("x")}Stop</button>` : ""}${j.failed ? `<button class="btn sm" id="cp-retry">${icon("retry")}Retry ${num(j.failed)} failed</button>` : ""}`,
+    `${r.paused ? pauseBtn(true) : busy ? pauseBtn(false) : ""}${busy ? `<button class="btn sm" id="cp-stop">${icon("x")}Stop</button>` : ""}${j.failed ? `<button class="btn sm" id="cp-retry">${icon("retry")}Retry ${num(j.failed)} failed</button>` : ""}`,
   )}
     <div class="card-b space-y-3">
       <div class="flex items-center justify-between text-sm"><span>${num(done)} of ${num(total)} done</span><span class="text-ink-3 tabular-nums">${Math.floor(pct(done, total))}%</span></div>
@@ -274,7 +274,7 @@ function progressCard(r: CopyReport): string {
           ? `<div class="space-y-2">${working
               .map(
                 (cur) =>
-                  `<div class="rounded-xl bg-panel-2 p-3 text-sm"><div class="flex items-center gap-2">${icon(cur.step === "downloading" ? "download" : cur.step === "local" ? "server" : "upload", "size-4 text-ink-3")}<span class="truncate">${cur.step === "downloading" ? "Downloading" : cur.step === "local" ? "Copying from Umbrel" : "Uploading"} ${esc(cur.name)}</span><span class="ml-auto shrink-0 text-xs font-semibold tabular-nums">${Math.floor(pct(cur.done, cur.total))}%</span></div>${cur.done ? `<div class="bar active mt-2"><i style="width:${pct(cur.done, cur.total)}%"></i></div>` : `<div class="bar indeterminate mt-2"><i></i></div>`}<div class="mt-1 text-right text-xs text-ink-3 tabular-nums">${bytes(cur.done)} of ${bytes(cur.total)}</div></div>`,
+                  `<div class="rounded-xl bg-panel-2 p-3 text-sm"><div class="flex items-center gap-2">${icon(cur.step === "downloading" ? "download" : cur.step === "local" ? "server" : "upload", "size-4 text-ink-3")}<span class="truncate">${cur.step === "downloading" ? "Downloading" : cur.step === "local" ? `Copying from ${esc(host())}` : "Uploading"} ${esc(cur.name)}</span><span class="ml-auto shrink-0 text-xs font-semibold tabular-nums">${Math.floor(pct(cur.done, cur.total))}%</span></div>${cur.done ? `<div class="bar active mt-2"><i style="width:${pct(cur.done, cur.total)}%"></i></div>` : `<div class="bar indeterminate mt-2"><i></i></div>`}<div class="mt-1 text-right text-xs text-ink-3 tabular-nums">${bytes(cur.done)} of ${bytes(cur.total)}</div></div>`,
               )
               .join("")}</div>`
           : ""
@@ -353,7 +353,7 @@ function render(): void {
     },
   });
   if (r && r.ready !== false) {
-    // The header's pause button pauses copying here, not uploads.
+    // The page's Pause/Resume buttons pause copying.
     const paused = r.paused;
     setPauseControl({
       paused,
@@ -389,8 +389,8 @@ function render(): void {
     <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
       ${tile({ label: "In this account", value: num(r.src_total), ic: "library", sub: "Photos and videos" })}
       ${tile({ label: "Duplicates found", value: num(r.duplicates.count), ic: "copy", sub: r.duplicates.count ? `${bytes(r.duplicates.bytes)} · not copied` : "None so far" })}
-      ${tile({ label: "Still to copy", value: num(todo), ic: "copy", sub: bytes(r.todo.photo.bytes + r.todo.video.bytes) })}
-      ${tile({ label: "Copied", value: num(r.jobs.copied), ic: "check", sub: bytes(r.jobs.copied_bytes), tone: r.jobs.copied ? "good" : "" })}
+      ${tile({ label: "Not copied yet", value: num(todo), ic: "copy", sub: todo ? `${bytes(r.todo.photo.bytes + r.todo.video.bytes)} only in ${esc(r.src)}` : `${esc(r.dst)} has everything` })}
+      ${tile({ label: "Copied", value: num(r.jobs.copied), ic: "check", sub: r.jobs.copied ? `${bytes(r.jobs.copied_bytes)} so far` : "Nothing copied yet", tone: r.jobs.copied ? "good" : "" })}
     </div>
     <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[22rem_1fr]">
       <div class="min-w-0 space-y-4 self-start">${mirrorCard(r)}${startCard(r)}</div>

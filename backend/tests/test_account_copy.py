@@ -308,6 +308,18 @@ def test_keep_in_sync_off_and_paused(mirrors):
         sync.mirror_set(SRC, DST, "sideways")
 
 
+def test_pause_everything_holds_copies_and_keep_in_sync(mirrors):
+    sync.mirror_set(SRC, DST, "one")
+    _, get = mirror_clients(mirrors)
+    sync.PAUSE_FILE.touch()
+    try:
+        assert not sync.mirror_step(get)
+        assert not sync.copy_step(get)
+    finally:
+        sync.PAUSE_FILE.unlink()
+    assert sync.mirror_step(get)
+
+
 def test_keep_in_sync_waits_when_google_is_down(mirrors):
     sync.mirror_set(SRC, DST, "one")
     made, get = mirror_clients(mirrors)

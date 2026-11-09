@@ -516,6 +516,18 @@ def test_paused_account_starts_nothing(library):
         sync.meta_set(f"reclaim_paused:{ACC}", "0")
 
 
+def test_pause_everything_holds_free_storage(library):
+    # The header's Pause holds every job, not only uploads.
+    sync.reclaim_queue(ACC, ["BIG"])
+    sync.PAUSE_FILE.touch()
+    try:
+        assert not step(FakeClient(library, {b64(DATA)}))
+        assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "queued"
+    finally:
+        sync.PAUSE_FILE.unlink()
+    assert step(FakeClient(library, {b64(DATA)}))
+
+
 def test_no_caption_is_not_copied_as_braces(library):
     # gpmc lists an item without a caption as "{}": it must never become a caption in Google.
     with Storage(library) as st:

@@ -1,10 +1,10 @@
-// Upload photos and videos from a phone or computer into the upload folder (Photos/Uploads on Umbrel), from where
+// Upload photos and videos from a phone or computer into the upload folder (UPLOAD_DIR; Photos/Uploads on Umbrel), from where
 // they are backed up to Google Photos like everything else. Files go up in 8 MB pieces, so a
 // dropped connection only repeats the current piece: uploads resume by themselves.
 
 import { get, type UploadInfo } from "../lib/api";
 import { $, esc, html, toast } from "../lib/dom";
-import { host } from "../lib/store";
+import { host, status } from "../lib/store";
 import { bytes, duration, num, pct, speed } from "../lib/format";
 import { icon } from "../lib/icons";
 import { badge, cardHead } from "../lib/ui";
@@ -319,7 +319,7 @@ async function loadInfo(): Promise<void> {
     box,
     `<div class="flex items-center gap-3" id="up-where">${folderLine()}</div>
      <div class="flex flex-wrap gap-1.5">${info.ready ? badge("Ready", "good", "ok") : badge("Not available", "bad", "error")}${info.synced ? badge("Backed up to Google", "good", "cloud") : badge("Folder not backed up", "warn", "warn", "Turn on Photos in Settings › Folders")}${badge(`${bytes(info.free)} free`, "", "disk")}<span class="pointer-coarse:hidden">${badge("Resumes if cut off", "info", "refresh")}</span></div>
-     ${info.ready ? folderPicker() : `<p class="text-sm text-ink-3">The upload folder isn't mounted. With Docker, mount a folder at <code>/uploads</code> (on Umbrel, update the app).</p>`}`,
+     ${info.ready ? folderPicker() : `<p class="text-sm text-ink-3">${status()?.platform === "umbrel" ? "The upload folder isn't mounted. Update the app from the Umbrel app store to add it." : "The upload folder isn't mounted. Mount a writable folder at <code>/uploads</code> in Docker."}</p>`}`,
   );
   if (!info.ready) $("#drop").classList.add("pointer-events-none", "opacity-50");
   const sel = document.getElementById("up-folder") as HTMLSelectElement | null;

@@ -1,11 +1,12 @@
 import type { Job } from "./api";
+import { host } from "./store";
 
 // Background work across accounts (library reads, freeing storage, fixing dates, copies), shown on
 // Overview so it is clear what runs side by side.
 
 const STEP: Record<string, string> = {
   downloading: "Downloading",
-  local: "Copying from Umbrel",
+  local: "Copying from", // + the machine's name (host())
   deleting: "Replacing in Google",
   uploading: "Uploading",
 };
@@ -22,7 +23,8 @@ export function jobTitle(j: Job): string {
 export function jobStep(j: Job): string {
   if (j.kind === "library" || !j.step) return "";
   const name = (j.name ?? "").split("/").pop() ?? "";
-  return `${STEP[j.step] ?? j.step}${name ? ` ${name}` : ""}`;
+  const step = j.step === "local" ? `Copying from ${host()}` : (STEP[j.step] ?? j.step);
+  return `${step}${name ? ` ${name}` : ""}`;
 }
 
 /** Where its page is. */

@@ -110,6 +110,18 @@ export function syncChips(s: Status): string {
   return out.join("");
 }
 
+/** A page's own pause for its job (Free storage in one account, copies, date fixes). The header's
+ * button pauses everything; this one only the page's job. main.ts runs the page's PauseControl. */
+export function pauseBtn(paused: boolean, what = ""): string {
+  return `<button type="button" class="btn sm shrink-0 ${paused ? "primary" : ""}" data-page-pause>${icon(paused ? "play" : "pause", "size-3.5")}${paused ? "Resume" : "Pause"}${what ? ` ${esc(what)}` : ""}</button>`;
+}
+
+/** "1.2 TB free" with a tone: warn under 10% free, bad under 3%. */
+export function spaceTone(d: { total: number; free: number }): "good" | "warn" | "bad" {
+  const left = d.total ? d.free / d.total : 1;
+  return left < 0.03 ? "bad" : left < 0.1 ? "warn" : "good";
+}
+
 export function cardHead(title: string, ic: IconName, extra = ""): string {
   return `<div class="card-h">${icon(ic, "size-4 text-ink-3")}<span>${esc(title)}</span><div class="sub">${extra}</div></div>`;
 }
