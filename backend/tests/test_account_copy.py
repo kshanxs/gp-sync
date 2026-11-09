@@ -311,12 +311,12 @@ def test_keep_in_sync_off_and_paused(mirrors):
 def test_pause_everything_holds_copies_and_keep_in_sync(mirrors):
     sync.mirror_set(SRC, DST, "one")
     _, get = mirror_clients(mirrors)
-    sync.PAUSE_FILE.touch()
+    sync.pause_all(True)
     try:
         assert not sync.mirror_step(get)
         assert not sync.copy_step(get)
     finally:
-        sync.PAUSE_FILE.unlink()
+        sync.pause_all(False)
     assert sync.mirror_step(get)
 
 

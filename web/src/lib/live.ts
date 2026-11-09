@@ -84,13 +84,13 @@ export function liveProcesses(s: Status): Live[] {
     href: PROCESS_HREF.uploads,
   });
 
-  // Free storage, every account added up. Paused when everything is paused, or every waiting
+  // Free storage, every account added up. Paused when every waiting
   // account is.
   const accs = Object.values(s.reclaim ?? {});
   const freeWaiting = accs.reduce((a, r) => a + r.queued, 0);
   const freeJobs = jobs.filter((j) => j.kind === "storage");
   const waitingAccs = accs.filter((r) => r.queued);
-  const freePaused = waitingAccs.length > 0 && (!!s.paused || waitingAccs.every((r) => r.paused));
+  const freePaused = waitingAccs.length > 0 && waitingAccs.every((r) => r.paused);
   out.push({
     key: "freed",
     running: freeJobs.length > 0,
@@ -114,7 +114,7 @@ export function liveProcesses(s: Status): Live[] {
   // Copy accounts, every pair.
   const copyJobs = jobs.filter((j) => j.kind === "copy");
   const copyWaiting = s.copying?.queued ?? 0;
-  const copyPaused = (!!s.copying?.paused || !!s.paused) && copyWaiting > 0;
+  const copyPaused = !!s.copying?.paused && copyWaiting > 0;
   out.push({
     key: "copied",
     running: copyJobs.length > 0,
@@ -141,10 +141,10 @@ export function liveProcesses(s: Status): Live[] {
   out.push({
     key: "fixed",
     running: dateJobs.length > 0,
-    paused: !!s.paused && dateWaiting > 0,
+    paused: !!s.all_paused && dateWaiting > 0,
     waiting: dateWaiting,
     pct: itemsPct(dateJobs),
-    detail: line(dateJobs.length > 0, !!s.paused, dateWaiting, "Fixing a date", "Nothing to fix"),
+    detail: line(dateJobs.length > 0, !!s.all_paused, dateWaiting, "Fixing a date", "Nothing to fix"),
     verb: VERB.fixed,
     href: PROCESS_HREF.fixed,
   });

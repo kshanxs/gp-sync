@@ -8,7 +8,7 @@ import {
 import { $, animateChange, esc, html, toast } from "../lib/dom";
 import { ago, fileName, folderOf, num, pct } from "../lib/format";
 import { icon } from "../lib/icons";
-import { setPauseControl, setRefreshControl, status } from "../lib/store";
+import { setPageStatus, setPauseControl, setRefreshControl, status } from "../lib/store";
 import { confirmDialog } from "../lib/dialog";
 import {
   accountMenu,
@@ -17,7 +17,7 @@ import {
   rememberAccount,
   wireAccountMenu,
 } from "../lib/account-menu";
-import { badge, openAttrs, pauseBtn, thumb, type Tone } from "../lib/ui";
+import { badge, openAttrs, thumb, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // Fix dates: photos and videos with no date of their own get their date in Google Photos from the
@@ -188,8 +188,24 @@ function render(): void {
     );
     return;
   }
-  // The page's Pause/Resume buttons pause fixing dates in this account.
+  // The control strip: fixing dates in this account (status, Pause/Resume) and checking with Google.
   const paused = !!r.paused;
+  const fixing = (status()?.jobs ?? []).some((j) => j.kind === "dates" && j.account === account);
+  setPageStatus(
+    paused
+      ? {
+          tone: "warn",
+          title: "Fixing dates is paused",
+          detail: `${account}${r.waiting ? ` · ${num(r.waiting)} waiting` : ""} · nothing is deleted or uploaded again`,
+        }
+      : fixing
+        ? { tone: "run", title: "Fixing a date", detail: `${account} · ${num(r.waiting)} in progress` }
+        : r.refreshing
+          ? { tone: "run", title: "Checking dates with Google", detail: account }
+          : r.waiting
+            ? { tone: "idle", title: `${num(r.waiting)} waiting for Google`, detail: account }
+            : { tone: "good", title: "No date fixes running", detail: account },
+  );
   setPauseControl({
     paused,
     working: (status()?.jobs ?? []).some((j) => j.kind === "dates" && j.account === account),
@@ -202,7 +218,6 @@ function render(): void {
   });
   const available = new Set(r.items.filter((i) => waiting(i) || fixable(i)).map((i) => i.name));
   for (const name of picked) if (!available.has(name)) picked.delete(name);
-  // The header's refresh button checks dates with Google here (no second button on the page).
   setRefreshControl({
     label: r.refreshing ? "Reading your library from Google…" : `Check dates in ${account} with Google`,
     busy: r.refreshing,
@@ -234,12 +249,10 @@ function render(): void {
   };
   html(
     $("#dt-body"),
-    `${paused ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Fixing dates is paused in this account</div><div class="mt-0.5 text-ink-3">${r.waiting ? `${num(r.waiting)} wait. ` : ""}Nothing is deleted or uploaded again until you resume.</div></div>${pauseBtn(true)}</section>` : ""}
-    <section class="card min-w-0 overflow-hidden">
+    `    <section class="card min-w-0 overflow-hidden">
         <div class="flex flex-wrap items-center gap-3 border-b border-line p-4">
           <div class="min-w-0 flex-1 basis-64"><h2 class="font-semibold">Files without a date</h2>
             <p class="mt-1 text-xs text-ink-3">${num(r.undated)} files · ${num(r.wrong)} with different dates · ${num(r.waiting)} in progress</p></div>
-          ${!paused && r.waiting ? pauseBtn(false, "fixing") : ""}
           <span class="text-xs text-ink-3">Album: ${r.album ? esc(r.album) : "Off"} · <a class="underline" href="#/settings/dates">Settings</a> · <a class="underline" href="#/sources">Sources</a></span>
         </div>
         ${r.error ? `<p class="border-b border-line px-4 py-3 text-sm text-bad" role="alert">${esc(r.error)}</p>` : ""}

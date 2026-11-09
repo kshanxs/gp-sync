@@ -516,16 +516,34 @@ def test_paused_account_starts_nothing(library):
         sync.meta_set(f"reclaim_paused:{ACC}", "0")
 
 
-def test_pause_everything_holds_free_storage(library):
-    # The header's Pause holds every job, not only uploads.
+def test_pause_everything_sets_each_jobs_pause(library):
+    # Overview's Pause everything pauses every job on its own; the uploads pause alone doesn't.
     sync.reclaim_queue(ACC, ["BIG"])
     sync.PAUSE_FILE.touch()
     try:
+        assert not sync.all_paused()
+        sync.pause_all(True)
+        assert sync.all_paused() and sync.reclaim_paused(ACC) and sync.meta_get("copy_paused") == "1"
         assert not step(FakeClient(library, {b64(DATA)}))
         assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "queued"
     finally:
-        sync.PAUSE_FILE.unlink()
+        sync.pause_all(False)
+    assert not sync.PAUSE_FILE.exists() and not sync.reclaim_paused(ACC)
     assert step(FakeClient(library, {b64(DATA)}))
+
+
+def test_pause_from_1_5_8_is_kept_per_job(library):
+    sync.q("DELETE FROM meta WHERE k='pause_split'")
+    sync.PAUSE_FILE.touch()
+    try:
+        sync.split_pause()
+        assert sync.reclaim_paused(ACC) and sync.meta_get("copy_paused") == "1"
+    finally:
+        sync.pause_all(False)
+    sync.PAUSE_FILE.touch()
+    sync.split_pause()  # only once
+    assert not sync.reclaim_paused(ACC)
+    sync.PAUSE_FILE.unlink()
 
 
 def test_no_caption_is_not_copied_as_braces(library):

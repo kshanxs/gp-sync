@@ -2,12 +2,12 @@
 // folder's progress, and the upload history (today, streak, where the photos are, times, the year).
 // The Overview shows only what runs now, for every process, and links here.
 
-import { get, tz, type FolderReport, type History, type Insights, type Status } from "../lib/api";
+import { get, post, tz, type FolderReport, type History, type Insights, type Status } from "../lib/api";
 import { donut, heatLegend, heatmap, ring, setRing, sparkline, type Slice } from "../lib/charts";
 import { $, $$, animateChange, esc, html } from "../lib/dom";
 import { ago, bytes, duration, fileName, ms, num, pct, speed } from "../lib/format";
 import { icon } from "../lib/icons";
-import { host } from "../lib/store";
+import { host, setPageStatus, setPauseControl, setRefreshControl } from "../lib/store";
 import { badge, cardHead, etaText, openAttrs, phaseInfo, spaceTone, thumb, tile } from "../lib/ui";
 import type { View } from "./view";
 
@@ -288,14 +288,61 @@ function nowTitle(s: Status): string {
   }
 }
 
+/** Only what the control strip can't do: connecting an account. Pause and scan are in the strip. */
 function nowAction(s: Status): string {
-  if (s.phase === "paused")
-    return `<button class="btn sm primary shrink-0" data-now="resume">${icon("play")}Resume</button>`;
   if (s.phase === "setup")
     return `<a class="btn sm primary shrink-0" href="#/settings/accounts">${icon("key")}Connect</a>`;
-  if (s.phase === "idle" && s.library.files > s.library.synced_files)
-    return `<button class="btn sm shrink-0" data-now="scan">${icon("refresh")}Scan now</button>`;
   return "";
+}
+
+/** The control strip: uploads (status, Pause/Resume) and scanning the folders. */
+function controls(s: Status): void {
+  const left = s.library.files - s.library.synced_files;
+  const n = s.uploading?.length ?? (s.current ? 1 : 0);
+  setPageStatus(
+    s.phase === "uploading"
+      ? {
+          tone: "run",
+          title: `Uploading · ${num(Math.max(1, n))} at once`,
+          detail: s.total
+            ? `File ${num(Math.min(s.done + Math.max(1, n), s.total))} of ${num(s.total)} this round`
+            : "",
+        }
+      : s.phase === "scanning"
+        ? { tone: "run", title: "Scanning your folders" }
+        : s.paused
+          ? { tone: "warn", title: "Uploads are paused", detail: left ? `${num(left)} files waiting` : "" }
+          : s.phase === "scheduled"
+            ? { tone: "idle", title: "Waiting for upload hours", detail: phaseInfo(s).detail }
+            : s.phase === "setup"
+              ? { tone: "idle", title: "No Google account yet", detail: "Connect one in Settings" }
+              : s.phase === "error"
+                ? { tone: "warn", title: "Something went wrong", detail: s.error }
+                : left
+                  ? { tone: "idle", title: `${num(left)} files waiting`, detail: "They go at the next scan" }
+                  : {
+                      tone: "good",
+                      title: "All backed up",
+                      detail: `Next scan ${s.interval ? `within ${num(s.interval)} min` : "soon"}`,
+                    },
+  );
+  setPauseControl({
+    paused: !!s.paused,
+    working: s.phase === "uploading",
+    label: s.paused ? "Resume uploads" : "Pause uploads",
+    toggle: async () => {
+      await post("pause");
+      return s.paused ? "Uploads resumed" : "Uploads paused: files under way finish first";
+    },
+  });
+  setRefreshControl({
+    label: "Scan your folders for new photos and videos",
+    busy: s.phase === "scanning" || s.phase === "starting",
+    run: async () => {
+      await post("sync");
+      return s.paused ? "Scanning (uploads stay paused)" : "Scanning for new photos and videos";
+    },
+  });
 }
 
 /** The other files uploading at the same time (Settings › Sync, Files at once). */
@@ -428,10 +475,6 @@ const sync: View = {
         <div class="card-b"><div class="scroll-thin overflow-x-auto pb-1" id="sy-year"><div class="skeleton h-28"></div></div><div class="mt-2 flex justify-end">${heatLegend()}</div></div>
       </section>
     </div>`;
-    $("#sy-now").addEventListener("click", (e) => {
-      const b = (e.target as HTMLElement).closest<HTMLElement>("[data-now]");
-      if (b) document.getElementById(b.dataset.now === "resume" ? "btn-pause" : "btn-sync")?.click();
-    });
     $("#sy-share-by").addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
       if (!b || shareBy === b.dataset.by) return;
@@ -453,6 +496,7 @@ const sync: View = {
   },
   update(s) {
     last = s;
+    controls(s);
     // New uploads: refresh the heat map and streak now instead of waiting for the minute timer.
     if (s.library.synced_files !== slowSynced && Date.now() - slowAt > 10_000) {
       if (slowSynced >= 0) void loadSlow();

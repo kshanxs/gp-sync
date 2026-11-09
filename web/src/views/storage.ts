@@ -10,11 +10,11 @@ import {
 import { $, esc, html, toast } from "../lib/dom";
 import { ago, bytes, date, duration, num, pct, remaining, speed } from "../lib/format";
 import { icon } from "../lib/icons";
-import { host, setPauseControl, setRefreshControl, status } from "../lib/store";
+import { host, setPageStatus, setPauseControl, setRefreshControl, status } from "../lib/store";
 import { avatar, freeingAccounts, openingAccount, rememberAccount } from "../lib/account-menu";
 import { columns } from "../lib/charts";
 import { confirmDialog } from "../lib/dialog";
-import { accountLine, badge, cardHead, checkNote, pauseBtn, tile, type Tone } from "../lib/ui";
+import { accountLine, badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // Free up Google storage: items that count against it are downloaded (and proven to be Google's
@@ -194,7 +194,7 @@ function workingCard(r: StorageReport): string {
   if (!w.length) return "";
   const pausing = r.paused;
   return `<section class="card mt-4 min-w-0 overflow-hidden">
-    ${cardHead(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", pausing ? `${num(w.length)} finishing their step` : `${num(w.length)} at once ${pauseBtn(false)}`)}
+    ${cardHead(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", pausing ? `${num(w.length)} finishing their step` : `${num(w.length)} at once`)}
     <ul class="divide-y divide-line">${w
       .map((c) => {
         const step = c.step === "local" ? { ...STEP.local, label: `Copying from ${host()}` } : STEP[c.step];
@@ -259,11 +259,6 @@ function renderList(r: StorageReport): void {
   html(
     $("#st-body"),
     `${accountStrip(r)}
-    ${
-      r.paused
-        ? `<section class="card mb-4 flex gap-3 border-warn/40 p-4">${icon("pause", "mt-0.5 size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1"><span class="font-medium">Freeing storage is paused in this account</span>${pauseBtn(true)}</div><p class="mt-1.5 text-ink-3">${r.left?.count ? `${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} wait. ` : ""}Downloads stop at once and wait in the queue. An item already deleted in Google finishes its upload first, so nothing is lost.</p></div></section>`
-        : ""
-    }
     ${
       r.blocked
         ? `<section class="card mb-4 flex flex-wrap items-start gap-3 border-bad/40 p-4">${icon("warn", "size-5 shrink-0 text-bad")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Stopped: Google counted a re-upload against storage</div><div class="mt-0.5 text-ink-3">Nothing more is moved. Downloaded files stay here, and nothing was deleted.</div></div><button class="btn sm" id="st-unblock">Try again anyway</button></section>`
@@ -516,7 +511,7 @@ function renderTime(): void {
 function render(): void {
   const r = report;
   if (r?.account) {
-    // The header's refresh button reads this account's library from Google here (no second button).
+    // The control strip: this account's freeing (status, Pause/Resume) and reading its library.
     setRefreshControl({
       label: r.refreshing ? "Reading your library from Google…" : `Refresh ${account} from Google`,
       busy: r.refreshing,
@@ -526,8 +521,28 @@ function render(): void {
         return "Reading your library from Google";
       },
     });
-    // The page's Pause/Resume buttons pause freeing in this account.
     const paused = !!r.paused;
+    const moving = r.working?.length ?? 0;
+    const left = r.left?.count ?? 0;
+    setPageStatus(
+      paused
+        ? {
+            tone: "warn",
+            title: moving ? `Pausing · ${num(moving)} finishing their step` : "Freeing storage is paused",
+            detail: `${account}${left ? ` · ${num(left)} waiting` : ""}`,
+          }
+        : moving
+          ? {
+              tone: "run",
+              title: `Freeing storage · ${num(moving)} at once`,
+              detail: `${account} · ${num(left)} left`,
+            }
+          : r.refreshing
+            ? { tone: "run", title: "Reading your library from Google", detail: account }
+            : left
+              ? { tone: "idle", title: `${num(left)} waiting to be freed`, detail: account }
+              : { tone: "good", title: "Nothing being freed", detail: account },
+    );
     setPauseControl({
       paused,
       working: !!r.working?.length,

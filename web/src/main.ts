@@ -6,11 +6,12 @@ import { pct } from "./lib/format";
 import { icon, type IconName } from "./lib/icons";
 import {
   onMode,
-  onRefreshControl,
+  onPageControls,
   onStatus,
-  pauseControl,
+  pageControls,
   refresh,
-  refreshControl,
+  refresh as refresh_,
+  setPageStatus,
   setPauseControl,
   setRefreshControl,
   startPolling,
@@ -120,13 +121,11 @@ function shell(): string {
         <span class="hidden lg:block"><span id="live" class="badge good hidden" data-tip="Updates arrive the moment something happens"><span class="dot live"></span>Live</span></span>
         <span class="hidden" id="offline">${'<span class="badge bad">' + icon("cloudOff") + "Offline</span>"}</span>
         <button class="btn icon hidden" id="btn-install" title="Install app" aria-label="Install app">${icon("download")}</button>
-        <button class="btn icon" id="btn-sync" title="Scan now" aria-label="Scan now">${icon("refresh")}</button>
-        <button class="btn icon" id="btn-pause" title="Pause" aria-label="Pause">${icon("pause")}</button>
         ${glassToggle("sm")}
         <a class="btn primary hidden sm:inline-flex" href="#/upload" aria-label="Add photos and videos from this device" title="Add photos and videos from this device">${icon("upload")}<span>Add files</span></a>
       </header>
       <div id="ptr" aria-hidden="true" style="top:calc(4rem + env(safe-area-inset-top))"><svg viewBox="0 0 40 40"><circle class="ptr-track" cx="20" cy="20" r="11"/><circle class="ptr-arc" cx="20" cy="20" r="11" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" transform="rotate(-90 20 20)"/></svg></div>
-      <div id="all-paused" class="hidden border-b border-warn/30 bg-warn/10 px-4 py-2 text-sm lg:px-6" role="status"><div class="flex items-center gap-2">${icon("pause", "size-4 shrink-0 text-warn")}<span class="min-w-0 flex-1">Everything is paused: uploads, Free storage, copies and date fixes.</span><button type="button" class="btn sm primary shrink-0" id="all-resume">${icon("play", "size-3.5")}Resume</button></div></div>
+      <div id="page-ctl" class="page-ctl hidden" role="region" aria-label="Controls for this page"></div>
       <main id="view" class="scroll-thin flex-1 overflow-y-auto px-4 pt-4 pb-28 lg:px-6 lg:pt-6 lg:pb-8"></main>
     </div>
   </div>
@@ -188,8 +187,10 @@ function route(): void {
 function mountView(r: Route, rest: string[]): void {
   active?.view.unmount?.();
   unsubscribe?.();
-  setPauseControl(null); // the new page sets its own, if it has one
-  setRefreshControl(null); // back to scanning
+  // The new page sets its own control strip, if it has one.
+  setPageStatus(null);
+  setPauseControl(null);
+  setRefreshControl(null);
   active = r;
   const el = $("#view");
   el.scrollTop = 0;
@@ -305,7 +306,6 @@ function updateShell(s: Status): void {
   );
   // Only while something happens: the pause button already shows paused and idle.
   html($("#top-phase"), s.phase === "uploading" || s.phase === "scanning" ? phaseBadge(s) : "");
-  syncButton(s);
   const failed = s.counts.failed;
   const warnHealth = s.login_failed.length > 0 || s.phase === "error";
   const counts: Record<string, [string, string]> = {
@@ -331,8 +331,6 @@ function updateShell(s: Status): void {
     const on = (id === "activity" && failed > 0) || (id === "more" && (warnHealth || !s.accounts.length));
     el.classList.toggle("hidden", !on);
   });
-  $("#all-paused").classList.toggle("hidden", !s.paused);
-  paintPause(s);
   paintTabs(s);
 }
 
@@ -368,49 +366,37 @@ function paintTabs(s: Status | null = status()): void {
   else setTab("overview", "dashboard", "Overview", false, null);
 }
 
-/** The header's pause button: one switch for everything (uploads, Free storage, copies, Keep in
- * sync, date fixes). Each page also has a Pause for its own job. */
-function paintPause(s: Status | null = status()): void {
-  const pause = $("#btn-pause");
-  const paused = !!s?.paused;
-  const label = paused ? "Resume everything" : "Pause everything";
-  // Glows while work runs (uploads, a scan, or anything in the background); still when paused.
-  const working =
-    !paused &&
-    (s?.phase === "uploading" || s?.phase === "scanning" || !!s?.uploading?.length || !!s?.jobs?.length);
-  pause.classList.toggle("is-working", working);
-  if (pause.title !== label || pause.dataset.paused !== String(paused)) {
-    pause.title = label;
-    pause.dataset.paused = String(paused);
-    pause.setAttribute("aria-label", label);
-    pause.innerHTML = icon(paused ? "play" : "pause", "size-4 swap-in");
-    pause.classList.toggle("primary", paused);
-  }
+/** The page's control strip under the header: status, Pause/Resume and Refresh for the page's
+ * own job (pages set it with setPageStatus, setPauseControl and setRefreshControl). */
+function paintControls(): void {
+  const el = $("#page-ctl");
+  const { status: st, pause, refresh } = pageControls();
+  el.classList.toggle("hidden", !st && !pause && !refresh);
+  if (!st && !pause && !refresh) return;
+  const tone = st?.tone ?? "idle";
+  const ic: IconName =
+    tone === "run" ? "loader" : tone === "warn" ? "pause" : tone === "good" ? "ok" : "clock";
+  html(
+    el,
+    `<span class="page-ctl-ic tone-${tone}">${icon(ic, `size-4 ${tone === "run" ? "spin" : ""}`)}</span>
+    <span class="min-w-0 flex-1"><span class="keep-line block truncate text-sm font-medium">${esc(st?.title ?? "")}</span>${st?.detail ? `<span class="keep-line block truncate text-xs text-ink-3" title="${esc(st.detail)}">${esc(st.detail)}</span>` : ""}</span>
+    ${pause ? `<button type="button" class="btn sm shrink-0 ${pause.paused ? "primary" : ""}" data-ctl="pause" title="${esc(pause.label)}" aria-label="${esc(pause.label)}">${icon(pause.paused ? "play" : "pause", "size-3.5")}${pause.paused ? "Resume" : "Pause"}</button>` : ""}
+    ${refresh ? `<button type="button" class="btn sm icon-sm shrink-0 ${refresh.busy ? "busy" : ""}" data-ctl="refresh" title="${esc(refresh.label)}" aria-label="${esc(refresh.label)}" ${refresh.busy ? 'aria-busy="true"' : ""}>${icon("refresh", `size-3.5 ${refresh.busy ? "spin" : ""}`)}<span class="max-sm:hidden">Refresh</span></button>` : ""}`,
+  );
 }
 
-// The scan button spins while a scan runs, and for at least a moment after a tap,
-// so a quick scan still shows that it happened.
-let scanHoldUntil = 0;
-let scanTimer = 0;
-
-function syncButton(s: Status | null = status()): void {
-  const btn = $("#btn-sync");
-  const ctl = refreshControl();
-  const working = ctl ? ctl.busy : s?.phase === "scanning" || s?.phase === "starting";
-  const busy = working || Date.now() < scanHoldUntil;
-  btn.classList.toggle("busy", busy);
-  btn.classList.toggle("uploading", !ctl && s?.phase === "uploading" && !busy);
-  btn.toggleAttribute("aria-busy", busy);
-  const label = ctl
-    ? ctl.label
-    : busy
-      ? "Scanning…"
-      : s?.phase === "uploading"
-        ? "Uploading · scan again"
-        : "Scan now";
-  if (btn.title !== label) {
-    btn.title = label;
-    btn.setAttribute("aria-label", label);
+async function runControl(b: HTMLButtonElement): Promise<void> {
+  const { pause, refresh } = pageControls();
+  const job = b.dataset.ctl === "pause" ? pause?.toggle : refresh?.run;
+  if (!job) return;
+  b.disabled = true;
+  try {
+    toast(await job(), "good");
+    await refresh_();
+  } catch (e) {
+    toast((e as Error).message || "Couldn't reach the app", "bad");
+  } finally {
+    b.disabled = false;
   }
 }
 
@@ -529,40 +515,11 @@ function boot(): void {
     if ((e.target as HTMLElement).closest("[data-close]")) $("#sheet").classList.add("hidden");
   });
   $$(".tab, .tab-fab").forEach((t) => t.addEventListener("click", haptic));
-  $("#btn-sync").addEventListener("click", async () => {
-    scanHoldUntil = Date.now() + 1200;
-    syncButton();
-    clearTimeout(scanTimer);
-    scanTimer = window.setTimeout(() => syncButton(), 1250);
-    try {
-      const ctl = refreshControl();
-      if (ctl) toast(await ctl.run());
-      else {
-        await post("sync");
-        toast(status()?.paused ? "Scanning (uploads stay paused)" : "Scanning for new photos and videos");
-      }
-    } catch {
-      toast("Couldn't reach the app", "bad");
-    }
-    setTimeout(refresh, 600);
+  $("#page-ctl").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-ctl]");
+    if (b) void runControl(b);
   });
-  $("#btn-pause").addEventListener("click", async () => {
-    const btn = $<HTMLButtonElement>("#btn-pause");
-    btn.disabled = true;
-    try {
-      await post("pause");
-      toast(
-        status()?.paused ? "Everything resumed" : "Everything paused: items under way finish their step",
-        "good",
-      );
-      await refresh();
-    } catch (e) {
-      toast((e as Error).message || "Couldn't reach the app", "bad");
-    } finally {
-      btn.disabled = false;
-    }
-  });
-  $("#all-resume").addEventListener("click", () => $("#btn-pause").click());
+  onPageControls(paintControls);
   $("#btn-install").addEventListener("click", () => void install());
   $("#side-install").addEventListener("click", () => void install());
   installButtons();
@@ -578,22 +535,6 @@ function boot(): void {
     tabTurn++;
     paintTabs();
   }, 4000);
-  // A page's own Pause/Resume (its job only).
-  document.addEventListener("click", async (e) => {
-    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-page-pause]");
-    const ctl = pauseControl();
-    if (!b || !ctl) return;
-    b.disabled = true;
-    try {
-      toast(await ctl.toggle(), "good");
-      await refresh();
-    } catch (err) {
-      toast((err as Error).message || "Couldn't reach the app", "bad");
-    } finally {
-      b.disabled = false;
-    }
-  });
-  onRefreshControl(() => syncButton());
   onStatus(askUndated);
   onMode((live) => $("#live").classList.toggle("hidden", !live));
   route();

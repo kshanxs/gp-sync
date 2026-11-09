@@ -891,63 +891,6 @@ body::before {
   @apply animate-pulse rounded-md bg-panel-2;
 }
 
-/* The header's pause button while work runs: two small moons orbit it (Saturn-style, different
-   orbits and speeds) over a faint orbit line, and the button breathes a soft glow. Paused or idle,
-   it stays still. */
-#btn-pause.is-working {
-  position: relative;
-  overflow: visible;
-  color: var(--accent);
-  animation: pause-glow 3s ease-in-out infinite;
-}
-#btn-pause.is-working::before,
-#btn-pause.is-working::after {
-  content: "";
-  position: absolute;
-  border-radius: 9999px;
-  pointer-events: none;
-}
-/* The outer moon, on a faint orbit line. */
-#btn-pause.is-working::before {
-  inset: -7px;
-  border: 1px solid color-mix(in oklab, var(--accent) 22%, transparent);
-  background: radial-gradient(circle at 50% 0, var(--accent) 0 3px, transparent 3.5px);
-  animation: orbit 3.2s linear infinite;
-}
-/* The inner moon: smaller, closer, the other way round and faster. */
-#btn-pause.is-working::after {
-  inset: -3px;
-  background: radial-gradient(
-    circle at 50% 100%,
-    color-mix(in oklab, var(--accent) 75%, white) 0 2px,
-    transparent 2.5px
-  );
-  animation: orbit 2.1s linear infinite reverse;
-}
-@keyframes orbit {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes pause-glow {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 0%, transparent);
-  }
-  50% {
-    box-shadow:
-      0 0 12px 1px color-mix(in oklab, var(--accent) 35%, transparent),
-      inset 0 0 6px color-mix(in oklab, var(--accent) 18%, transparent);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  #btn-pause.is-working,
-  #btn-pause.is-working::before,
-  #btn-pause.is-working::after {
-    animation: none;
-  }
-}
-
 @keyframes spin-slow {
   to {
     transform: rotate(360deg);
@@ -1344,21 +1287,6 @@ html.theme-reveal::view-transition-old(gt-live) {
 }
 
 /* ---- Working animations */
-/* Scan button: spins while scanning, glows softly while uploading. */
-#btn-sync.busy {
-  @apply pointer-events-none text-accent;
-  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
-}
-#btn-sync.busy svg {
-  animation: spin-slow 0.9s linear infinite;
-}
-#btn-sync.uploading::after {
-  content: "";
-  @apply pointer-events-none absolute inset-0 rounded-[inherit];
-  box-shadow: inset 0 0 0 1.5px var(--accent);
-  animation: breathe 1.8s ease-in-out infinite;
-}
 @keyframes breathe {
   0%,
   100% {
@@ -1812,4 +1740,25 @@ svg:hover .donut-arc:not(:hover) {
 }
 .bar.space-bad > i {
   background: var(--bad);
+}
+
+/* The page's control strip under the header: status, Pause/Resume and Refresh in one place. */
+.page-ctl {
+  @apply flex shrink-0 items-center gap-3 border-b border-line px-4 py-2 lg:px-6;
+  background: color-mix(in oklab, var(--panel) 70%, transparent);
+}
+.page-ctl.hidden {
+  display: none;
+}
+.page-ctl-ic {
+  @apply grid size-8 shrink-0 place-items-center rounded-full bg-panel-2 text-ink-3;
+}
+.page-ctl-ic.tone-run {
+  color: var(--run);
+}
+.page-ctl-ic.tone-warn {
+  color: var(--warn);
+}
+.page-ctl-ic.tone-good {
+  color: var(--good);
 }

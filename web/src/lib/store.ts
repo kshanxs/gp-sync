@@ -120,56 +120,68 @@ export function startPolling(): void {
   });
 }
 
-/** The open page's own pause (Free storage in one account, copies, date fixes), run by the page's
- * Pause/Resume buttons (pauseBtn). The header's button always pauses everything. Pages set it on
- * mount and clear it on unmount. */
+// ---- The page's control strip, under the header: what the page's job is doing, with Pause or
+// Resume and Refresh. One place per page (no header buttons, no repeats inside cards). Pages set
+// these as they render and the shell clears them when another page opens.
+
+/** The strip's status line. */
+export interface PageStatus {
+  /** "run" (working), "warn" (paused), "good" (done or all set), "idle". */
+  tone: "run" | "warn" | "good" | "idle";
+  title: string;
+  detail?: string;
+}
+
+/** The page's Pause/Resume: its own job only (uploads, Free storage in one account, copies…). */
 export interface PauseControl {
   paused: boolean;
-  /** "Pause freeing storage", "Resume freeing storage"… */
+  /** Said in full on hover: "Pause freeing storage in a@x.com". */
   label: string;
-  /** Work is running right now: the button glows. */
+  /** Work is running right now. */
   working?: boolean;
   /** Flips it; resolves with the toast to show. */
   toggle: () => Promise<string>;
 }
-let pauseCtl: PauseControl | null = null;
-const pauseListeners = new Set<() => void>();
 
-export function setPauseControl(c: PauseControl | null): void {
-  pauseCtl = c;
-  pauseListeners.forEach((fn) => fn());
-}
-
-export function pauseControl(): PauseControl | null {
-  return pauseCtl;
-}
-
-export function onPauseControl(fn: () => void): void {
-  pauseListeners.add(fn);
-}
-
-/** What the header's refresh button does on the open page, when not a scan (Free storage, Fix
- * dates and Copy accounts read the library from Google). Pages set it and clear it on unmount. */
+/** The page's Refresh: a scan, or reading the library from Google. */
 export interface RefreshControl {
-  /** "Refresh from Google"… */
+  /** "Refresh a@x.com from Google"… */
   label: string;
   /** Reading right now: the button spins. */
   busy: boolean;
   /** Starts it; resolves with the toast to show. */
   run: () => Promise<string>;
 }
+
+let pageStatus: PageStatus | null = null;
+let pauseCtl: PauseControl | null = null;
 let refreshCtl: RefreshControl | null = null;
-const refreshListeners = new Set<() => void>();
+const controlListeners = new Set<() => void>();
+const changed = () => controlListeners.forEach((fn) => fn());
+
+export function setPageStatus(c: PageStatus | null): void {
+  pageStatus = c;
+  changed();
+}
+
+export function setPauseControl(c: PauseControl | null): void {
+  pauseCtl = c;
+  changed();
+}
 
 export function setRefreshControl(c: RefreshControl | null): void {
   refreshCtl = c;
-  refreshListeners.forEach((fn) => fn());
+  changed();
 }
 
-export function refreshControl(): RefreshControl | null {
-  return refreshCtl;
+export function pageControls(): {
+  status: PageStatus | null;
+  pause: PauseControl | null;
+  refresh: RefreshControl | null;
+} {
+  return { status: pageStatus, pause: pauseCtl, refresh: refreshCtl };
 }
 
-export function onRefreshControl(fn: () => void): void {
-  refreshListeners.add(fn);
+export function onPageControls(fn: () => void): void {
+  controlListeners.add(fn);
 }

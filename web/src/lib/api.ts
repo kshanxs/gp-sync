@@ -66,6 +66,8 @@ export interface Status {
   version: string;
   /** What the machine is called (HOST_NAME, "Umbrel" on Umbrel, or "this server"). */
   host: string;
+  /** Every job is paused (Overview's Pause everything sets each job's own pause). */
+  all_paused?: boolean;
   /** Where the app runs: "umbrel" (PLATFORM=umbrel) or "docker" (any other host). */
   platform?: string;
   /** Room on the disks here: where the photos are, and where the app keeps its data. */

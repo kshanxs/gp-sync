@@ -2,8 +2,8 @@
 // rest stay out of the way; the cards left share the row evenly. Upload history (today, streak,
 // where the photos are, the year) is on the Sync page.
 
-import { get, tz, type Disk, type Processes, type Status } from "../lib/api";
-import { host } from "../lib/store";
+import { get, post, tz, type Disk, type Processes, type Status } from "../lib/api";
+import { host, setPageStatus, setPauseControl, setRefreshControl } from "../lib/store";
 import { sparkline } from "../lib/charts";
 import { $, $$, esc, html } from "../lib/dom";
 import { bytes, clock, fileName, num, pct, speed } from "../lib/format";
@@ -90,6 +90,45 @@ function spaceRows(s: Status): [string, string, string][] {
   const rows = [row(`Space on ${host()}`, sp.media)];
   if (!sp.same && sp.data) rows.push(row("App data disk", sp.data));
   return rows;
+}
+
+/** The control strip: every job at once (Pause everything / Resume everything) and a scan. Each
+ * page has the same strip for its own job. */
+function controls(s: Status): void {
+  const busy = liveProcesses(s).filter((l) => l.running);
+  const paused = !!s.all_paused;
+  setPageStatus(
+    paused
+      ? {
+          tone: "warn",
+          title: "Everything is paused",
+          detail: "Uploads, Free storage, copies and date fixes",
+        }
+      : busy.length
+        ? {
+            tone: "run",
+            title: `${num(busy.length)} running`,
+            detail: busy.map((l) => PROCESS[l.key].label).join(", "),
+          }
+        : { tone: "good", title: "Nothing running right now", detail: "Work shows here as it starts" },
+  );
+  setPauseControl({
+    paused,
+    working: busy.length > 0,
+    label: paused ? "Resume everything" : "Pause everything: uploads, Free storage, copies and date fixes",
+    toggle: async () => {
+      await post("pause-all", { paused: !paused });
+      return paused ? "Everything resumed" : "Everything paused: items under way finish their step";
+    },
+  });
+  setRefreshControl({
+    label: "Scan your folders for new photos and videos",
+    busy: s.phase === "scanning" || s.phase === "starting",
+    run: async () => {
+      await post("sync");
+      return "Scanning for new photos and videos";
+    },
+  });
 }
 
 // Columns for the process cards in use, so they always fill the row.
@@ -331,6 +370,7 @@ const overview: View = {
   },
   update(s) {
     last = s;
+    controls(s);
     const r = s.resources;
     const setTile = (id: string, v: string, sub: string, chartSvg?: string) => {
       const t = $(id);
@@ -384,7 +424,7 @@ const overview: View = {
           ? badge("Unreachable", "bad", "cloudOff")
           : `<span class="text-ink-2 tabular-nums">${Math.round(lat)} ms</span> ${badge(latTone === "good" ? "Fast" : latTone === "warn" ? "OK" : "Slow", latTone)}`,
       ],
-      ["pause", "Work", s.paused ? badge("All paused", "warn", "pause") : badge("Running", "good", "play")],
+      ["pause", "Work", s.all_paused ? badge("All paused", "warn", "pause") : badge("On", "good", "play")],
       ...spaceRows(s),
       [
         "error",

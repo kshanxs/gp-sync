@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.9
+
+- Pause and Refresh moved from the header into each page: a control strip under the title says
+  what the page's job is doing, with one Pause/Resume and one Refresh. Overview pauses or resumes
+  everything and scans; Sync pauses uploads and scans; Free storage, Copy accounts and Fix dates
+  pause their own job and read the library from Google.
+- No more repeated Resume buttons: the paused banners and the Pause buttons inside cards are gone.
+- Each job has its own pause again. Overview's Pause everything switches every job's pause on, and
+  Resume switches them all off, so nothing is held back by a different button. What 1.5.8 had
+  paused stays paused after the update.
+- Settings › Sync: the switch is "Pause uploads" again.
+
 ## 1.5.8
 
 - One Pause for everything: the header's pause button now stops uploads, Free storage, copies, Keep

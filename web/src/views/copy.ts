@@ -9,10 +9,10 @@ import {
 import { $, esc, html, toast } from "../lib/dom";
 import { ago, bytes, date, duration, num, pct, speed, until } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
-import { host, setPauseControl, setRefreshControl, status } from "../lib/store";
+import { host, setPageStatus, setPauseControl, setRefreshControl, status } from "../lib/store";
 import { accountMenu, wireAccountMenu } from "../lib/account-menu";
 import { confirmDialog } from "../lib/dialog";
-import { badge, cardHead, checkNote, pauseBtn, tile, type Tone } from "../lib/ui";
+import { badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // Copy one Google account to another: what the second one lacks, original files, nothing deleted.
@@ -264,7 +264,7 @@ function progressCard(r: CopyReport): string {
   return `<section class="card">${cardHead(
     r.paused ? "Paused" : busy ? "Copying" : "Finished",
     r.paused ? "pause" : busy ? "loader" : "ok",
-    `${r.paused ? pauseBtn(true) : busy ? pauseBtn(false) : ""}${busy ? `<button class="btn sm" id="cp-stop">${icon("x")}Stop</button>` : ""}${j.failed ? `<button class="btn sm" id="cp-retry">${icon("retry")}Retry ${num(j.failed)} failed</button>` : ""}`,
+    `${busy ? `<button class="btn sm" id="cp-stop">${icon("x")}Stop</button>` : ""}${j.failed ? `<button class="btn sm" id="cp-retry">${icon("retry")}Retry ${num(j.failed)} failed</button>` : ""}`,
   )}
     <div class="card-b space-y-3">
       <div class="flex items-center justify-between text-sm"><span>${num(done)} of ${num(total)} done</span><span class="text-ink-3 tabular-nums">${Math.floor(pct(done, total))}%</span></div>
@@ -340,9 +340,9 @@ function render(): void {
   html(
     $("#cp-foot"),
     `<span>${num(accs.length)} of ${num(max)} accounts connected${accs.length < max ? ` · <a class="link-btn" href="#/settings/accounts">Add an account</a>` : ""}</span>
-     <span class="ml-auto">${r?.refreshing ? "Reading both libraries…" : r?.refreshed?.src ? `Libraries read ${ago(Math.min(r.refreshed.src, r.refreshed.dst ?? r.refreshed.src))} · refresh with the button at the top` : "Read both libraries with the refresh button at the top"}</span>`,
+     <span class="ml-auto">${r?.refreshing ? "Reading both libraries…" : r?.refreshed?.src ? `Libraries read ${ago(Math.min(r.refreshed.src, r.refreshed.dst ?? r.refreshed.src))}` : "Read both libraries with Refresh at the top"}</span>`,
   );
-  // The header's refresh button reads both libraries from Google here (no second button).
+  // The control strip: copying (status, Pause/Resume) and reading both libraries.
   setRefreshControl({
     label: r?.refreshing ? "Reading both libraries from Google…" : "Read both libraries from Google",
     busy: !!r?.refreshing,
@@ -353,8 +353,28 @@ function render(): void {
     },
   });
   if (r && r.ready !== false) {
-    // The page's Pause/Resume buttons pause copying.
     const paused = r.paused;
+    const moving = (r.working ?? (r.current ? [r.current] : [])).length;
+    const waiting = r.jobs.queued;
+    setPageStatus(
+      paused
+        ? {
+            tone: "warn",
+            title: moving ? `Pausing · ${num(moving)} finishing` : "Copying is paused",
+            detail: `${src} → ${dst}${waiting ? ` · ${num(waiting)} waiting` : ""}`,
+          }
+        : moving
+          ? {
+              tone: "run",
+              title: `Copying · ${num(moving)} at once`,
+              detail: `${src} → ${dst} · ${num(waiting)} left`,
+            }
+          : r.refreshing
+            ? { tone: "run", title: "Reading both libraries from Google", detail: `${src} and ${dst}` }
+            : waiting
+              ? { tone: "idle", title: `${num(waiting)} waiting to copy`, detail: `${src} → ${dst}` }
+              : { tone: "good", title: "Nothing being copied", detail: `${src} → ${dst}` },
+    );
     setPauseControl({
       paused,
       working: !!(r.working?.length || r.current),

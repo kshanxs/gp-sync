@@ -79,11 +79,13 @@ describe("live processes", () => {
   });
 
   it("shows every job as paused when everything is paused", () => {
+    // Pause everything sets each job's own pause.
     const s = status({
       paused: true,
+      all_paused: true,
       jobs: [{ kind: "storage", account: "a", done: 1, total: 2 }],
-      reclaim: { a: { queued: 5, working: 1, done: 0, freed: 0, failed: 0, paused: false } },
-      copying: { queued: 2, checking: 0, paused: false },
+      reclaim: { a: { queued: 5, working: 1, done: 0, freed: 0, failed: 0, paused: true } },
+      copying: { queued: 2, checking: 0, paused: true },
     } as never);
     const l = by(s);
     expect(l.freed!.paused).toBe(true);
