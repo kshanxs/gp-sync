@@ -1396,8 +1396,19 @@ html.theme-reveal::view-transition-old(gt-live) {
     opacity 0.15s ease;
   cursor: default;
 }
-svg:hover > .donut-arc:not(:hover) {
+svg:hover .donut-arc:not(:hover) {
   opacity: 0.55;
+}
+/* A slice that opens its files: pointer, and it thickens a little on hover. */
+.donut-link .donut-arc {
+  cursor: pointer;
+}
+.donut-link:hover .donut-arc,
+.donut-link:focus-visible .donut-arc {
+  stroke-width: 26px;
+}
+.donut-link:focus-visible {
+  outline: none;
 }
 
 /* ---- Phones: show whole text and every choice instead of hiding them. */

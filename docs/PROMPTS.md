@@ -5,6 +5,7 @@ your computer. Each one says exactly what to do and what not to touch.
 
 - [Get the Google login line from an Android phone](#get-the-google-login-line)
 - [Run GP Sync on a laptop (Windows, macOS or Linux)](#run-gp-sync-on-a-laptop)
+- [Run GP Sync from the source, without Docker](#run-gp-sync-without-docker)
 - [Run GP Sync on a server or NAS](#run-gp-sync-on-a-server-or-nas)
 - [Install GP Sync on Umbrel](#install-gp-sync-on-umbrel)
 - [Collect diagnostics for a problem](#collect-diagnostics-for-a-problem)
@@ -119,6 +120,45 @@ Set up GP Sync (https://github.com/kshanxs/gp-sync) on this computer with Docker
    in Settings > Google accounts.
 
 Don't change anything inside my photo folders. They must be mounted read-only (:ro).
+```
+
+## Run GP Sync without Docker
+
+Docker is the easiest way, but GP Sync also runs straight from the source with
+[uv](https://docs.astral.sh/uv/) (Python) and Node. Point it at folders you own with environment
+variables, so it never needs the container's `/data` and `/media`.
+
+```sh
+# 1. Build the dashboard
+cd web && npm install && npm run build && cd ..
+
+# 2. Install the Python dependencies
+cd backend && uv sync && cd ..
+
+# 3. Run it, with writable local folders (nothing is read from / or your home as a whole)
+DATA_DIR="$PWD/data" MEDIA_DIR="$PWD/media" UPLOAD_DIR="$PWD/uploads" PORT=8527 \
+  uv run --project backend python backend/sync.py
+```
+
+The first two steps are one-time. After that, only the third command starts it; open
+`http://localhost:8527`. Put the photos to back up (or symlinks to them) under the `media` folder.
+Set `PASSWORD=...` on the run command to require a sign-in. A short script that exports those
+variables and runs the last line is a convenient way to start it each time.
+
+```text
+I've cloned https://github.com/kshanxs/gp-sync and want to run it on this machine without Docker.
+
+1. Check `uv` is installed (else install it from https://astral.sh/uv) and that Node is installed.
+2. In `web/`, run `npm install` then `npm run build` (the dashboard is written to `web/dist`).
+3. In `backend/`, run `uv sync`.
+4. Ask me which folders hold the photos and videos I want backed up; don't guess, and never use my
+   whole home folder. Make a `media` folder in the repo and symlink those folders into it.
+5. Start it with writable local data folders, and show me the password:
+   `DATA_DIR="$PWD/data" MEDIA_DIR="$PWD/media" UPLOAD_DIR="$PWD/uploads" PORT=8527 PASSWORD=<random> uv run --project backend python backend/sync.py`
+6. Wait until http://localhost:8527 serves the dashboard, then tell me to connect a Google account
+   in Settings > Google accounts.
+
+Only read my photo folders; never move, change or delete anything inside them.
 ```
 
 ## Run GP Sync on a server or NAS

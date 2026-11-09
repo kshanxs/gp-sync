@@ -4,7 +4,16 @@ import { enableTips } from "./lib/charts";
 import { $, $$, esc, html, toast } from "./lib/dom";
 import { pct } from "./lib/format";
 import { icon, type IconName } from "./lib/icons";
-import { onMode, onStatus, refresh, startPolling, status } from "./lib/store";
+import {
+  onMode,
+  onPauseControl,
+  onStatus,
+  pauseControl,
+  refresh,
+  setPauseControl,
+  startPolling,
+  status,
+} from "./lib/store";
 import { install, installState, onInstallChange } from "./lib/install";
 import { openViewer } from "./lib/viewer";
 import { initTheme } from "./lib/theme";
@@ -169,6 +178,7 @@ function route(): void {
 function mountView(r: Route, rest: string[]): void {
   active?.view.unmount?.();
   unsubscribe?.();
+  setPauseControl(null); // back to uploads, unless the new page takes the button
   active = r;
   const el = $("#view");
   el.scrollTop = 0;
@@ -309,13 +319,21 @@ function updateShell(s: Status): void {
     const on = (id === "activity" && failed > 0) || (id === "more" && (warnHealth || !s.accounts.length));
     el.classList.toggle("hidden", !on);
   });
+  paintPause(s);
+}
+
+/** The header's pause button: uploads, or what the open page says it controls (Free storage). */
+function paintPause(s: Status | null = status()): void {
   const pause = $("#btn-pause");
-  const label = s.paused ? "Resume uploads" : "Pause uploads";
-  if (pause.title !== label) {
+  const ctl = pauseControl();
+  const paused = ctl ? ctl.paused : !!s?.paused;
+  const label = ctl ? ctl.label : paused ? "Resume uploads" : "Pause uploads";
+  if (pause.title !== label || pause.dataset.paused !== String(paused)) {
     pause.title = label;
+    pause.dataset.paused = String(paused);
     pause.setAttribute("aria-label", label);
-    pause.innerHTML = icon(s.paused ? "play" : "pause", "size-4 swap-in");
-    pause.classList.toggle("primary", s.paused);
+    pause.innerHTML = icon(paused ? "play" : "pause", "size-4 swap-in");
+    pause.classList.toggle("primary", paused);
   }
 }
 
@@ -470,9 +488,15 @@ function boot(): void {
     const btn = $<HTMLButtonElement>("#btn-pause");
     btn.disabled = true;
     try {
-      await post("pause");
-      toast(status()?.paused ? "Uploads resumed" : "Uploads paused", "good");
+      const ctl = pauseControl();
+      if (ctl) toast(await ctl.toggle(), "good");
+      else {
+        await post("pause");
+        toast(status()?.paused ? "Uploads resumed" : "Uploads paused", "good");
+      }
       await refresh();
+    } catch (e) {
+      toast((e as Error).message || "Couldn't reach the app", "bad");
     } finally {
       btn.disabled = false;
     }
@@ -488,6 +512,7 @@ function boot(): void {
     offline.classList.toggle("hidden", document.documentElement.dataset.offline !== "1"),
   ).observe(document.documentElement, { attributes: true, attributeFilter: ["data-offline"] });
   onStatus(updateShell);
+  onPauseControl(() => paintPause());
   onStatus(askUndated);
   onMode((live) => $("#live").classList.toggle("hidden", !live));
   route();

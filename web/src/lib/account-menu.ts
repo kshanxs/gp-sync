@@ -84,3 +84,39 @@ export function wireAccountMenu(id: string, onPick: (account: string) => void): 
     if (item.getAttribute("aria-checked") !== "true") onPick(item.dataset.account ?? "");
   });
 }
+
+const lastPick: Record<string, string> = {};
+
+/** The account a page opens on: the one in the address, else the one last picked on that page,
+ * else one with work under way (`busy`, most active first), else the main account. Coming back
+ * to a page so shows the account that is working, not always the main one. */
+export function openingAccount(page: string, args: string[] | undefined, busy: string[] = []): string {
+  const accs = status()?.accounts ?? [];
+  const want = decodeURIComponent(args?.[0] ?? "");
+  if (accs.includes(want)) return want;
+  const last = lastPick[page];
+  if (last && accs.includes(last)) return last;
+  return busy.find((a) => accs.includes(a)) ?? accs[0] ?? "";
+}
+
+/** Remember the page's account (for coming back), and put it in the address without a reload. */
+export function rememberAccount(page: string, account: string, rest = ""): void {
+  if (!account) return;
+  lastPick[page] = account;
+  const hash = `#/${page}/${encodeURIComponent(account)}${rest ? `/${rest}` : ""}`;
+  if (location.hash !== hash) history.replaceState(null, "", hash);
+}
+
+/** Accounts freeing storage right now, most items under way first (paused ones left out). */
+export function freeingAccounts(): string[] {
+  const r = status()?.reclaim ?? {};
+  return Object.entries(r)
+    .filter(([, v]) => v.queued && !v.paused)
+    .sort((a, b) => b[1].working - a[1].working)
+    .map(([a]) => a);
+}
+
+/** Accounts with a job of this kind running now (status.jobs). */
+export function busyAccounts(kind: string): string[] {
+  return [...new Set((status()?.jobs ?? []).filter((j) => j.kind === kind).map((j) => j.account))];
+}

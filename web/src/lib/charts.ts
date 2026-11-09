@@ -459,6 +459,8 @@ export interface Slice {
   value: number;
   color: string;
   tip: string;
+  /** Where clicking the slice goes (the page listing its files), if anywhere. */
+  href?: string;
 }
 
 /** Donut for a part-to-whole split: a 2px gap between slices, hover shows the slice. The middle
@@ -474,7 +476,10 @@ export function donut(slices: Slice[], center = "", size = 176, thick = 22): str
         .filter((s) => s.value > 0)
         .map((s) => {
           const len = Math.max(1.5, (s.value / total) * c - gap);
-          const arc = `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${thick}" stroke-dasharray="${len} ${c}" stroke-dashoffset="${-at}" transform="rotate(-90 ${size / 2} ${size / 2})" class="donut-arc" data-tip="${esc(s.tip)}"/>`;
+          const circle = `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${thick}" stroke-dasharray="${len} ${c}" stroke-dashoffset="${-at}" transform="rotate(-90 ${size / 2} ${size / 2})" class="donut-arc" data-tip="${esc(s.tip)}"/>`;
+          const arc = s.href
+            ? `<a href="${esc(s.href)}" class="donut-link" aria-label="${esc(s.label)}">${circle}</a>`
+            : circle;
           at += (s.value / total) * c;
           return arc;
         })

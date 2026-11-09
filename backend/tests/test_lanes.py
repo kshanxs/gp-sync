@@ -66,7 +66,10 @@ def test_status_lists_background_work_per_account():
     sync.reclaim_state.clear()
     sync.copy_state.clear()
     sync._refreshing.add("c@x.com")
-    sync.reclaim_state["a@x.com"]["current"] = {"key": "K", "step": "deleting", "done": 0, "total": 9, "name": "a.jpg"}
+    # Free storage works on several items at once: each has its own progress.
+    sync.reclaim_state["a@x.com"]["jobs"]["K"] = {
+        "current": {"key": "K", "step": "deleting", "done": 0, "total": 9, "name": "a.jpg"}
+    }
     sync.copy_state[("a@x.com", "b@x.com")]["current"] = {"key": "K2", "step": "uploading", "done": 3, "total": 9,
                                                          "name": "b.mp4"}  # fmt: skip
     jobs = sync.background_jobs()

@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.5.3
+
+- Fixed: Free storage said "Didn't work: the download is not exactly Google's original" for some
+  videos. Google serves a copy it changed slightly (same size, an edited date inside) and lists
+  that copy's checksum next to the original's. A download is now accepted when it matches a
+  checksum Google gives for that item, and is uploaded again with its own checksum. Items that
+  failed this way are tried again once.
+- Fixed: items freed or copied between accounts got "{}" as their caption in Google Photos (the
+  library list shows "no caption" that way). It is never copied again, and the "{}" is cleared
+  once from items already moved.
+- Free storage moves several items at once (4 by default, up to 16, per account), each still
+  downloaded, checked, deleted in Google, uploaded again and confirmed, step by step.
+- Free storage shows every account's progress at the top and opens on the account that is
+  working, so coming back to the page no longer shows an empty main account. Items under way are
+  listed first, with a Working now list. Fix dates and Copy accounts open the same way.
+- The header's pause button pauses freeing on the Free storage page (uploads everywhere else).
+- Free storage options: ask before freeing (or not, also from the dialog), keep the downloaded
+  copies, items at once, and an optional "Freed by GP Sync" album.
+- Freed page (click "Freed by GP Sync"): freed total, photos and videos, time taken, freed per
+  day, and every freed item with a link to check it in Google Photos; kept copies play here.
+- Overview: the donut slices, their legends and the stat tiles open the matching page (a folder,
+  photos or videos only, Network, Activity, History, Health).
+- Free storage lists only photos or only videos from the server, so those tabs fill up, as a
+  thumbnail grid like Library, with "How it works" at the bottom.
+- Items already gone from Google are skipped instead of failing; the data folder is created when
+  missing; docs/PROMPTS.md explains running without Docker.
+
 ## 1.5.2
 
 Updated after all tests passed: lucide 1.67.0 -> 1.70.0, @tailwindcss/vite 4.3.4 -> 4.3.5, tailwindcss 4.3.4 -> 4.3.5, vite-plus 1.4.0 -> 1.5.0.

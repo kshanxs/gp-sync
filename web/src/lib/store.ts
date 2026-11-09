@@ -115,3 +115,28 @@ export function startPolling(): void {
     }
   });
 }
+
+/** What the header's pause button controls on the open page, when not uploads (Free storage
+ * pauses freeing there). Pages set it on mount and clear it on unmount. */
+export interface PauseControl {
+  paused: boolean;
+  /** "Pause freeing storage", "Resume freeing storage"… */
+  label: string;
+  /** Flips it; resolves with the toast to show. */
+  toggle: () => Promise<string>;
+}
+let pauseCtl: PauseControl | null = null;
+const pauseListeners = new Set<() => void>();
+
+export function setPauseControl(c: PauseControl | null): void {
+  pauseCtl = c;
+  pauseListeners.forEach((fn) => fn());
+}
+
+export function pauseControl(): PauseControl | null {
+  return pauseCtl;
+}
+
+export function onPauseControl(fn: () => void): void {
+  pauseListeners.add(fn);
+}

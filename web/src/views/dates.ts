@@ -9,7 +9,13 @@ import { $, animateChange, esc, html, toast } from "../lib/dom";
 import { ago, fileName, folderOf, num, pct } from "../lib/format";
 import { icon } from "../lib/icons";
 import { status } from "../lib/store";
-import { accountMenu, wireAccountMenu } from "../lib/account-menu";
+import {
+  accountMenu,
+  busyAccounts,
+  openingAccount,
+  rememberAccount,
+  wireAccountMenu,
+} from "../lib/account-menu";
 import { badge, openAttrs, thumb, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
@@ -355,17 +361,16 @@ function onClick(e: Event): void {
 /** Another account chosen in the menu, or opened from a link (#/dates/<account>). */
 function pickAccount(next: string): void {
   account = next;
+  rememberAccount("dates", account);
   picked.clear();
   report = null;
   html($("#dt-body"), '<div class="card skeleton h-72"></div>');
   void load();
 }
 
-/** The account named in the address, if it is connected. */
+/** The account named in the address, else the one picked last, else one fixing dates right now. */
 function linkedAccount(args: string[] | undefined): string {
-  const want = decodeURIComponent(args?.[0] ?? "");
-  const accs = status()?.accounts ?? [];
-  return accs.includes(want) ? want : (accs[0] ?? "");
+  return openingAccount("dates", args, busyAccounts("dates"));
 }
 
 const dates: View = {

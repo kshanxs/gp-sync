@@ -81,6 +81,8 @@ export interface Status {
   copies_pending?: number;
   /** Background work right now, per account (and copy pair). */
   jobs?: Job[];
+  /** Free storage per account: items waiting or under way, items freed, and whether it is paused. */
+  reclaim?: Record<string, ReclaimSummary>;
   /** Files with no date of their own, and fixes waiting for the user to delete the item in Google. */
   dates?: { undated: number; waiting: number };
   /** The user has seen the "album for files without a date" choice. */
@@ -258,6 +260,8 @@ export interface Settings {
   priority?: string[];
   /** Photos and videos with no date of their own go into this album. */
   undated: { album: boolean; name: string; asked: boolean };
+  /** Free storage choices. */
+  reclaim?: ReclaimPrefs;
   /** What to do in Google with items saved from apps (Sources page). */
   sources?: SourceSettings;
   /** Copies between accounts are paused (read only: change it with copy/pause). */
@@ -476,8 +480,68 @@ export interface StorageItem {
   error?: string;
   updated?: number;
 }
+export interface ReclaimSummary {
+  queued: number;
+  working: number;
+  done: number;
+  freed: number;
+  failed: number;
+  paused: boolean;
+}
+export interface ReclaimProgress {
+  key: string;
+  name?: string;
+  step: "downloading" | "deleting" | "uploading";
+  done: number;
+  total: number;
+}
+/** Free storage choices (Settings: reclaim). */
+export interface ReclaimPrefs {
+  /** Ask before freeing; off: start at once with the choices below. */
+  confirm: boolean;
+  /** Keep the downloaded copies (Downloads page). */
+  keep: boolean;
+  /** Items moved at once per account. */
+  workers: number;
+  /** Add each freed item to an album in Google. */
+  album: boolean;
+  album_name: string;
+}
+export interface FreedItem {
+  key: string;
+  old_key: string;
+  name: string;
+  kind: "photo" | "video";
+  bytes: number;
+  size: number;
+  taken: number;
+  finished: number | null;
+  seconds: number | null;
+  /** Downloads id of the copy kept on this server, if kept. */
+  download: number | null;
+  google_url: string;
+}
+export interface FreedReport {
+  account: string;
+  count: number;
+  bytes: number;
+  kinds: Record<"photo" | "video", { count: number; bytes: number }>;
+  /** Total time from download to Google's confirmation, over the `timed` items that have it. */
+  seconds: number;
+  timed: number;
+  first: number | null;
+  last: number | null;
+  days: { day: string; count: number; bytes: number }[];
+  items: FreedItem[];
+}
 export interface StorageReport {
   account: string;
+  /** Every item being worked on (several at once). */
+  working?: ReclaimProgress[];
+  paused?: boolean;
+  prefs?: ReclaimPrefs;
+  /** Every account's Free storage, for the account strip. */
+  summary?: Record<string, ReclaimSummary>;
   listed: boolean;
   refreshed: number | null;
   refreshing: boolean;

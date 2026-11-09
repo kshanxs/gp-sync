@@ -405,3 +405,145 @@ def test_an_item_in_albums_is_counted_once(library):
     assert sync.reclaim_queue_all(ACC, "all")["queued"] == 3
     queued = {k for (k,) in sync.q("SELECT media_key FROM reclaim")}
     assert "LIB" in queued and "ALB1" not in queued and "ALB2" not in queued
+
+
+def test_an_item_gone_from_google_is_skipped_not_failed(library):
+    import requests
+
+    def gone(key):
+        r = requests.Response()
+        r.status_code = 404
+        raise requests.HTTPError("404 Client Error: Not Found", response=r)
+
+    sync.q("DELETE FROM reclaim")
+
+    class Client:
+        class api:
+            get_download_urls = staticmethod(gone)
+            bearer_token = "t"
+            user_agent = "ua"
+
+    sync.reclaim_queue(ACC, ["BIG"])
+    assert step(Client())  # did work (handled the 404), no crash
+    # The item is dropped from the queue, not left as a failure.
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'") == []
+
+
+def test_filtering_by_kind_fills_the_list(library):
+    # A video, plus the fixture's two photos (BIG, SMALL).
+    with Storage(library) as st:
+        st.update([item("CLIP", data=b"a clip", type=2)])
+    photos = sync.storage_report(ACC, kind="photo")
+    videos = sync.storage_report(ACC, kind="video")
+    assert sorted(i["key"] for i in photos["items"]) == ["BIG", "SMALL"]
+    assert [i["key"] for i in videos["items"]] == ["CLIP"]
+    # Totals stay across all kinds, whichever filter is on.
+    for r in (photos, videos):
+        assert r["counted"] == 3
+        assert r["kinds"]["photo"]["count"] == 2 and r["kinds"]["video"]["count"] == 1
+
+
+def test_googles_edited_copy_is_accepted_and_replaced_with_its_own_checksum(library, monkeypatch):
+    # Some videos download as a copy Google changed (same size, another SHA-1). Google lists that
+    # copy's checksum next to the dedup key; it is accepted, and the re-upload uses its checksum.
+    edited = b"google's edited copy" * 1000
+    client = FakeClient(library, {b64(DATA)})
+    digests = []
+    upload = client._upload_file
+
+    def record(path, digest, *a, **k):
+        digests.append(digest)
+        return upload(path, digest, *a, **k)
+
+    client._upload_file = record
+    client.api.get_download_urls = lambda key: {
+        "1": {
+            "2": {"13": {"1": hashlib.sha1(DATA).digest(), "2": hashlib.sha1(edited).digest()}},
+            "5": {"3": {"5": f"https://video-downloads.googleusercontent.com/{key}"}},
+        }
+    }
+    monkeypatch.setattr("requests.get", lambda url, **kw: FakeResponse(edited))
+    sync.reclaim_queue(ACC, ["BIG"])
+    step(client)
+    state, local_hash = sync.q("SELECT state, local_hash FROM reclaim WHERE media_key='BIG'")[0]
+    assert state == "downloaded" and local_hash == b64(edited)
+    step(client)
+    assert ("trash", [b64(DATA)]) in client.api.calls  # Google's item goes by its dedup key
+    assert digests == [hashlib.sha1(edited).digest()]  # the file here goes up with its own checksum
+    assert ("caption", b64(edited), "Goa") in client.api.calls  # details land on the new item
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "checking"
+
+
+def test_a_download_matching_no_checksum_google_lists_is_still_refused(library, monkeypatch):
+    client = FakeClient(library, set())
+    client.api.get_download_urls = lambda key: {
+        "1": {
+            "2": {"13": {"1": hashlib.sha1(b"small").digest(), "2": hashlib.sha1(b"other").digest()}},
+            "5": {"2": {"6": f"https://video-downloads.googleusercontent.com/{key}"}},
+        }
+    }
+    sync.reclaim_queue(ACC, ["SMALL"])  # the fixture serves "tampered" bytes for it
+    step(client)
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='SMALL'")[0][0] == "failed"
+
+
+def test_several_items_move_at_once(library, monkeypatch):
+    monkeypatch.setattr("requests.get", lambda url, **kw: FakeResponse(b"small" if "SMALL" in url else DATA))
+    sync.update_settings({"reclaim": {"workers": 2}})
+    try:
+        sync.reclaim_queue(ACC, ["BIG", "SMALL"])
+        step(FakeClient(library, {b64(DATA), b64(b"small")}))
+        assert sorted(s for (s,) in sync.q("SELECT state FROM reclaim")) == ["downloaded", "downloaded"]
+    finally:
+        sync.update_settings({"reclaim": {"workers": 4}})
+
+
+def test_workers_setting_is_kept_in_range():
+    assert sync.update_settings({"reclaim": {"workers": 99}})["reclaim"]["workers"] == sync.RECLAIM_MAX_WORKERS
+    assert sync.update_settings({"reclaim": {"workers": 0}})["reclaim"]["workers"] == 1
+    sync.update_settings({"reclaim": {"workers": 4}})
+
+
+def test_paused_account_starts_nothing(library):
+    sync.reclaim_queue(ACC, ["BIG"])
+    sync.meta_set(f"reclaim_paused:{ACC}", "1")
+    try:
+        assert not step(FakeClient(library, {b64(DATA)}))
+        assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "queued"
+        assert sync.storage_report(ACC)["paused"] and sync.reclaim_summary()[ACC]["paused"]
+    finally:
+        sync.meta_set(f"reclaim_paused:{ACC}", "0")
+
+
+def test_no_caption_is_not_copied_as_braces(library):
+    # gpmc lists an item without a caption as "{}": it must never become a caption in Google.
+    with Storage(library) as st:
+        st.update([item("BIG", is_favorite=True, caption="{}")])
+    client = FakeClient(library, {b64(DATA)})
+    sync.reclaim_queue(ACC, ["BIG"])
+    assert sync.q("SELECT caption FROM reclaim WHERE media_key='BIG'")[0][0] == ""
+    step(client)
+    step(client)
+    assert not [c for c in client.api.calls if c[0] == "caption"]
+
+
+def test_braces_set_by_older_versions_are_cleared_once(library):
+    sync.reclaim_queue(ACC, ["BIG"])
+    sync.q("UPDATE reclaim SET state='done', caption='{}' WHERE media_key='BIG'")
+    client = FakeClient(library, set())
+    assert sync.caption_repair_step(ACC, lambda a: client)
+    assert ("caption", b64(DATA), "") in client.api.calls
+    assert not sync.caption_repair_step(ACC, lambda a: client)  # only once
+
+
+def test_freed_report_counts_time_and_days(library):
+    client = FakeClient(library, {b64(DATA)})
+    sync.reclaim_queue(ACC, ["BIG"])
+    for _ in range(3):
+        step(client)
+    r = sync.freed_report(ACC)
+    assert r["count"] == 1 and r["bytes"] == len(DATA)
+    assert r["kinds"]["photo"] == {"count": 1, "bytes": len(DATA)}
+    assert r["timed"] == 1 and r["seconds"] >= 0
+    assert len(r["days"]) == 1 and r["days"][0]["bytes"] == len(DATA)
+    assert r["items"][0]["key"] == "NEW" and r["items"][0]["old_key"] == "BIG"

@@ -11,10 +11,12 @@ export interface ConfirmOptions {
   confirm: string;
   danger?: boolean;
   checkbox?: { label: string; hint?: string; checked: boolean };
+  /** A second box, such as "Don't ask again". */
+  remember?: string;
 }
 
-/** Resolves with the checkbox state when confirmed, or null when cancelled. */
-export function confirmDialog(o: ConfirmOptions): Promise<{ checked: boolean } | null> {
+/** Resolves with the checkbox states when confirmed, or null when cancelled. */
+export function confirmDialog(o: ConfirmOptions): Promise<{ checked: boolean; remember: boolean } | null> {
   return new Promise((resolve) => {
     const box = document.createElement("div");
     box.className = "fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4";
@@ -32,15 +34,17 @@ export function confirmDialog(o: ConfirmOptions): Promise<{ checked: boolean } |
           <span><span class="block text-sm font-medium">${esc(o.checkbox.label)}</span>${o.checkbox.hint ? `<span class="block text-xs text-ink-3">${esc(o.checkbox.hint)}</span>` : ""}</span></label>`
           : ""
       }
+      ${o.remember ? `<label class="mt-3 flex cursor-pointer items-center gap-3 px-1 text-sm text-ink-2"><input type="checkbox" id="cd-remember" class="size-4 accent-[var(--accent)]">${esc(o.remember)}</label>` : ""}
       <div class="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <button class="btn" data-cd="no">Cancel</button>
         <button class="btn ${o.danger ? "danger" : "primary"}" data-cd="yes">${icon("ok")}${esc(o.confirm)}</button>
       </div></div>`;
     const done = (ok: boolean) => {
       const checked = !!box.querySelector<HTMLInputElement>("#cd-check")?.checked;
+      const remember = !!box.querySelector<HTMLInputElement>("#cd-remember")?.checked;
       box.remove();
       document.removeEventListener("keydown", onKey, true);
-      resolve(ok ? { checked } : null);
+      resolve(ok ? { checked, remember } : null);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") done(false);

@@ -118,7 +118,13 @@ const FILE_STATES: Record<string, [string, Tone, IconName]> = {
   failed: ["Failed", "bad", "error"],
 };
 
+/** Photo/video filter asked for in the address (#/folders/f/~video), used when the page opens. */
+let linkedKind = "all";
+
 function parse(args: string[]): void {
+  const last = args[args.length - 1] ?? "";
+  linkedKind = last === "~photo" || last === "~video" ? last.slice(1) : "all";
+  if (linkedKind !== "all") args = args.slice(0, -1);
   group = args[0] === "f" ? "folders" : "devices";
   path = args[0] === "f" || args[0] === "d" ? args.slice(1).map(decodeURIComponent).join("/") : "";
 }
@@ -526,7 +532,7 @@ function open(): void {
   files = null;
   shownFiles = [];
   fStatus = "all";
-  fKind = "all";
+  fKind = linkedKind;
   fDay = "";
   observer?.disconnect();
   skeleton();

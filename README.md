@@ -79,8 +79,8 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   which talks to Google Photos like the Android app. Google could change or block it at any time.
 - **The login line is a password.** It gives full access to that account's photos. Keep it only
   in GP Sync; the AI prompts tell assistants not to save it.
-- **Free storage and Fix dates delete items in Google Photos** before uploading them again, one at
-  a time and only after checking the copy here byte for byte. Quality, date, favourite, archive and
+- **Free storage and Fix dates delete items in Google Photos** before uploading them again, each
+  only after checking the copy here byte for byte against the checksum Google gives for it. Quality, date, favourite, archive and
   caption are kept. **Albums made by hand, shared links and comments are lost.** Items shared with
   you, in the Trash or in the Locked folder are never touched.
 - **Downloads need space.** Free storage downloads each item to this server first (it checks the
@@ -125,10 +125,14 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   counts. Arrival dates are inferred from filesystem timestamps, which can change.
 - **Free storage:** lists what counts against your Google storage, biggest first, photos and videos
   apart. Free single items, the 10 biggest, or everything of a kind (photos only, videos only, or
-  both). One at a time, GP Sync downloads an item, checks it is Google's original byte for byte,
-  deletes it in Google Photos (Trash included), uploads it again the free way and checks it no
-  longer counts. It stops if Google counts a re-upload, and deletes nothing in an account where
-  its own uploads count. See [Attention](#attention).
+  both). Several at once (4 by default, up to 16), GP Sync downloads an item, checks it against
+  the checksum Google gives for it, deletes it in Google Photos (Trash included), uploads it again
+  the free way and checks it no longer counts. Each step is saved, so a restart resumes safely. It
+  stops if Google counts a re-upload, and deletes nothing in an account where its own uploads
+  count. Every account's progress shows at the top; the header's pause button pauses freeing on
+  that page. **Options** set whether to ask first, keep the copies, how many at once, and an
+  optional "Freed by GP Sync" album. Click **Freed by GP Sync** for what was freed: totals, time
+  taken, per day, and each item with a link to check it in Google Photos. See [Attention](#attention).
 - **Downloads:** turn off "Delete the downloaded copy after the upload" when freeing storage, and
   the copies are kept on the server, per account, to save to your device or delete.
 - **Fix dates:** photos and videos with no date inside (Snapchat saves, screenshots) that Google
@@ -190,6 +194,8 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/copy?src=&dst=` | What one account has that another lacks, and copying progress |
 | `GET /api/storage?account=` | What counts against Google storage, biggest first, and progress of moving it |
 | `POST /api/storage/download` | Free storage: `{"account", "keys": [...]}` or `{"account", "kind": "photo"\|"video"\|"all"}`, plus `"keep": true` to keep the copies |
+| `GET /api/storage/freed?account=` | What Free storage freed: totals, time taken, per day, and each item |
+| `POST /api/storage/pause` | Pause or resume Free storage in an account: `{"account", "paused": true}` |
 | `GET /api/downloads?account=` | Copies kept after freeing storage, per account |
 | `GET /api/diagnostics?hours=24` | Everything needed to look into a problem, as one JSON file (no logins) |
 | `GET /api/duplicates` | Groups of identical files |

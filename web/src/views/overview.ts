@@ -74,11 +74,14 @@ function renderShare(): void {
   const shown = groups.length > 5 ? groups.slice(0, 4) : groups;
   const rest = groups.slice(shown.length);
   const total = groups.reduce((a, g) => a + m(g), 0);
+  const link = (g: (typeof groups)[number]) =>
+    `#/folders/${shareBy === "devices" || g.device ? "d" : "f"}/${(g.folders[0] ?? g.name).split("/").map(encodeURIComponent).join("/")}`;
   const slices: Slice[] = shown.map((g, i) => ({
     label: g.name,
     value: m(g),
     color: SLICE_COLORS[i]!,
-    tip: `${g.name}\n${fmt(m(g))} · ${pctText(m(g), total)}\n${Math.round(pct(g.synced, g.files))}% in Google Photos`,
+    tip: `${g.name}\n${fmt(m(g))} · ${pctText(m(g), total)}\n${Math.round(pct(g.synced, g.files))}% in Google Photos\nClick to open`,
+    href: link(g),
   }));
   const restValue = rest.reduce((a, g) => a + m(g), 0);
   if (rest.length)
@@ -86,10 +89,9 @@ function renderShare(): void {
       label: "Other",
       value: restValue,
       color: OTHER,
-      tip: `${rest.length} more\n${fmt(restValue)} · ${pctText(restValue, total)}`,
+      tip: `${rest.length} more\n${fmt(restValue)} · ${pctText(restValue, total)}\nClick to see all`,
+      href: shareBy === "devices" ? "#/folders" : "#/folders/f",
     });
-  const link = (g: (typeof groups)[number]) =>
-    `#/folders/${shareBy === "devices" || g.device ? "d" : "f"}/${(g.folders[0] ?? g.name).split("/").map(encodeURIComponent).join("/")}`;
   const backed = (g: (typeof groups)[number]) => {
     const p = Math.round(pct(g.synced, g.files));
     return `<span class="flex w-16 shrink-0 items-center gap-1.5 sm:w-24" title="${p}% in Google Photos"><span class="bar h-1.5 flex-1"><i style="width:${p}%"></i></span><span class="w-8 text-right text-[11px] text-ink-3 tabular-nums">${p}%</span></span>`;
@@ -102,11 +104,13 @@ function renderShare(): void {
           label: "Photos",
           value: shareMetric === "files" ? (lib.photos ?? 0) : (lib.photo_bytes ?? 0),
           color: "var(--s1)",
+          href: "#/folders/f/~photo",
         },
         {
           label: "Videos",
           value: shareMetric === "files" ? (lib.videos ?? 0) : (lib.video_bytes ?? 0),
           color: "var(--s2)",
+          href: "#/folders/f/~video",
         },
       ]
     : [];
@@ -121,17 +125,20 @@ function renderShare(): void {
         <div class="w-full min-w-0 flex-1"><div class="label mb-1">${shareBy === "devices" ? "By device" : "By folder"}</div>
           ${
             groups.length
-              ? `<ul>${shown.map((g, i) => legendRow(SLICE_COLORS[i]!, g.name, m(g), total, backed(g), link(g))).join("")}${rest.length ? legendRow(OTHER, `Other (${rest.length})`, restValue, total) : ""}</ul>`
+              ? `<ul>${shown.map((g, i) => legendRow(SLICE_COLORS[i]!, g.name, m(g), total, backed(g), link(g))).join("")}${rest.length ? legendRow(OTHER, `Other (${rest.length})`, restValue, total, "", shareBy === "devices" ? "#/folders" : "#/folders/f") : ""}</ul>`
               : `<p class="py-2 text-sm text-ink-3">${share ? (shareBy === "devices" ? "No device folders found. Try Folders." : "No folders found.") : shareError ? "Couldn't load this view." : "Loading…"}</p>`
           }</div>
       </div>
       <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
         ${donut(
-          kinds.map((k) => ({ ...k, tip: `${k.label}\n${fmt(k.value)} · ${pctText(k.value, kindTotal)}` })),
+          kinds.map((k) => ({
+            ...k,
+            tip: `${k.label}\n${fmt(k.value)} · ${pctText(k.value, kindTotal)}\nClick to open`,
+          })),
           center(kindTotal, "backed-up library"),
         )}
         <div class="w-full min-w-0 flex-1"><div class="label mb-1">Photos and videos</div>
-          <ul>${kinds.map((k) => legendRow(k.color, k.label, k.value, kindTotal)).join("")}</ul>
+          <ul>${kinds.map((k) => legendRow(k.color, k.label, k.value, kindTotal, "", k.href)).join("")}</ul>
           ${lib ? `<p class="mt-2 text-xs text-ink-3">${shareMetric === "files" ? `Videos are ${pctText(lib.videos ?? 0, lib.files)} of the files but ${pctText(lib.video_bytes ?? 0, lib.bytes)} of the space.` : `Photos take ${bytes(lib.photo_bytes)} and videos ${bytes(lib.video_bytes)}.`}</p>` : ""}
         </div>
       </div>
@@ -436,12 +443,12 @@ const overview: View = {
       </section>
 
       <section class="grid grid-cols-2 gap-4 md:grid-cols-3 lg:col-span-7 xl:col-span-8" data-card="ov-kpis">
-        ${tile({ id: "k-up", label: "Upload", value: "–", ic: "up", chart: "" })}
-        ${tile({ id: "k-down", label: "Download", value: "–", ic: "down", chart: "" })}
-        ${tile({ id: "k-today", label: "Today", value: "–", ic: "calendar", chart: "" })}
-        ${tile({ id: "k-streak", label: "Streak", value: "–", ic: "flame", chart: "" })}
-        ${tile({ id: "k-cpu", label: "App CPU", value: "–", ic: "cpu", chart: "" })}
-        ${tile({ id: "k-mem", label: "App memory", value: "–", ic: "memory", chart: "" })}
+        ${tile({ id: "k-up", label: "Upload", value: "–", ic: "up", chart: "", href: "#/network" })}
+        ${tile({ id: "k-down", label: "Download", value: "–", ic: "down", chart: "", href: "#/network" })}
+        ${tile({ id: "k-today", label: "Today", value: "–", ic: "calendar", chart: "", href: "#/activity/uploaded" })}
+        ${tile({ id: "k-streak", label: "Streak", value: "–", ic: "flame", chart: "", href: "#/history" })}
+        ${tile({ id: "k-cpu", label: "App CPU", value: "–", ic: "cpu", chart: "", href: "#/health" })}
+        ${tile({ id: "k-mem", label: "App memory", value: "–", ic: "memory", chart: "", href: "#/health" })}
       </section>
 
       <section class="card lg:col-span-12" data-card="ov-share">

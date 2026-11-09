@@ -122,13 +122,16 @@ export function tile(opts: {
   chart?: string;
   id?: string;
   tone?: Tone;
+  /** Opens this page when the tile is clicked. */
+  href?: string;
 }): string {
-  return `<div class="card metric-card lift flex min-w-0 flex-col p-4"${opts.id ? ` id="${opts.id}"` : ""}>
+  const tag = opts.href ? "a" : "div";
+  return `<${tag} class="card metric-card lift flex min-w-0 flex-col p-4${opts.href ? " tile-link" : ""}"${opts.href ? ` href="${opts.href}"` : ""}${opts.id ? ` id="${opts.id}"` : ""}>
     <div class="flex items-center gap-2.5"><span class="metric-icon grid size-9 shrink-0 place-items-center rounded-xl">${icon(opts.ic, "size-4")}</span><span class="label">${esc(opts.label)}</span></div>
     <div class="num mt-3 truncate text-xl sm:text-2xl" data-v>${opts.value}</div>
     <div class="mt-0.5 truncate text-xs text-ink-3" data-s>${opts.sub ?? ""}</div>
     ${opts.chart !== undefined ? `<div class="mt-auto pt-2" data-c>${opts.chart}</div>` : ""}
-  </div>`;
+  </${tag}>`;
 }
 
 export function etaText(s: Status): string {
