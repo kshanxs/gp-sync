@@ -10,6 +10,7 @@ import { $, esc, html, toast } from "../lib/dom";
 import { ago, bytes, date, duration, num, pct, speed } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
 import { setPauseControl, status } from "../lib/store";
+import { accountMenu, wireAccountMenu } from "../lib/account-menu";
 import { confirmDialog } from "../lib/dialog";
 import { badge, cardHead, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
@@ -115,19 +116,34 @@ function itemRow(i: CopyItem): string {
 }
 
 /** Every connected account as a card, on both sides: pick any one as "from" and any as "to". */
-function picker(side: "src" | "dst", accs: string[]): string {
-  const chosen = side === "src" ? src : dst;
+/** One side of the copy, From or To: the account (a menu to change it) and what it holds. */
+function sideCard(side: "src" | "dst"): string {
   const other = side === "src" ? dst : src;
-  return `<div class="flex flex-wrap gap-2" role="radiogroup" aria-label="Copy ${side === "src" ? "from" : "to"}">${accs
-    .map((a) => {
-      const on = a === chosen;
-      const hint = a === other ? "Picked on the other side: picking it here swaps them" : "";
-      return `<button class="flex min-w-0 max-w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm transition ${on ? "border-accent bg-accent/10" : "border-line hover:bg-panel-2"}" role="radio" aria-checked="${on}" data-side="${side}" data-acc="${esc(a)}" ${hint ? `title="${hint}"` : ""}>
-        <span class="grid size-7 shrink-0 place-items-center rounded-full ${on ? "bg-accent text-white" : "bg-panel-2 text-ink-2"} text-xs font-semibold uppercase">${esc(a.slice(0, 1))}</span>
-        <span class="min-w-0 truncate ${on ? "font-medium" : a === other ? "text-ink-3" : ""}">${esc(a)}</span>
-        ${on ? icon("check", "size-4 shrink-0 text-accent") : ""}</button>`;
-    })
-    .join("")}</div>`;
+  return `<div class="cp-side min-w-0 rounded-2xl border border-line bg-panel-2/40 p-3">
+    <div class="mb-2 flex items-center gap-2"><span class="label">${side === "src" ? "Copy from" : "Copy to"}</span></div>
+    <div id="cp-${side}-menu" class="min-w-0">${accountMenu(`cp-${side}`, side === "src" ? src : dst, (a) => (a === other ? "Picked on the other side: swaps them" : ""))}</div>
+    <div class="mt-2 truncate text-xs text-ink-3" id="cp-${side}-stat"></div>
+  </div>`;
+}
+
+/** Pick an account for one side; picking the other side's account swaps them. */
+function pickSide(side: "src" | "dst", acc: string): void {
+  if (side === "src" && acc !== src) [src, dst] = acc === dst ? [acc, src] : [acc, dst];
+  else if (side === "dst" && acc !== dst) [src, dst] = acc === src ? [dst, acc] : [src, acc];
+  else return;
+  resetPick();
+}
+
+function resetPick(): void {
+  selected.clear();
+  fromYear = "";
+  toYear = "";
+  offset = 0;
+  search = "";
+  candidates = null;
+  candidateScope = "";
+  candidateRequest++;
+  void load();
 }
 
 function selection(r: CopyReport): { count: number; bytes: number } {
@@ -226,7 +242,7 @@ function progressCard(r: CopyReport): string {
   return `<section class="card">${cardHead(
     r.paused ? "Paused" : busy ? "Copying" : "Finished",
     r.paused ? "pause" : busy ? "loader" : "ok",
-    `${r.paused ? `<button class="btn sm primary" id="cp-pause">${icon("play")}Resume</button>` : ""}${busy ? `<button class="btn sm" id="cp-stop">${icon("x")}Stop</button>` : ""}${j.failed ? `<button class="btn sm" id="cp-retry">${icon("retry")}Retry ${num(j.failed)} failed</button>` : ""}`,
+    `${r.paused ? `<span class="text-xs text-ink-3">Resume with the play button at the top</span>` : ""}${busy ? `<button class="btn sm" id="cp-stop">${icon("x")}Stop</button>` : ""}${j.failed ? `<button class="btn sm" id="cp-retry">${icon("retry")}Retry ${num(j.failed)} failed</button>` : ""}`,
   )}
     <div class="card-b space-y-3">
       <div class="flex items-center justify-between text-sm"><span>${num(done)} of ${num(total)} done</span><span class="text-ink-3 tabular-nums">${Math.floor(pct(done, total))}%</span></div>
@@ -270,25 +286,47 @@ function render(): void {
     return;
   }
   const max = status()?.max_accounts ?? 5;
-  $("#cp-bar").classList.remove("hidden");
+  const bar = $("#cp-bar");
+  bar.classList.remove("hidden");
+  // The two sides are redrawn only when the accounts change: a redraw would close an open menu.
+  const key = [src, dst, ...accs].join("|");
+  if (bar.dataset.key !== key) {
+    bar.dataset.key = key;
+    html(
+      bar,
+      `<div class="grid items-center gap-3 p-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+         ${sideCard("src")}
+         <div class="relative flex items-center justify-center md:flex-col">
+           <span class="absolute inset-x-0 top-1/2 hidden h-px bg-line md:block" aria-hidden="true"></span>
+           <button class="cp-swap btn sm relative bg-panel" id="cp-swap" title="Swap from and to">${icon("swap", "size-4 rotate-90 md:rotate-0")}Swap</button>
+         </div>
+         ${sideCard("dst")}
+       </div>
+       <div class="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 text-xs text-ink-3" id="cp-foot"></div>`,
+    );
+    wireAccountMenu("cp-src", (a) => pickSide("src", a));
+    wireAccountMenu("cp-dst", (a) => pickSide("dst", a));
+  }
+  const listed = r?.listed?.src && r.listed.dst;
   html(
-    $("#cp-bar"),
-    `<div class="grid gap-4 p-4 lg:grid-cols-[1fr_auto_1fr] lg:items-start">
-       <div class="min-w-0"><div class="label mb-2">Copy from</div>${picker("src", accs)}</div>
-       <button class="btn icon self-center justify-self-center" id="cp-swap" title="Swap from and to" aria-label="Swap from and to">${icon("refresh")}</button>
-       <div class="min-w-0"><div class="label mb-2">Copy to</div>${picker("dst", accs)}</div>
-     </div>
-     <div class="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 text-xs text-ink-3">
-       <span>${num(accs.length)} of ${num(max)} accounts connected${accs.length < max ? ` · <a class="link-btn" href="#/settings/accounts">Add an account</a>` : ""}</span>
-       <span class="ml-auto">${r?.refreshed?.src ? `Libraries read ${ago(Math.min(r.refreshed.src, r.refreshed.dst ?? r.refreshed.src))}` : ""}</span>
-       <button class="btn sm" id="cp-refresh" ${r?.refreshing ? "disabled" : ""}>${r?.refreshing ? `${icon("loader", "spin")}Reading libraries…` : `${icon("refresh")}${r?.listed?.src && r.listed.dst ? "Refresh from Google" : "Read both libraries"}`}</button>
-     </div>`,
+    $("#cp-src-stat"),
+    listed
+      ? `${num(r!.src_total)} items in the library · ${num((r!.todo.photo.count ?? 0) + (r!.todo.video.count ?? 0))} not in the other`
+      : "Library not read yet",
+  );
+  html($("#cp-dst-stat"), listed ? `Already has ${num(r!.in_dst)} of them` : "Library not read yet");
+  html(
+    $("#cp-foot"),
+    `<span>${num(accs.length)} of ${num(max)} accounts connected${accs.length < max ? ` · <a class="link-btn" href="#/settings/accounts">Add an account</a>` : ""}</span>
+     <span class="ml-auto flex items-center gap-2"><span>${r?.refreshed?.src ? `Libraries read ${ago(Math.min(r.refreshed.src, r.refreshed.dst ?? r.refreshed.src))}` : ""}</span>
+     <button class="btn sm" id="cp-refresh" ${r?.refreshing ? "disabled" : ""}>${r?.refreshing ? `${icon("loader", "spin")}Reading libraries…` : `${icon("refresh")}${listed ? "Refresh from Google" : "Read both libraries"}`}</button></span>`,
   );
   if (r && r.ready !== false) {
     // The header's pause button pauses copying here, not uploads.
     const paused = r.paused;
     setPauseControl({
       paused,
+      working: !!(r.working?.length || r.current),
       label: paused ? "Resume copying between accounts" : "Pause copying between accounts",
       toggle: async () => {
         await post("copy/pause", { src, dst, paused: !paused });
@@ -343,32 +381,9 @@ function onClick(e: Event): void {
   const b = (e.target as HTMLElement).closest<HTMLElement>("button");
   if (!b) return;
   if (b.id === "cp-refresh") void act("refresh", {}, () => "Reading both libraries from Google");
-  else if (b.dataset.side && b.dataset.acc) {
-    const acc = b.dataset.acc;
-    const side = b.dataset.side;
-    if (side === "src" && acc !== src) [src, dst] = acc === dst ? [acc, src] : [acc, dst];
-    else if (side === "dst" && acc !== dst) [src, dst] = acc === src ? [dst, acc] : [src, acc];
-    else return;
-    selected.clear();
-    fromYear = "";
-    toYear = "";
-    offset = 0;
-    search = "";
-    candidates = null;
-    candidateScope = "";
-    candidateRequest++;
-    void load();
-  } else if (b.id === "cp-swap") {
+  else if (b.id === "cp-swap") {
     [src, dst] = [dst, src];
-    selected.clear();
-    fromYear = "";
-    toYear = "";
-    offset = 0;
-    search = "";
-    candidates = null;
-    candidateScope = "";
-    candidateRequest++;
-    void load();
+    resetPick();
   } else if (b.dataset.mode) {
     mode = b.dataset.mode === "all" ? "all" : "selected";
     offset = 0;
@@ -437,8 +452,7 @@ function onClick(e: Event): void {
         toast((e as Error).message, "bad");
       }
     })();
-  } else if (b.id === "cp-pause") void act("pause", { paused: !report?.paused });
-  else if (b.id === "cp-stop") {
+  } else if (b.id === "cp-stop") {
     void confirmDialog({
       title: "Stop copying?",
       icon: "x",

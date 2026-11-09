@@ -122,6 +122,8 @@ export interface PauseControl {
   paused: boolean;
   /** "Pause freeing storage", "Resume freeing storage"… */
   label: string;
+  /** Work is running right now: the button glows. */
+  working?: boolean;
   /** Flips it; resolves with the toast to show. */
   toggle: () => Promise<string>;
 }

@@ -167,8 +167,10 @@ const library: View = {
         ]
           .map(([k, l]) => `<button data-s="${k}" aria-pressed="${k === st}">${l}</button>`)
           .join("")}</div>
-        <select class="input w-auto" id="lib-folder">${folderOptions(status())}</select>
-        <select class="input w-auto" id="lib-sort"><option value="new">Newest</option><option value="old">Oldest</option><option value="name">Name</option><option value="size">Largest</option></select>
+        <div class="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+          <select class="input w-full sm:w-auto" id="lib-folder" aria-label="Folder">${folderOptions(status())}</select>
+          <select class="input w-full sm:w-auto" id="lib-sort" aria-label="Sort"><option value="new">Newest</option><option value="old">Oldest</option><option value="name">Name</option><option value="size">Largest</option></select>
+        </div>
       </div>
     </section>
     <div id="lib-body"></div>`;

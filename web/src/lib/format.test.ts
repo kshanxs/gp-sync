@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
-import { ago, bytes, compact, duration, fileName, folderOf, hour, ms, pct, speed } from "./format";
+import { ago, bytes, compact, duration, fileName, folderOf, hour, ms, pct, remaining, speed } from "./format";
 
 describe("format", () => {
   test("bytes", () => {
@@ -12,6 +12,15 @@ describe("format", () => {
     expect(speed(125_000)).toBe("1.0 Mbps");
     expect(speed(12_500_000)).toBe("100 Mbps");
     expect(speed(0)).toBe("0 bps");
+  });
+  test("time left stays short", () => {
+    expect(remaining(20)).toBe("under a minute");
+    expect(remaining(483)).toBe("9 min");
+    expect(remaining(3600)).toBe("1 h");
+    expect(remaining(3 * 3600 + 13 * 60)).toBe("3 h 15 min");
+    expect(remaining(2 * 3600 + 58 * 60)).toBe("3 h");
+    expect(remaining(27 * 3600)).toBe("1 d 3 h");
+    expect(remaining(47.9 * 3600)).toBe("2 d");
   });
   test("duration", () => {
     expect(duration(42)).toBe("42 s");

@@ -45,6 +45,23 @@ export function duration(secs: number | null | undefined): string {
   return `${Math.floor(s / 86400)} d${s % 86400 >= 3600 ? ` ${Math.floor((s % 86400) / 3600)} h` : ""}`;
 }
 
+/** Rough time left, short enough for a card: "under a minute", "45 min", "2 h 15 min", "3 d 4 h".
+ * Minutes round up, and past an hour to 5 minutes, so the estimate doesn't flicker. */
+export function remaining(secs: number | null | undefined): string {
+  const s = Math.max(0, secs || 0);
+  if (s < 60) return "under a minute";
+  if (s < 3600) return `${Math.ceil(s / 60)} min`;
+  if (s < 86400) {
+    let h = Math.floor(s / 3600);
+    let m = Math.ceil((s % 3600) / 300) * 5;
+    if (m === 60) [h, m] = [h + 1, 0];
+    return m ? `${h} h ${m} min` : `${h} h`;
+  }
+  const d = Math.floor(s / 86400);
+  const h = Math.round((s % 86400) / 3600);
+  return h === 24 ? `${d + 1} d` : h ? `${d} d ${h} h` : `${d} d`;
+}
+
 export function ms(n: number | null | undefined): string {
   const v = n || 0;
   return v < 1000 ? `${Math.round(v)} ms` : duration(v / 1000);

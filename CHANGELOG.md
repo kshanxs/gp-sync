@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.5.5
+
+- Free storage, Time taken: the card shows the time Free storage actually ran (items moving at
+  once counted once) instead of every item's time added up, which read hours too high. A new
+  Time taken page shows running time, time per item and its median, speed, items per hour,
+  where an item's time goes (download, replace and upload, Google's check), the slowest and
+  fastest items, and running time per day.
+- Freed per day shows at least the last 14 days with dates, so one busy day is one bar, not a
+  block filling the chart.
+- Left to free: the time left comes first and stays short ("About 3 h 30 min left · 7 items"),
+  so long estimates are no longer cut off; the speed is in its tooltip.
+- The header's pause button glows with a slow light ring while work runs (uploads, freeing,
+  copies, date fixes) and stays still when paused. The header badge only shows scanning and
+  uploading; paused and idle are shown by the button.
+- The chosen option in every set of choices (Devices or Folders, Live/1 h/24 h, filters,
+  photos or videos…) is highlighted with the accent colour, so it is clear which one is on.
+- Copy accounts: two matching From and To cards with an account menu and a short summary each,
+  and a labelled Swap button between them. Paused cards and banners point to the header's
+  play button instead of showing a second Resume button (Copy accounts, Free storage, Fix dates).
+- Phones: one account picker on Free storage (the account list), the account and its action on
+  one row on Free storage and Fix dates, sets of five choices as an even 3 + 2, and Library's
+  folder and sort menus side by side.
+
 ## 1.5.4
 
 - Uploads go several at a time: 3 files at once per account by default (Settings › Sync, Files at

@@ -16,7 +16,8 @@ export function fitSegs(root: ParentNode = document): void {
       continue;
     }
     delete seg.dataset.wrap; // measure as one line
-    if (overflows(seg.scrollWidth, seg.clientWidth)) seg.dataset.wrap = "";
+    // The number of choices picks the grid (style.css): five go 3 + 2, never 2 + 2 + 1.
+    if (overflows(seg.scrollWidth, seg.clientWidth)) seg.dataset.wrap = String(seg.children.length);
   }
 }
 

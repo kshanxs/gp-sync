@@ -292,7 +292,8 @@ function updateShell(s: Status): void {
      <div class="mt-2 truncate text-xs text-ink-3" title="${esc(p.detail)}">${esc(p.detail)}</div>
      <div class="mt-3 flex flex-wrap gap-1">${syncChips(s)}</div>`,
   );
-  html($("#top-phase"), phaseBadge(s));
+  // Only while something happens: the pause button already shows paused and idle.
+  html($("#top-phase"), s.phase === "uploading" || s.phase === "scanning" ? phaseBadge(s) : "");
   syncButton(s);
   const failed = s.counts.failed;
   const warnHealth = s.login_failed.length > 0 || s.phase === "error";
@@ -328,6 +329,13 @@ function paintPause(s: Status | null = status()): void {
   const ctl = pauseControl();
   const paused = ctl ? ctl.paused : !!s?.paused;
   const label = ctl ? ctl.label : paused ? "Resume uploads" : "Pause uploads";
+  // Glows while work runs (uploads, a scan, or anything in the background); still when paused.
+  const working =
+    !paused &&
+    (ctl
+      ? !!ctl.working
+      : s?.phase === "uploading" || s?.phase === "scanning" || !!s?.uploading?.length || !!s?.jobs?.length);
+  pause.classList.toggle("is-working", working);
   if (pause.title !== label || pause.dataset.paused !== String(paused)) {
     pause.title = label;
     pause.dataset.paused = String(paused);

@@ -533,12 +533,26 @@ export interface FreedReport {
   count: number;
   bytes: number;
   kinds: Record<"photo" | "video", { count: number; bytes: number }>;
-  /** Total time from download to Google's confirmation, over the `timed` items that have it. */
+  /** Each item's own time (download to Google's confirmation), added up, over `timed` items. */
   seconds: number;
+  /** Time Free storage was actually running: items moving at once are counted once. */
+  active?: number;
   timed: number;
+  timing?: {
+    average: number;
+    median: number;
+    fastest: { seconds: number; name: string; bytes: number }[];
+    slowest: { seconds: number; name: string; bytes: number }[];
+    /** Storage freed per second of running time. */
+    rate: number;
+    per_hour: number;
+    /** Average time of each step, over `phased` items (timed from 1.5.5 on). */
+    phases: { download: number | null; upload: number | null; check: number | null };
+    phased: number;
+  };
   first: number | null;
   last: number | null;
-  days: { day: string; count: number; bytes: number }[];
+  days: { day: string; count: number; bytes: number; active?: number }[];
   items: FreedItem[];
 }
 export interface StorageReport {

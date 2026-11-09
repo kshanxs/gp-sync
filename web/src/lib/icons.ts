@@ -2,6 +2,7 @@
 import {
   Activity,
   ArrowDown,
+  ArrowLeftRight,
   ArrowUp,
   BadgeCheck,
   Bell,
@@ -82,6 +83,7 @@ import {
 const ICONS = {
   activity: Activity,
   down: ArrowDown,
+  swap: ArrowLeftRight,
   up: ArrowUp,
   verified: BadgeCheck,
   bell: Bell,

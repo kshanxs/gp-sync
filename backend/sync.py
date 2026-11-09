@@ -206,6 +206,8 @@ def db():
         ("local_hash", "TEXT"),  # the downloaded file's dedup key, when Google served its edited copy
         ("started", "REAL"),  # when the download began (Freed page: how long it took)
         ("finished", "REAL"),  # when Google confirmed the free upload
+        ("downloaded_at", "REAL"),  # when the download was checked (Time taken: where the time goes)
+        ("uploaded_at", "REAL"),  # when the free upload finished
     ):
         if col not in have:
             conn.execute(f"ALTER TABLE reclaim ADD COLUMN {col} {decl}")
@@ -3070,7 +3072,8 @@ def _reclaim_item(account, row, make_client):
             q("UPDATE reclaim SET started=COALESCE(started, ?) WHERE account=? AND media_key=?",
               (time.time(), account, key))  # fmt: skip
             path, got = _download(client, account, key, dedup, name, size, taken, track=track)
-            _set_reclaim(account, key, "downloaded", local=str(path), local_hash="" if got == dedup else got)
+            _set_reclaim(account, key, "downloaded", local=str(path), local_hash="" if got == dedup else got,
+                         downloaded_at=time.time())  # fmt: skip
             reclaim_state[account]["error"] = ""
             edited = " (Google's edited copy)" if got != dedup else ""
             log(f"Downloaded {name} from Google ({fmt_bytes(size)}){edited} to free its storage", "downloaded")
@@ -3097,7 +3100,7 @@ def _reclaim_item(account, row, make_client):
             _set_reclaim(account, key, "in_google", "Google still has it: trying again soon")
             return True
         _restore_details(client, have, fav, arch, cap)
-        _set_reclaim(account, key, "checking", new_key=result, checks=0)
+        _set_reclaim(account, key, "checking", new_key=result, checks=0, uploaded_at=time.time())
         return True
     except Paused:  # stopped mid-download: nothing changed in Google, it waits in the queue
         log(f"Paused: stopped downloading {name}; it stays queued", "pause")
@@ -3268,44 +3271,86 @@ def reclaim_summary():
     return out
 
 
+def _active_seconds(spans):
+    """Time something was running, counting overlaps once: several items move at once, so adding up
+    each item's own time would count the same minutes several times."""
+    total, end = 0.0, None
+    for start, stop in sorted(spans):
+        if end is None or start > end:
+            total += stop - start
+            end = stop
+        elif stop > end:
+            total += stop - end
+            end = stop
+    return total
+
+
 def freed_report(account, limit=1000):
-    """What Free storage freed in an account: totals, per day, and each item, newest first."""
+    """What Free storage freed in an account: totals, time, per day, and each item, newest first."""
     tz = get_settings()["tz_offset_min"] * 60
     rows = q(
-        """SELECT media_key, new_key, name, kind, quota, size, taken, started, COALESCE(finished, updated)
+        """SELECT media_key, new_key, name, kind, quota, size, taken, started, COALESCE(finished, updated),
+                  downloaded_at, uploaded_at
            FROM reclaim WHERE account=? AND state='done' ORDER BY COALESCE(finished, updated) DESC""",
         (account,),
     )
     kept = dict(q("SELECT media_key, id FROM downloads WHERE account=?", (account,)))
     kinds = {k: {"count": 0, "bytes": 0} for k in RECLAIM_TYPES}
-    days, seconds, timed = {}, 0.0, 0
+    days, spans, durations, phases = {}, [], [], {"download": [], "upload": [], "check": []}
+    day_spans = collections.defaultdict(list)
     items = []
-    for old, new, name, kind, quota, size, taken, started, finished in rows:
+    for old, new, name, kind, quota, size, taken, started, finished, got, sent in rows:
         k = kinds.get(kind) or kinds["photo"]
         k["count"] += 1
         k["bytes"] += quota or 0
         took = finished - started if started and finished and finished >= started else None
         if took is not None:
-            seconds += took
-            timed += 1
+            spans.append((started, finished))
+            durations.append((took, name, quota or 0))
+            if started < (got or 0) <= (sent or 0) <= finished:  # each step, for items timed from 1.5.5
+                phases["download"].append(got - started)
+                phases["upload"].append(sent - got)
+                phases["check"].append(finished - sent)
         if finished:
             day = time.strftime("%Y-%m-%d", time.gmtime(finished + tz))
-            d = days.setdefault(day, {"day": day, "count": 0, "bytes": 0})
+            d = days.setdefault(day, {"day": day, "count": 0, "bytes": 0, "active": 0})
             d["count"] += 1
             d["bytes"] += quota or 0
+            if took is not None:
+                day_spans[day].append((started, finished))
         if len(items) < limit:
             items.append({"key": new or old, "old_key": old, "name": name, "kind": kind, "bytes": quota or 0,
                           "size": size or 0, "taken": taken, "finished": finished, "seconds": took,
                           "download": kept.get(new or ""),
                           "google_url": f"https://photos.google.com/photo/{new}" if new else ""})  # fmt: skip
+    for day, sp in day_spans.items():
+        days[day]["active"] = _active_seconds(sp)
     total = sum(k["bytes"] for k in kinds.values())
+    active = _active_seconds(spans)
+    timed_bytes = sum(b for _, _, b in durations)
+    durations.sort()
+
+    def item(d):
+        return {"seconds": d[0], "name": d[1], "bytes": d[2]}
+
     return {
         "account": account,
         "count": len(rows),
         "bytes": total,
         "kinds": kinds,
-        "seconds": seconds,
-        "timed": timed,
+        "seconds": sum(d[0] for d in durations),  # each item's own time, added up
+        "active": active,  # time Free storage was actually running (overlaps counted once)
+        "timed": len(durations),
+        "timing": {
+            "average": sum(d[0] for d in durations) / len(durations) if durations else 0,
+            "median": durations[len(durations) // 2][0] if durations else 0,
+            "fastest": [item(d) for d in durations[:5]],
+            "slowest": [item(d) for d in durations[::-1][:5]],
+            "rate": timed_bytes / active if active else 0,  # storage freed per second of running time
+            "per_hour": len(durations) / (active / 3600) if active else 0,
+            "phases": {k: (sum(v) / len(v) if v else None) for k, v in phases.items()},
+            "phased": len(phases["download"]),
+        },
         "first": rows[-1][8] if rows else None,
         "last": rows[0][8] if rows else None,
         "days": sorted(days.values(), key=lambda d: d["day"]),

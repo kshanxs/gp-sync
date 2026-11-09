@@ -8,7 +8,7 @@ import {
   type StorageReport,
 } from "../lib/api";
 import { $, esc, html, toast } from "../lib/dom";
-import { ago, bytes, date, duration, num, pct, speed } from "../lib/format";
+import { ago, bytes, date, duration, num, pct, remaining, speed } from "../lib/format";
 import { icon } from "../lib/icons";
 import { setPauseControl, status } from "../lib/store";
 import {
@@ -32,7 +32,7 @@ let account = "";
 let report: StorageReport | null = null;
 let freed: FreedReport | null = null;
 /** The list of what counts, or the Freed page (#/storage/<account>/freed). */
-let sub: "list" | "freed" = "list";
+let sub: "list" | "freed" | "time" = "list";
 let timer = 0;
 let ticks = 0;
 let request = 0;
@@ -53,11 +53,11 @@ async function load(): Promise<void> {
   if (mine !== request) return;
   report = r;
   if (r && !account) account = r.account;
-  if (sub === "freed" && account) {
+  if (sub !== "list" && account) {
     freed = await get<FreedReport>(`storage/freed?account=${encodeURIComponent(account)}`).catch(() => freed);
     if (mine !== request) return;
   }
-  rememberAccount("storage", account, sub === "freed" ? "freed" : "");
+  rememberAccount("storage", account, sub === "list" ? "" : sub);
   render();
 }
 
@@ -166,7 +166,8 @@ function accountStrip(r: StorageReport): string {
   const accs = status()?.accounts ?? [];
   if (accs.length < 2) return "";
   const sum = r.summary ?? status()?.reclaim ?? {};
-  return `<div class="scroll-thin -mx-1 mb-4 flex gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Accounts">${accs
+  // A list on phones (one account per row, nothing cut off), columns on wider screens.
+  return `<div class="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3" role="tablist" aria-label="Accounts">${accs
     .map((a, n) => {
       const v = sum[a];
       const line = !v
@@ -180,10 +181,12 @@ function accountStrip(r: StorageReport): string {
               : "Nothing freed yet";
       const tone = v?.queued ? (v.paused ? "text-warn" : "text-accent") : "text-ink-3";
       const live = v?.queued && !v.paused;
-      return `<button type="button" role="tab" data-acc="${esc(a)}" aria-selected="${a === account}" class="acc-chip card flex min-w-[15rem] shrink-0 items-center gap-3 p-3 text-left ${a === account ? "border-accent" : ""}">
+      const on = a === account;
+      return `<button type="button" role="tab" data-acc="${esc(a)}" aria-selected="${on}" class="acc-chip card flex min-w-0 items-center gap-3 px-3 py-2.5 text-left ${on ? "border-accent" : ""}">
         ${avatar(a, "size-8")}
-        <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">${esc(a)}${n === 0 ? ' <span class="text-xs font-normal text-ink-3">Main</span>' : ""}</span>
-        <span class="flex items-center gap-1.5 truncate text-xs ${tone}">${live ? '<span class="dot live"></span>' : ""}${esc(line)}</span></span>
+        <span class="min-w-0 flex-1"><span class="flex min-w-0 items-center gap-1.5"><span class="truncate text-sm font-medium" title="${esc(a)}">${esc(a)}</span>${n === 0 ? '<span class="shrink-0 rounded-full bg-panel-2 px-1.5 text-[10px] font-medium text-ink-3">Main</span>' : ""}</span>
+        <span class="flex min-w-0 items-center gap-1.5 text-xs ${tone}">${live ? '<span class="dot live shrink-0"></span>' : ""}<span class="truncate">${esc(line)}</span></span></span>
+        ${on ? icon("check", "size-4 shrink-0 text-accent") : ""}
       </button>`;
     })
     .join("")}</div>`;
@@ -270,7 +273,7 @@ function renderList(r: StorageReport): void {
     `${accountStrip(r)}
     ${
       r.paused
-        ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Freeing storage is paused in this account</div><div class="mt-0.5 text-ink-3">${busy ? `${num(busy)} item${busy === 1 ? "" : "s"} wait. ` : ""}Downloads stop at once and wait in the queue. An item already deleted in Google finishes its upload first, so nothing is lost. The pause button at the top resumes it too.</div></div><button class="btn sm primary" id="st-resume">${icon("play")}Resume</button></section>`
+        ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Freeing storage is paused in this account</div><div class="mt-0.5 text-ink-3">${busy ? `${num(busy)} item${busy === 1 ? "" : "s"} wait. ` : ""}Downloads stop at once and wait in the queue. An item already deleted in Google finishes its upload first, so nothing is lost.</div></div><span class="flex shrink-0 items-center gap-1.5 text-xs text-ink-3">${icon("play", "size-3.5")}Resume with the play button at the top</span></section>`
         : ""
     }
     ${
@@ -288,13 +291,14 @@ function renderList(r: StorageReport): void {
         label: "Left to free",
         value: bytes(r.left?.bytes ?? 0),
         ic: "timer",
+        // Time left first, kept short so it fits; the item count and speed are in the tooltip.
         sub: !r.left?.count
           ? "Nothing queued"
           : r.paused
-            ? `${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} · paused`
+            ? `Paused · ${num(r.left.count)} item${r.left.count === 1 ? "" : "s"}`
             : r.left.rate
-              ? `${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} · about ${duration(r.left.bytes / r.left.rate)} at ${speed(r.left.rate)}`
-              : `${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} · timing the first ones`,
+              ? `<span data-tip="${num(r.left.count)} item${r.left.count === 1 ? "" : "s"} at ${speed(r.left.rate)} (the last hour's speed)">About ${remaining(r.left.bytes / r.left.rate)} left · ${num(r.left.count)} item${r.left.count === 1 ? "" : "s"}</span>`
+              : `Timing the first ones · ${num(r.left.count)} item${r.left.count === 1 ? "" : "s"}`,
       })}
     </div>
     ${workingCard(r)}
@@ -347,17 +351,19 @@ function renderFreed(): void {
     return;
   }
   const avg = f.timed ? f.seconds / f.timed : 0;
-  // One column per day from the first freed item to today (at most the last 30 days).
+  // One column per day up to today: at least the last 14 days, so a single busy day is one bar
+  // among others instead of filling the chart, and at most the last 30.
   const today = new Date();
   const span = f.first
-    ? Math.max(1, Math.min(30, Math.floor((today.getTime() / 1000 - f.first) / 86400) + 1))
-    : 1;
+    ? Math.max(14, Math.min(30, Math.floor((today.getTime() / 1000 - f.first) / 86400) + 1))
+    : 14;
   const byDay = new Map(f.days.map((d) => [d.day, d]));
   const days = Array.from({ length: span }, (_, n) => {
     const d = new Date(today);
     d.setDate(d.getDate() - (span - 1 - n));
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    return { key, label: String(d.getDate()), v: byDay.get(key) };
+    const label = d.toLocaleDateString([], { day: "numeric", month: "short" });
+    return { key, label, v: byDay.get(key) };
   });
   const items = f.items.slice(0, freedShown);
   html(
@@ -367,7 +373,7 @@ function renderFreed(): void {
       ${tile({ label: "Freed", value: bytes(f.bytes), ic: "sparkles", sub: `${num(f.count)} item${f.count === 1 ? "" : "s"} in ${esc(account)}`, tone: f.count ? "good" : "" })}
       ${tile({ label: "Photos", value: num(f.kinds.photo.count), ic: "photo", sub: bytes(f.kinds.photo.bytes) })}
       ${tile({ label: "Videos", value: num(f.kinds.video.count), ic: "video", sub: bytes(f.kinds.video.bytes) })}
-      ${tile({ label: "Time taken", value: f.timed ? duration(f.seconds) : "–", ic: "timer", sub: f.timed ? `${duration(avg)} per item on average` : "Timed from 1.5.2 on" })}
+      ${tile({ label: "Time taken", value: f.timed ? duration(f.active ?? f.seconds) : "–", ic: "timer", sub: f.timed ? `About ${duration(avg)} per item · see details` : "Timed from 1.5.2 on", href: `#/storage/${encodeURIComponent(account)}/time` })}
     </div>
     <section class="card mt-4 min-w-0 overflow-hidden">
       ${cardHead("Freed per day", "chart", f.last ? `last ${ago(f.last)}` : "")}
@@ -380,10 +386,10 @@ function renderFreed(): void {
                 tip: (_v, i) => {
                   const d = days[i]!;
                   return d.v
-                    ? `${d.key}: ${bytes(d.v.bytes)} · ${num(d.v.count)} items`
-                    : `${d.key}: nothing`;
+                    ? `${d.label}: ${bytes(d.v.bytes)} freed · ${num(d.v.count)} item${d.v.count === 1 ? "" : "s"}`
+                    : `${d.label}: nothing freed`;
                 },
-                every: days.length > 14 ? 3 : 1,
+                every: days.length > 21 ? 5 : 3, // a date every few days: they don't fit under every bar
                 height: 120,
               },
             )
@@ -424,12 +430,99 @@ function renderFreed(): void {
   );
 }
 
+/** How long freeing took in this account: running time, per item, each step, fastest and slowest. */
+function renderTime(): void {
+  const f = freed;
+  const back = `<a class="btn sm mb-4" href="#/storage/${encodeURIComponent(account)}/freed">${icon("chevron", "size-4 rotate-180")}Freed</a>`;
+  if (!f) {
+    html($("#st-body"), `${back}<div class="card skeleton h-72"></div>`);
+    return;
+  }
+  const t = f.timing;
+  if (!f.timed || !t) {
+    html(
+      $("#st-body"),
+      `${back}<div class="card empty">${icon("timer")}Items freed from 1.5.2 on are timed. Nothing timed yet in this account.</div>`,
+    );
+    return;
+  }
+  const active = f.active ?? f.seconds;
+  const together = active ? f.seconds / active : 1;
+  // Where an item's time goes, on average (items timed from 1.5.5 on).
+  const steps = [
+    { label: "Download and check", v: t.phases.download, color: "var(--s1)" },
+    { label: "Replace in Google and upload", v: t.phases.upload, color: "var(--s2)" },
+    { label: "Google confirms it is free", v: t.phases.check, color: "var(--s3)" },
+  ];
+  const stepTotal = steps.reduce((n, x) => n + (x.v ?? 0), 0);
+  const rows = (list: typeof t.slowest) =>
+    list
+      .map(
+        (i) =>
+          `<li class="flex items-center gap-3 px-4 py-2.5 text-sm"><span class="min-w-0 flex-1 truncate" title="${esc(i.name)}">${esc(i.name)}</span><span class="shrink-0 text-xs text-ink-3">${bytes(i.bytes)}</span><span class="w-20 shrink-0 text-right font-medium tabular-nums">${duration(i.seconds)}</span></li>`,
+      )
+      .join("");
+  const days = f.days.filter((d) => d.active).slice(-14);
+  html(
+    $("#st-body"),
+    `${back}
+    <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      ${tile({ label: "Running time", value: duration(active), ic: "timer", sub: `${num(f.timed)} item${f.timed === 1 ? "" : "s"}, several at once` })}
+      ${tile({ label: "Per item", value: duration(t.average), ic: "hourglass", sub: `Median ${duration(t.median)}` })}
+      ${tile({ label: "Speed", value: speed(t.rate), ic: "gauge", sub: `${bytes(t.rate * 3600)} freed per hour` })}
+      ${tile({ label: "Items per hour", value: num(Math.round(t.per_hour)), ic: "layers", sub: together > 1.05 ? `About ${together.toFixed(1)} at a time` : "One at a time" })}
+    </div>
+    <section class="card mt-4 min-w-0 overflow-hidden">
+      ${cardHead("Where the time goes", "chart", t.phased ? `average of ${num(t.phased)} item${t.phased === 1 ? "" : "s"}` : "")}
+      <div class="card-b space-y-3">${
+        t.phased && stepTotal
+          ? `<div class="flex h-3 overflow-hidden rounded-full bg-panel-2">${steps
+              .map(
+                (x) =>
+                  `<span style="width:${pct(x.v ?? 0, stepTotal)}%;background:${x.color}" data-tip="${esc(x.label)}: ${duration(x.v ?? 0)}"></span>`,
+              )
+              .join("")}</div>
+          <ul class="grid gap-2 text-sm sm:grid-cols-3">${steps
+            .map(
+              (x) =>
+                `<li class="flex items-center gap-2"><span class="size-2.5 shrink-0 rounded-full" style="background:${x.color}"></span><span class="min-w-0 flex-1 text-ink-2">${x.label}</span><b class="tabular-nums">${duration(x.v ?? 0)}</b></li>`,
+            )
+            .join("")}</ul>
+          <p class="text-xs text-ink-3">Google lists a new upload about a minute after it arrives, so the last step is mostly waiting for that check.</p>`
+          : `<p class="text-sm text-ink-3">Each step is timed from 1.5.5 on: the next items freed show the split here.</p>`
+      }</div>
+    </section>
+    <div class="mt-4 grid gap-4 lg:grid-cols-2">
+      <section class="card min-w-0 overflow-hidden">${cardHead("Slowest", "hourglass")}<ul class="divide-y divide-line">${rows(t.slowest)}</ul></section>
+      <section class="card min-w-0 overflow-hidden">${cardHead("Fastest", "zap")}<ul class="divide-y divide-line">${rows(t.fastest)}</ul></section>
+    </div>
+    ${
+      days.length
+        ? `<section class="card mt-4 min-w-0 overflow-hidden">${cardHead("Running time per day", "calendar")}<ul class="divide-y divide-line">${days
+            .reverse()
+            .map((d) => {
+              const label = new Date(`${d.day}T12:00:00`).toLocaleDateString([], {
+                weekday: "short",
+                day: "numeric",
+                month: "short",
+              });
+              return `<li class="flex items-center gap-3 px-4 py-2.5 text-sm"><span class="min-w-0 flex-1">${label}</span><span class="text-xs text-ink-3">${num(d.count)} item${d.count === 1 ? "" : "s"} · ${bytes(d.bytes)}</span><span class="w-20 shrink-0 text-right font-medium tabular-nums">${duration(d.active ?? 0)}</span></li>`;
+            })
+            .join("")}</ul></section>`
+        : ""
+    }
+    <p class="mt-4 px-1 text-xs text-ink-3">Running time counts the minutes Free storage was working, once, even when several items moved at the same time. Adding up every item's own time gives ${duration(f.seconds)}.</p>`,
+  );
+}
+
 function render(): void {
   const r = report;
   const accs = status()?.accounts ?? [];
   // Redrawn only when it changes: a redraw would close the menu while it is open.
   const accKey = [account, ...accs, ...(status()?.login_failed ?? [])].join("|");
   const accBox = $("#st-acc");
+  // With several accounts the list below picks the account: no second picker up here.
+  accBox.classList.toggle("hidden", accs.length > 1);
   if (accBox.dataset.key !== accKey) {
     accBox.dataset.key = accKey;
     html(accBox, accountMenu("st-account", account));
@@ -440,6 +533,7 @@ function render(): void {
     const paused = !!r.paused;
     setPauseControl({
       paused,
+      working: !!r.working?.length,
       label: paused ? `Resume freeing storage in ${account}` : `Pause freeing storage in ${account}`,
       toggle: async () => {
         await post("storage/pause", { account, paused: !paused });
@@ -460,13 +554,17 @@ function render(): void {
   html(
     $("#st-refresh"),
     r.refreshing
-      ? `${icon("loader", "spin")}Reading your library…`
-      : `${icon("refresh")}${r.listed ? "Refresh from Google" : "Read my library"}`,
+      ? `${icon("loader", "spin")}<span class="page-bar-label">Reading your library…</span>`
+      : `${icon("refresh")}<span class="page-bar-label">${r.listed ? "Refresh from Google" : "Read my library"}</span>`,
   );
   ($("#st-refresh") as HTMLButtonElement).disabled = r.refreshing;
   html($("#st-when"), r.refreshed ? `Updated ${ago(r.refreshed)}` : "");
   if (sub === "freed") {
     renderFreed();
+    return;
+  }
+  if (sub === "time") {
+    renderTime();
     return;
   }
   if (!r.listed) {
@@ -545,8 +643,7 @@ function onClick(e: Event): void {
   if (b.id === "st-refresh") void act("refresh", {}, "Reading your library from Google");
   else if (b.dataset.acc) {
     if (b.dataset.acc !== account) pickAccount(b.dataset.acc);
-  } else if (b.id === "st-resume") void act("pause", { paused: false }, "Freeing storage resumed");
-  else if (b.id.startsWith("st-opt-")) toggleOption(b);
+  } else if (b.id.startsWith("st-opt-")) toggleOption(b);
   else if (b.id === "st-unblock") {
     if (confirm("Google counted a re-upload against storage last time. Try again anyway?"))
       void act("check", { unblock: true });
@@ -592,12 +689,12 @@ function pickAccount(next: string): void {
   account = next;
   picked.clear();
   freed = null;
-  rememberAccount("storage", account, sub === "freed" ? "freed" : "");
+  rememberAccount("storage", account, sub === "list" ? "" : sub);
   void load();
 }
 
 function subOf(args: string[] | undefined): typeof sub {
-  return args?.[1] === "freed" ? "freed" : "list";
+  return args?.[1] === "freed" || args?.[1] === "time" ? args[1] : "list";
 }
 
 const storage: View = {
@@ -610,10 +707,10 @@ const storage: View = {
     freedShown = 60;
     freed = null;
     el.innerHTML = `
-    <section class="card mb-4 flex flex-wrap items-center gap-2 p-3">
-      <span id="st-acc" class="min-w-0"></span>
-      <span class="text-xs text-ink-3 lg:ml-auto" id="st-when"></span>
-      <button class="btn" id="st-refresh">${icon("refresh")}Refresh from Google</button>
+    <section class="page-bar card mb-4 p-3">
+      <span id="st-acc" class="page-bar-main"></span>
+      <span class="page-bar-when" id="st-when"></span>
+      <button class="btn" id="st-refresh" aria-label="Refresh from Google">${icon("refresh")}<span class="page-bar-label">Refresh from Google</span></button>
     </section>
     <div id="st-body"><div class="grid grid-cols-2 gap-4 xl:grid-cols-4">${'<div class="card skeleton h-28"></div>'.repeat(4)}</div><div class="card skeleton mt-4 h-72"></div></div>`;
     el.addEventListener("click", onClick);

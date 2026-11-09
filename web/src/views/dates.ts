@@ -192,6 +192,7 @@ function render(): void {
   const paused = !!r.paused;
   setPauseControl({
     paused,
+    working: (status()?.jobs ?? []).some((j) => j.kind === "dates" && j.account === account),
     label: paused ? `Resume fixing dates in ${account}` : `Pause fixing dates in ${account}`,
     toggle: async () => {
       await post("dates/pause", { account, paused: !paused });
@@ -204,8 +205,8 @@ function render(): void {
   html(
     $("#dt-refresh"),
     r.refreshing
-      ? `${icon("loader", "spin")}Reading your library…`
-      : `${icon("refresh")}Check dates with Google`,
+      ? `${icon("loader", "spin")}<span class="page-bar-label">Reading your library…</span>`
+      : `${icon("refresh")}<span class="page-bar-label">Check dates with Google</span>`,
   );
   ($("#dt-refresh") as HTMLButtonElement).disabled = r.refreshing;
   html(
@@ -230,7 +231,7 @@ function render(): void {
   };
   html(
     $("#dt-body"),
-    `${paused ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Fixing dates is paused in this account</div><div class="mt-0.5 text-ink-3">${r.waiting ? `${num(r.waiting)} wait. ` : ""}Nothing is deleted or uploaded again until you resume. The pause button at the top resumes it too.</div></div><button class="btn sm primary" id="dt-resume">${icon("play")}Resume</button></section>` : ""}
+    `${paused ? `<section class="card mb-4 flex flex-wrap items-center gap-3 border-warn/40 p-4">${icon("pause", "size-5 shrink-0 text-warn")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Fixing dates is paused in this account</div><div class="mt-0.5 text-ink-3">${r.waiting ? `${num(r.waiting)} wait. ` : ""}Nothing is deleted or uploaded again until you resume.</div></div><span class="flex shrink-0 items-center gap-1.5 text-xs text-ink-3">${icon("play", "size-3.5")}Resume with the play button at the top</span></section>` : ""}
     <section class="card min-w-0 overflow-hidden">
         <div class="flex flex-wrap items-center gap-3 border-b border-line p-4">
           <div class="min-w-0 flex-1 basis-64"><h2 class="font-semibold">Files without a date</h2>
@@ -322,7 +323,6 @@ function onClick(e: Event): void {
   const b = t.closest<HTMLElement>("button");
   if (!b) return;
   if (b.id === "dt-refresh") void act("refresh", {}, "Reading your library from Google");
-  else if (b.id === "dt-resume") void act("pause", { paused: false }, "Fixing dates resumed");
   else if (b.dataset.show) {
     if (b.dataset.show === show) return;
     show = b.dataset.show as DateFilter;
@@ -400,10 +400,10 @@ const dates: View = {
     shown = 60;
     editing = "";
     el.innerHTML = `
-    <section class="card mb-4 flex flex-wrap items-center gap-2 p-3">
-      <span id="dt-acc" class="min-w-0"></span>
-      <span class="text-xs text-ink-3 lg:ml-auto" id="dt-when"></span>
-      <button class="btn" id="dt-refresh">${icon("refresh")}Check dates with Google</button>
+    <section class="page-bar card mb-4 p-3">
+      <span id="dt-acc" class="page-bar-main"></span>
+      <span class="page-bar-when" id="dt-when"></span>
+      <button class="btn" id="dt-refresh" aria-label="Check dates with Google">${icon("refresh")}<span class="page-bar-label">Check dates with Google</span></button>
     </section>
     <details class="mb-4 px-1 text-sm text-ink-3">
       <summary class="cursor-pointer font-medium text-ink-2">How it works</summary>

@@ -599,3 +599,25 @@ def test_report_shows_what_is_left_and_the_speed(library):
     sync.q("UPDATE reclaim SET state='done', started=?, finished=? WHERE media_key='SMALL'", (now - 10, now))
     left = sync.storage_report(ACC)["left"]
     assert left["count"] == 1 and left["rate"] == pytest.approx(0.5)  # 5 bytes in 10 seconds
+
+
+def test_time_taken_counts_items_moving_at_once_only_once():
+    # Two items side by side for 60 s, then a gap, then one for 30 s: 90 s of running, not 150.
+    assert sync._active_seconds([(0, 60), (0, 60), (100, 130)]) == 90
+    assert sync._active_seconds([(0, 60), (30, 90)]) == 90
+    assert sync._active_seconds([]) == 0
+
+
+def test_freed_report_times_each_step(library):
+    client = FakeClient(library, {b64(DATA)})
+    sync.reclaim_queue(ACC, ["BIG"])
+    for _ in range(3):
+        step(client)
+    got, sent, started, finished = sync.q(
+        "SELECT downloaded_at, uploaded_at, started, finished FROM reclaim WHERE media_key='BIG'"
+    )[0]
+    assert started <= got <= sent <= finished
+    t = sync.freed_report(ACC)
+    assert t["active"] == pytest.approx(finished - started)
+    assert t["timing"]["phased"] == 1 and t["timing"]["phases"]["download"] is not None
+    assert t["timing"]["slowest"][0]["name"] == "BIG.jpg"
