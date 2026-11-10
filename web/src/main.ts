@@ -28,8 +28,7 @@ import activity from "./views/activity";
 import health from "./views/health";
 import copyView from "./views/copy";
 import folders from "./views/folders";
-import historyView from "./views/history";
-import insights from "./views/insights";
+import insights from "./views/insights-page";
 import library from "./views/library";
 import network from "./views/network";
 import overview from "./views/overview";
@@ -67,7 +66,6 @@ const ROUTES: Route[] = [
   { id: "sources", title: "Sources", ic: "layers", view: sources, group: "Backup" },
   { id: "snapchat", title: "Snapchat", ic: "sparkles", view: snapchat, group: "Backup" },
   { id: "folders", title: "Folders", ic: "folder", view: folders, group: "Insights" },
-  { id: "history", title: "History", ic: "calendar", view: historyView, group: "Insights" },
   { id: "insights", title: "Insights", ic: "chart", view: insights, group: "Insights" },
   { id: "network", title: "Network", ic: "wifi", view: network, group: "Insights" },
   { id: "health", title: "Health", ic: "health", view: health, group: "System" },
@@ -166,8 +164,15 @@ function shell(): string {
 let active: Route | null = null;
 let unsubscribe: (() => void) | null = null;
 
+// Pages that moved: History is a tab of Insights now.
+const MOVED: Record<string, string> = { history: "#/insights/activity" };
+
 function route(): void {
   const [id = "overview", ...rest] = location.hash.replace(/^#\/?/, "").split("/");
+  if (MOVED[id]) {
+    location.replace(MOVED[id]);
+    return;
+  }
   const r = ROUTES.find((x) => x.id === id) ?? ROUTES[0]!;
   // On the Upload page itself the header's Add files button would only lead back here.
   $("#btn-add").classList.toggle("sm:inline-flex", r.id !== "upload");

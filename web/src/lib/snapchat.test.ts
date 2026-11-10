@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { choices, matchBadge, missingNote, wrongDate } from "./snapchat";
+import { choices, matchBadge, missingNote, offset, wrongDate } from "./snapchat";
 
 describe("snapchat helpers", () => {
   it("says which memories aren't in the zips", () => {
@@ -54,5 +54,13 @@ describe("snapchat helpers", () => {
     expect(wrongDate({ taken: 1000, google: { key: "K", taken: 1100, url: "" } })).toBe(false);
     expect(wrongDate({ taken: 1000, google: { key: "K", taken: 90000, url: "" } })).toBe(true);
     expect(wrongDate({ taken: 1000, google: null })).toBe(false);
+  });
+
+  it("says how far Google's date is from Snapchat's", () => {
+    expect(offset(240)).toBe("+4 min");
+    expect(offset(4 * 86400)).toBe("+4 days");
+    expect(offset(86400)).toBe("+1 day");
+    expect(offset(-7200)).toBe("−2 h");
+    expect(offset(-2 * 365 * 86400)).toBe("−2 yr");
   });
 });

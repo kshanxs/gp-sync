@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.6.0
+
+- **Auto free storage:** a switch at the top of Free storage (also in Moving settings). On, what
+  your phones' Google Photos app backs up (iPhone, Android, new Snapchat saves too) is freed as it
+  arrives: every 15 minutes each account's library is brought up to date and new items that count
+  against storage are queued, after waiting 10 minutes so the phone has finished. Items handled
+  before are never queued again, and nothing is taken on while an account is paused or held.
+- **Free storage fixes, from the logs:**
+  - A photo the phone backed up (counted, and only found "already in Google" by GP Sync) made Free
+    storage think GP Sync's own uploads count, and stopped it for the whole account: 528 items sat
+    downloaded for up to 14 hours. Only files GP Sync uploaded count for that check now.
+  - While freeing is held, nothing more is downloaded (2,431 items were queued behind the hold).
+  - Google's library list sometimes has a structure written out as text in place of an item's
+    checksum. Asking Google about it failed every 2 minutes all day (400 Bad Request, invalid
+    base64: 282 errors from 2 photos). Broken checksums are skipped; the downloaded file's own is
+    used, and an item with none fails once, clearly.
+  - A download cut off by the network (ChunkedEncodingError) failed the item for good; it is tried
+    again now, and ones failed that way before are queued again.
+  - Items Google only serves as a changed copy say so plainly, and that they stay in Google untouched.
+  - Waiting items show why they wait instead of always "Replacing in Google next".
+- **Work under way, the same on every page:** Overview's Running now, Free storage, Copy accounts,
+  Sync and Snapchat show a summary (how many uploading, downloading, checking, waiting, and how far
+  together) and a list that scrolls in its own box, so many at once never stretch the page.
+- **Settings where you need them:** tap Moving now on Free storage, or the "at once" button on Sync,
+  Copy accounts and Snapchat, for a panel with items/files at once (Dynamic, 1 to 8) and the
+  choices that go with them. A sheet from the bottom on phones, a window on wider screens.
+- **Insights and History are one page:** Insights › Activity (the day by day record) and Patterns
+  (when things happen, uploads in detail). Old History links open Activity.
+- **Snapchat on the Overview:** a Snapchat process card (sent today, last 14 days), its memories in
+  Running now, "Sending" on the phone tab bar, and Snapchat in Insights.
+- **Snapchat page redesigned:** a progress ring and one coloured bar for the split, four tiles that
+  pick the list and start their job, one line per memory (its picture, Google's copies with a mark
+  for what happens to each, and "+4 days" for a later date), much less text.
+
 ## 1.5.19
 
 - Files at once: new **Dynamic** setting, the default (Settings › Sync, and Free storage ›

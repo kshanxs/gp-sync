@@ -340,7 +340,16 @@ DEFAULT_SETTINGS = {
     },
     # Free storage: ask before each batch, keep the downloaded copies, how many items move at once,
     # and an optional album in Google for everything it freed (off: nothing is added to the library).
-    "reclaim": {"confirm": True, "keep": False, "workers": 0, "album": False, "album_name": "Freed by GP Sync"},
+    # auto: new items that count against storage (a phone's Google Photos backup) are freed as they
+    # arrive, in every account.
+    "reclaim": {
+        "confirm": True,
+        "keep": False,
+        "workers": 0,
+        "album": False,
+        "album_name": "Freed by GP Sync",
+        "auto": False,
+    },
 }
 # A fixed number of files at once goes up to pace.MANUAL_MAX; dynamic (0) up to pace.MAX, and slows
 # down when Google asks (16 at once made Google refuse most requests).
@@ -458,6 +467,7 @@ def update_settings(changes):
     u["name"] = " ".join(str(u["name"] or "").split())[:80] or UNDATED_ALBUM
     rc = new["reclaim"]
     rc["confirm"], rc["keep"], rc["album"] = bool(rc["confirm"]), bool(rc["keep"]), bool(rc["album"])
+    rc["auto"] = bool(rc.get("auto"))
     rc["workers"] = pace.clamp(rc["workers"])
     rc["album_name"] = " ".join(str(rc["album_name"] or "").split())[:80] or "Freed by GP Sync"
     pr = new.get("priority") or []
@@ -1108,7 +1118,7 @@ def history(days=365, tz_offset_min=0):
     }
 
 
-PROCESSES = ("uploads", "freed", "copied", "fixed")
+PROCESSES = ("uploads", "freed", "copied", "fixed", "snapchat")
 
 
 def process_activity(days=371, tz_offset_min=0):
@@ -1162,6 +1172,9 @@ def process_activity(days=371, tz_offset_min=0):
         add("copied", when, size)
     for (when,) in sq("SELECT time FROM events WHERE kind = 'fixed' AND time >= ?", (since,)):
         add("fixed", when)
+    # Snapchat memories finished (added to the album, replaced or uploaded).
+    for when, size in q("SELECT updated, size FROM snap_items WHERE state = 'done' AND updated >= ?", (since,)):
+        add("snapchat", when, size)
     for proc in out.values():
         proc["days"] = sorted(proc["days"].values(), key=lambda d: d["day"])
     today = int((time.time() + offset) // 86400)
@@ -1873,8 +1886,8 @@ def outage_kind(e):
             return "Google rejected the login. Paste a fresh androidId= line."
         if code == 429 or code >= 500:
             return f"Google is busy or down (HTTP {code}). Will retry next scan."
-    if isinstance(e, (requests.ConnectionError, requests.Timeout)):
-        return "No connection to Google. Will retry next scan."
+    if isinstance(e, (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError)):
+        return "No connection to Google. Will retry next scan."  # a connection that broke mid-download too
     if any(s in str(e) for s in ("BadAuthentication", "NeedsBrowser")):
         return "Google rejected the login. Paste a fresh androidId= line."
     return ""
@@ -2856,6 +2869,7 @@ def status_json():
         "jobs": background_jobs(),
         "reclaim": reclaim_summary(),
         "copying": copy_summary(),
+        "snapchat": snapchat_summary(),
         # Files with no date of their own, and how many are queued to be fixed in Google.
         "dates": dict(
             zip(
@@ -2912,6 +2926,9 @@ def background_jobs():
     for src, dst in list(copy_state):
         for cur in _copy_working(src, dst):
             add("copy", cur, account=src, to=dst)
+    for account, t in list(snapchat_state.items()):
+        for w in list(t["working"].values()):
+            add("snapchat", w.get("current"), account=account)
     return jobs
 
 
@@ -3014,9 +3031,7 @@ def storage_report(account, limit=500, kind="all"):
             (account,),
         )
     }
-    ours = {
-        _b64_hash(bytes.fromhex(h)) for (h,) in q("SELECT sha1 FROM files WHERE sha1 != '' AND account=?", (account,))
-    }
+    ours = set(_own_uploads(account))
     items, counted, counted_bytes, total, ours_counted, ours_seen = [], 0, 0, 0, 0, 0
     kinds = {k: {"count": 0, "bytes": 0} for k in RECLAIM_TYPES}
     seen = set()  # dedup_keys already counted: each photo once, not once per album
@@ -3154,6 +3169,49 @@ def reclaim_queue(account, keys, keep=False):
         n += 1
     reclaim_wake.set()
     return {"queued": n}
+
+
+# Auto free storage (Settings: reclaim.auto): what a phone's Google Photos app backs up counts
+# against storage. Every AUTO_FREE_EVERY seconds each account's library list is brought up to date
+# (only what changed is read) and new items that count are queued, as Free up would: downloaded,
+# checked, deleted in Google and uploaded again free. An item is left AUTO_FREE_SETTLE seconds after
+# it reached Google first, so the phone has finished with it. Items Free storage has handled before
+# (freed, failed, cancelled) are never queued again by this.
+AUTO_FREE_EVERY = 15 * 60
+AUTO_FREE_SETTLE = 10 * 60
+_auto_free_at = {}  # account -> when its library was last looked at for new items
+
+
+def auto_free_step(account, make_client=None, now=None):
+    """Queue the new items that count against storage in this account. True if it queued any."""
+    now = time.time() if now is None else now
+    if not get_settings()["reclaim"].get("auto") or reclaim_paused(account):
+        return False
+    if now - _auto_free_at.get(account, 0) < AUTO_FREE_EVERY:
+        return False
+    _auto_free_at[account] = now
+    if reclaim_blocked(account) or _own_uploads_count(account):
+        return False  # freeing wouldn't work here now: nothing new is taken on
+    update_library((make_client or _reclaim_client)(account), account)
+    known = {k for (k,) in q("SELECT media_key FROM reclaim WHERE account=?", (account,))}
+    settled = int((now - AUTO_FREE_SETTLE) * 1000)  # Google's times are in milliseconds
+    keys = [
+        k
+        for k, first in _library_rows(
+            account,
+            f"""SELECT media_key, MIN(server_creation_timestamp) FROM remote_media WHERE {_MOVABLE}
+                GROUP BY dedup_key""",
+        )
+        or []
+        if k not in known and (first or 0) <= settled
+    ]
+    if not keys:
+        return False
+    keep = get_settings()["reclaim"].get("keep", False)
+    n = reclaim_queue(account, keys, keep)["queued"]
+    if n:
+        log(f"Auto free storage: {n} new item(s) from a phone backup queued in {account}", "info")
+    return bool(n)
 
 
 def reclaim_cancel(account, keys):
@@ -3383,7 +3441,10 @@ def _fetch(client, account, key, dedup, name, size, taken, folder, track):
                 os.utime(target, (taken, taken))  # the upload uses the file time as its date
             return target, got
     tmp.unlink(missing_ok=True)
-    raise RuntimeError("The download is not exactly Google's original, so it was not used")
+    raise RuntimeError(NOT_ORIGINAL)
+
+
+NOT_ORIGINAL = "Google only gives a changed copy of this item, not its original, so it stays in Google untouched"
 
 
 def _set_reclaim(account, key, state_, error="", **cols):
@@ -3397,6 +3458,13 @@ def _set_reclaim(account, key, state_, error="", **cols):
 
 def _digest(dedup):
     return base64.urlsafe_b64decode(dedup + "=" * (-len(dedup) % 4))
+
+
+def _is_hash(dedup):
+    """A real dedup key: a SHA-1 in URL-safe base64, 27 characters. Google's library list now and
+    then has something else in its place (a structure written out as text, "{'14': ...}"); asking
+    Google about that fails every time (400 Bad Request, or invalid base64)."""
+    return bool(dedup) and re.fullmatch(r"[A-Za-z0-9_-]{27}", dedup) is not None
 
 
 def all_paused():
@@ -3487,7 +3555,11 @@ def _reclaim_item(account, row, make_client, out=None):
                 log(f"Downloaded {name} from Google ({fmt_bytes(size)}){edited} to free its storage", "downloaded")
             return True
         have = local_hash or dedup  # the file here: Google's original, or the copy Google serves now
-        hashes = list(dict.fromkeys([dedup, have]))
+        # Only real checksums: a broken one from Google's list is skipped (the file's own is used).
+        hashes = [h for h in dict.fromkeys([dedup, have]) if _is_hash(h)]
+        if not hashes:
+            _set_reclaim(account, key, "failed", "Google gave no usable checksum for this item")
+            return True
         in_google = any(client.api.find_remote_media_by_hash(_digest(h)) for h in hashes)
         if not _local_copy_ok(local, have):
             if in_google:  # the copy here is gone or damaged: download it again
@@ -3579,6 +3651,12 @@ def reclaim_step(make_client=None, account=None, wait=True):
         if st_ == "queued":
             if now < reclaim_state[acc].get("outage_until", 0):
                 continue  # Google or the internet was down a moment ago
+            # Nothing can be replaced while GP Sync's own uploads count here: don't pile up downloads.
+            if p["ours"] is None:
+                p["ours"] = _own_uploads_count(acc)
+            if p["ours"]:
+                reclaim_state[acc]["error"] = OURS_COUNT
+                continue
         else:
             if p["blocked"] is None:
                 p["blocked"] = reclaim_blocked(acc)
@@ -3588,8 +3666,7 @@ def reclaim_step(make_client=None, account=None, wait=True):
             if p["ours"] is None:
                 p["ours"] = _own_uploads_count(acc)
             if p["ours"]:
-                why = "GP Sync's own uploads count against storage in this account: nothing deleted"
-                _set_reclaim(acc, key, st_, why)
+                _set_reclaim(acc, key, st_, OURS_COUNT)
                 continue
         row = (key, dedup, name, size, taken, st_, local, fav, arch, cap, local_hash)
         out = {}
@@ -3846,13 +3923,16 @@ def _delete_in_google(client, dedup, *also):
     """Delete one item in Google Photos for good: into Google's Trash, then out of it (an item in the
     Trash would block the new upload). Only called once the original is safe here, checked byte for
     byte. Returns True once Google no longer has it, by its dedup key or the other checksums `also`."""
-    digests = [_digest(d) for d in dict.fromkeys([dedup, *also]) if d]
+    keys = [d for d in dict.fromkeys([dedup, *also]) if _is_hash(d)]
+    if not keys:
+        raise RuntimeError("Google gave no usable checksum for this item")
+    digests = [_digest(d) for d in keys]
     try:
-        client.api.move_remote_media_to_trash([dedup])
+        client.api.move_remote_media_to_trash([keys[0]])
     except Exception as e:  # already in the Trash (deleted by hand): deleting it from there still works
         if outage_kind(e):
             raise
-    client.api.delete_remote_media_permanently([dedup])
+    client.api.delete_remote_media_permanently([keys[0]])
     for wait in (0, 1, 2, 4):  # Google can take a moment to forget it
         time.sleep(wait)
         if not any(client.api.find_remote_media_by_hash(d) for d in digests):
@@ -3860,12 +3940,23 @@ def _delete_in_google(client, dedup, *also):
     return False
 
 
+OURS_COUNT = "GP Sync's own uploads count against storage in this account: nothing deleted"
+
+
+def _own_uploads(account):
+    """Checksums (as Google's dedup keys) of the files GP Sync itself uploaded to this account. Files
+    it found already in Google (status 'exists': the phone backed them up, often counting against
+    storage) are not its uploads and say nothing about whether its uploads are free."""
+    return [
+        _b64_hash(bytes.fromhex(h))
+        for (h,) in q("SELECT sha1 FROM files WHERE sha1 != '' AND status = 'uploaded' AND account=?", (account,))
+    ]
+
+
 def _own_uploads_count(account):
     """True when GP Sync's own uploads count against storage in this account: freeing would only
     move the cost, so nothing is deleted there."""
-    ours = [
-        _b64_hash(bytes.fromhex(h)) for (h,) in q("SELECT sha1 FROM files WHERE sha1 != '' AND account=?", (account,))
-    ]
+    ours = _own_uploads(account)
     for i in range(0, len(ours), 500):
         part = ours[i : i + 500]
         rows = _library_rows(
@@ -4044,6 +4135,10 @@ def _account_step(account):
     while _take_refresh(account):
         refresh_library(account)
         busy = True
+    try:
+        busy = auto_free_step(account) or busy
+    except Exception as e:
+        print(f"Auto free storage ({account}): {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     busy = reclaim_step(account=account, wait=False) or busy
     try:
         busy = caption_repair_step(account) or busy
@@ -4073,6 +4168,11 @@ def reclaim_worker():
             q("""UPDATE reclaim SET state='queued', error='' WHERE state='failed'
                  AND error LIKE '%not exactly Google''s original%'""")
             meta_set("reclaim_requeued_edited", "1")
+        # Downloads cut off by the network were failed for good before 1.6.0: they are tried again.
+        q("""UPDATE reclaim SET state='queued', error='' WHERE state='failed' AND (error LIKE 'ChunkedEncodingError%'
+             OR error LIKE 'ConnectionError%' OR error LIKE 'ReadTimeout%')""")
+        q("UPDATE reclaim SET error=? WHERE state='failed' AND error LIKE '%not exactly Google''s original%'",
+          (NOT_ORIGINAL,))  # fmt: skip
     while True:
         reclaim_wake.clear()
         account_lanes.wake(dict.fromkeys([*(a for a, _ in accounts()), *list(_refresh_requests)]))
@@ -5313,7 +5413,8 @@ def _snap_upload(client, account, path, taken, size, track):
 def _snap_keep_google_copy(client, account, key, dedup, track):
     """Before Google's copy of a memory is deleted: keep it in Downloads, unless the same file is
     on this server already."""
-    if _local_copies(dedup) or q("SELECT 1 FROM snap_local WHERE sha1=?", (_digest(dedup).hex(),)):
+    here = _is_hash(dedup) and q("SELECT 1 FROM snap_local WHERE sha1=?", (_digest(dedup).hex(),))
+    if _local_copies(dedup) or here:
         return
     row = _library_rows(
         account, "SELECT file_name, size_bytes, utc_timestamp FROM remote_media WHERE media_key=?", (key,)
@@ -5527,6 +5628,8 @@ def _snap_drop_copy(client, account, path, c, track):
     """Delete one of a memory's copies from Google. It is kept on this server first, unless the memory
     here is certainly the same picture (or the same file is here). True once Google no longer has it."""
     name = rel(path)
+    if not _is_hash(c["dedup"]):
+        raise RuntimeError("Google gave no usable checksum for its copy: look for the memories again")
     if client.api.find_remote_media_by_hash(_digest(c["dedup"])):
         same = _snap_same_picture(c)
         if not same:
@@ -5773,6 +5876,22 @@ def snapchat_report(account="", action="", limit=120, offset=0):
         "working": working,
         "error": track["error"],
     }
+
+
+def snapchat_summary():
+    """Snapchat memories per account, for the status: how many are queued, done and paused."""
+    out = {}
+    for acc, st_, n in q(
+        """SELECT account, COALESCE(state, ''), COUNT(*) FROM snap_items
+           WHERE account IS NOT NULL AND COALESCE(action, '') != 'skip' GROUP BY account, state"""
+    ):
+        a = out.setdefault(acc, {"queued": 0, "done": 0, "failed": 0, "total": 0, "paused": False})
+        a["total"] += n
+        if st_ in ("queued", "done", "failed"):
+            a[st_] += n
+    for acc, a in out.items():
+        a["paused"] = snapchat_paused(acc)
+    return out
 
 
 def snapchat_pick_account(account):

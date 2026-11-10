@@ -100,6 +100,8 @@ export interface Status {
   reclaim?: Record<string, ReclaimSummary>;
   /** Copy accounts, all pairs: items waiting, copies Google hasn't confirmed yet, copies made, paused. */
   copying?: { queued: number; checking: number; done?: number; paused: boolean };
+  /** Snapchat memories per account (not left out). */
+  snapchat?: Record<string, { queued: number; done: number; failed: number; total: number; paused: boolean }>;
   /** Files with no date of their own, and fixes waiting for the user to delete the item in Google. */
   dates?: { undated: number; waiting: number };
   /** The user has seen the "album for files without a date" choice. */
@@ -153,7 +155,7 @@ export interface History {
   data: Day[];
 }
 /** Each process's own history (api/processes): per day, and when in the day and week it runs. */
-export type ProcessKey = "uploads" | "freed" | "copied" | "fixed";
+export type ProcessKey = "uploads" | "freed" | "copied" | "fixed" | "snapchat";
 export interface ProcessHistory {
   days: { day: string; count: number; bytes: number }[];
   /** Items finished in each hour of the day (0–23) and each weekday (Monday first). */
@@ -638,6 +640,8 @@ export interface ReclaimPrefs {
   /** Add each freed item to an album in Google. */
   album: boolean;
   album_name: string;
+  /** Free new items as they arrive (a phone's Google Photos backup), in every account. */
+  auto?: boolean;
 }
 export interface FreedItem {
   key: string;
@@ -881,7 +885,7 @@ export function previewUrl(name: string): string {
 }
 
 export interface Job {
-  kind: "library" | "storage" | "dates" | "copy";
+  kind: "library" | "storage" | "dates" | "copy" | "snapchat";
   account: string;
   /** Copies: the destination account. */
   to?: string;

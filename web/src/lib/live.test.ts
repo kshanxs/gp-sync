@@ -57,6 +57,25 @@ describe("live processes", () => {
     expect(tabLive(s)?.verb).toBe("Freeing");
   });
 
+  it("shows Snapchat memories being sent, and the phone tab says so", () => {
+    const s = status({
+      jobs: [{ kind: "snapchat", account: "a", step: "uploading", done: 1, total: 2 }],
+      snapchat: { a: { queued: 25, done: 75, failed: 0, total: 100, paused: false } },
+    });
+    const c = by(s).snapchat!;
+    expect(c.running && c.detail).toBe("1 moving · 25 waiting");
+    expect(c.pct).toBe(75);
+    expect(c.href).toBe("#/snapchat");
+    expect(tabLive(s)?.verb).toBe("Sending");
+    const idle = by(
+      status({ snapchat: { a: { queued: 0, done: 100, failed: 0, total: 100, paused: false } } }),
+    );
+    expect(idle.snapchat!.running).toBe(false);
+    expect(idle.snapchat!.detail).toBe("100 memories in Google");
+    const paused = by(status({ snapchat: { a: { queued: 5, done: 0, failed: 0, total: 5, paused: true } } }));
+    expect(paused.snapchat!.paused && paused.snapchat!.detail).toBe("Paused · 5 waiting");
+  });
+
   it("is paused only when every waiting account is paused", () => {
     const acc = (paused: boolean) => ({ queued: 2, working: 0, done: 0, freed: 0, failed: 0, paused });
     expect(by(status({ reclaim: { a: acc(true), b: acc(false) } })).freed!.paused).toBe(false);

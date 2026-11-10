@@ -95,3 +95,20 @@ export function missingNote(e: SnapExport): string {
 export function wrongDate(i: Pick<SnapItem, "google" | "taken">): boolean {
   return !!i.google?.taken && Math.abs(i.google.taken - i.taken) > 120;
 }
+
+/** "+4 days", "+12 min", "−2 h": how far Google's date is from Snapchat's. */
+export function offset(seconds: number): string {
+  const sign = seconds < 0 ? "−" : "+";
+  const a = Math.abs(seconds);
+  const [n, unit] =
+    a < 3600
+      ? [Math.round(a / 60), "min"]
+      : a < 86400
+        ? [Math.round(a / 3600), "h"]
+        : a < 86400 * 60
+          ? [Math.round(a / 86400), "days"]
+          : a < 86400 * 730
+            ? [Math.round(a / (86400 * 30.4)), "mo"]
+            : [Math.round(a / (86400 * 365)), "yr"];
+  return `${sign}${n} ${n === 1 && unit === "days" ? "day" : unit}`;
+}

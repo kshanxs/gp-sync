@@ -9,7 +9,8 @@ import { $, $$, esc, html } from "../lib/dom";
 import { bytes, clock, fileName, num, pct, speed } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
 import { NetChart, rangeButtons, type Range } from "../lib/netchart";
-import { jobLink, jobStep, jobTitle } from "../lib/jobs";
+import { jobLink, jobTitle } from "../lib/jobs";
+import { workBox, type WorkItem } from "../lib/work-panel";
 import { badge, cardHead, eventMeta, openAttrs, spaceTone, thumb, tile, type Tone } from "../lib/ui";
 import { liveProcesses, PROCESS_HREF } from "../lib/live";
 import { PROCESS, PROCESS_KEYS } from "../lib/processes";
@@ -25,52 +26,37 @@ async function loadProcs(): Promise<void> {
   if (last) renderProcs(last);
 }
 
-/** Every kind of work running now, in one list: normal sync first, then the background jobs. */
-function runningItems(s: Status): {
-  icon: IconName;
-  title: string;
-  step: string;
-  pct: number | null;
-  href: string;
-  spin: boolean;
-  paused: boolean;
-}[] {
-  const items: ReturnType<typeof runningItems> = [];
-  const up = s.uploading ?? (s.current ? [s.current] : []);
-  if (up.length && s.phase !== "paused") {
-    items.push({
-      icon: "upload",
-      title: `Uploading · ${num(up.length)} file${up.length === 1 ? "" : "s"} at once`,
-      step:
-        up.length === 1
-          ? fileName(up[0]!.name)
-          : up
-              .map((u) => fileName(u.name))
-              .slice(0, 2)
-              .join(", "),
-      pct: up.length === 1 ? pct(up[0]!.bytes_done, up[0]!.bytes_total) : null,
-      href: "#/sync",
-      spin: false,
-      paused: false,
-    });
-  }
+/** Every kind of work running now, in one list: normal sync first, then the background jobs. Each
+ * row is one file or item, labelled with its process and account, and opens its page. */
+function runningWork(s: Status): WorkItem[] {
+  const items: WorkItem[] = [];
+  if (s.phase !== "paused")
+    for (const u of s.uploading ?? (s.current ? [s.current] : []))
+      items.push({
+        key: `up:${u.name}`,
+        name: fileName(u.name),
+        step: u.step,
+        done: u.bytes_done,
+        total: u.bytes_total,
+        label: "Backup",
+        href: "#/sync",
+      });
   for (const j of s.jobs ?? []) {
-    const paused = j.kind === "storage" ? !!s.reclaim?.[j.account]?.paused : false;
+    const paused =
+      j.kind === "storage"
+        ? !!s.reclaim?.[j.account]?.paused
+        : j.kind === "snapchat"
+          ? !!s.snapchat?.[j.account]?.paused
+          : false;
     items.push({
-      icon:
-        j.kind === "library"
-          ? "refresh"
-          : j.kind === "copy"
-            ? "users"
-            : j.kind === "dates"
-              ? "clock"
-              : "cloud",
-      title: jobTitle(j),
-      step: paused ? "Paused" : jobStep(j),
-      pct: j.total ? pct(j.done ?? 0, j.total) : null,
+      key: `${j.kind}:${j.account}:${j.to ?? ""}:${j.name ?? ""}`,
+      name: (j.name ?? "").split("/").pop() || jobTitle(j),
+      step: j.kind === "library" ? "reading" : paused ? "waiting" : j.step || "working",
+      done: j.done,
+      total: j.total,
+      label: jobTitle(j),
+      note: paused ? "Paused" : undefined,
       href: jobLink(j),
-      spin: j.kind === "library",
-      paused,
     });
   }
   return items;
@@ -108,7 +94,7 @@ function controls(s: Status): void {
         ? {
             tone: "run",
             // The same count as the Running now card below: each upload batch and job.
-            title: `${num(runningItems(s).length)} running`,
+            title: `${num(runningWork(s).length)} running`,
             detail: busy.map((l) => PROCESS[l.key].label).join(", "),
           }
         : { tone: "good", title: "Nothing running right now", detail: "Work shows here as it starts" },
@@ -138,6 +124,7 @@ const PROC_COLS: Record<number, string> = {
   2: "sm:grid-cols-2",
   3: "md:grid-cols-3",
   4: "sm:grid-cols-2 xl:grid-cols-4",
+  5: "sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5",
 };
 
 /** One card per process in use: what it is doing now and what it did today, with the last 14 days. */
@@ -196,36 +183,24 @@ function renderProcs(s: Status): void {
 }
 
 function runningCount(s: Status): string {
-  const n = runningItems(s).length;
+  const n = runningWork(s).length;
   return n
     ? `<span class="badge info">${num(n)} running</span>`
     : `<span class="text-xs text-ink-3">Nothing running</span>`;
 }
 
 function runningList(s: Status): string {
-  const items = runningItems(s);
-  if (!items.length)
-    return `<div class="empty">${icon("shield")}Nothing is running. Uploads, freeing storage, copies and date fixes show here as they start.</div>`;
-  return `<ul class="divide-y divide-line">${items
-    .map(
-      (i) => `<li><a href="${i.href}" class="flex items-center gap-3 px-4 py-3 hover:bg-panel-2">
-        <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2 text-accent">${icon(i.icon, `size-4 ${i.spin ? "spin" : ""}`)}</span>
-        <span class="min-w-0 flex-1">
-          <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium">${esc(i.title)}</span>${i.paused ? badge("Paused", "warn", "pause") : ""}</span>
-          ${i.step ? `<span class="block truncate text-xs text-ink-3">${esc(i.step)}</span>` : ""}
-          ${i.pct !== null ? `<span class="bar mt-1.5 block h-1.5"><i style="width:${i.pct}%"></i></span>` : ""}
-        </span>
-        ${icon("chevron", "size-4 shrink-0 text-ink-3")}
-      </a></li>`,
-    )
-    .join("")}</ul>`;
+  return (
+    workBox(runningWork(s)) ||
+    `<div class="empty">${icon("shield")}Nothing is running. Uploads, freeing storage, copies, date fixes and Snapchat memories show here as they start.</div>`
+  );
 }
 
 // ---- customise: show, hide and reorder cards (saved in this browser)
 
 const CARDS: [string, string][] = [
   ["ov-running", "Running now"],
-  ["ov-procs", "Uploads, Free storage, Copies, Date fixes"],
+  ["ov-procs", "Uploads, Free storage, Copies, Date fixes, Snapchat"],
   ["ov-kpis", "Upload, download, CPU, memory"],
   ["ov-network", "Network"],
   ["ov-glance", "At a glance"],
@@ -470,7 +445,7 @@ const overview: View = {
         .join(""),
     );
 
-    const running = runningItems(s);
+    const running = runningWork(s);
     $("#ov-running-card").classList.toggle("is-idle", !running.length);
     html($("#ov-running"), runningList(s));
     html($("#ov-running-count"), runningCount(s));

@@ -9,13 +9,19 @@ const STEP: Record<string, string> = {
   local: "Copying from", // + the machine's name (host())
   deleting: "Replacing in Google",
   uploading: "Uploading",
+  keeping: "Saving a copy of",
+  hashing: "Checking",
 };
 
 /** "Free storage · a@x.com" or "Copy · a@x.com → b@x.com". */
 export function jobTitle(j: Job): string {
-  const what = { library: "Reading library", storage: "Free storage", dates: "Fix dates", copy: "Copy" }[
-    j.kind
-  ];
+  const what = {
+    library: "Reading library",
+    storage: "Free storage",
+    dates: "Fix dates",
+    copy: "Copy",
+    snapchat: "Snapchat",
+  }[j.kind];
   return `${what} · ${j.account}${j.kind === "copy" && j.to ? ` → ${j.to}` : ""}`;
 }
 
@@ -29,5 +35,11 @@ export function jobStep(j: Job): string {
 
 /** Where its page is. */
 export function jobLink(j: Job): string {
-  return { library: "#/storage", storage: "#/storage", dates: "#/dates", copy: "#/copy" }[j.kind];
+  return {
+    library: "#/storage",
+    storage: "#/storage",
+    dates: "#/dates",
+    copy: "#/copy",
+    snapchat: "#/snapchat",
+  }[j.kind];
 }

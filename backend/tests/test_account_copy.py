@@ -112,7 +112,7 @@ def test_wrong_download_fails_and_outage_waits(libs, monkeypatch):
     _, get = clients(libs)
     sync.copy_step(get)
     state, error = sync.q("SELECT state, error FROM copyjobs WHERE media_key='OLD'")[0]
-    assert state == "failed" and "not exactly" in error
+    assert state == "failed" and "changed copy" in error
     assert sync.copy_retry(SRC, DST) == {"queued": 1}
 
     def offline(url, **kw):

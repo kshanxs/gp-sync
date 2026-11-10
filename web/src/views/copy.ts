@@ -1,3 +1,5 @@
+import { workBox } from "../lib/work-panel";
+import { openMoveOptions, paceButton } from "../lib/pace-sheet";
 import {
   get,
   post,
@@ -264,22 +266,12 @@ function progressCard(r: CopyReport): string {
   return `<section class="card">${cardHead(
     r.paused ? "Paused" : busy ? "Copying" : "Finished",
     r.paused ? "pause" : busy ? "loader" : "ok",
-    `${busy ? `<button class="btn sm" id="cp-stop">${icon("x")}Stop</button>` : ""}${j.failed ? `<button class="btn sm" id="cp-retry">${icon("retry")}Retry ${num(j.failed)} failed</button>` : ""}`,
+    `${paceButton("move", null)}${busy ? `<button class="btn sm" id="cp-stop">${icon("x")}Stop</button>` : ""}${j.failed ? `<button class="btn sm" id="cp-retry">${icon("retry")}Retry ${num(j.failed)} failed</button>` : ""}`,
   )}
     <div class="card-b space-y-3">
       <div class="flex items-center justify-between text-sm"><span>${num(done)} of ${num(total)} done</span><span class="text-ink-3 tabular-nums">${Math.floor(pct(done, total))}%</span></div>
       <div class="bar"><i style="width:${pct(done, total)}%"></i></div>
-      ${
-        working.length
-          ? `<div class="space-y-2">${working
-              .map(
-                (cur) =>
-                  `<div class="rounded-xl bg-panel-2 p-3 text-sm"><div class="flex items-center gap-2">${icon(cur.step === "downloading" ? "download" : cur.step === "local" ? "server" : "upload", "size-4 text-ink-3")}<span class="truncate">${cur.step === "downloading" ? "Downloading" : cur.step === "local" ? `Copying from ${esc(host())}` : "Uploading"} ${esc(cur.name)}</span><span class="ml-auto shrink-0 text-xs font-semibold tabular-nums">${Math.floor(pct(cur.done, cur.total))}%</span></div>${cur.done ? `<div class="bar active mt-2"><i style="width:${pct(cur.done, cur.total)}%"></i></div>` : `<div class="bar indeterminate mt-2"><i></i></div>`}<div class="mt-1 text-right text-xs text-ink-3 tabular-nums">${bytes(cur.done)} of ${bytes(cur.total)}</div></div>`,
-              )
-              .join("")}</div>`
-          : ""
-      }
-      <div class="flex flex-wrap gap-1.5">${badge(`${num(j.copied)} copied · ${bytes(j.copied_bytes)}`, "good", "check")}${j.exists ? badge(`${num(j.exists)} already there`, "info", "verified") : ""}${j.failed ? badge(`${num(j.failed)} didn't work`, "bad", "error") : ""}${j.queued ? badge(`${num(j.queued)} waiting · ${bytes(j.queued_bytes)}`, "", "hourglass") : ""}${working.length > 1 ? badge(`${num(working.length)} at once`, "info", "layers") : ""}</div>
+      <div class="flex flex-wrap gap-1.5">${badge(`${num(j.copied)} copied · ${bytes(j.copied_bytes)}`, "good", "check")}${j.exists ? badge(`${num(j.exists)} already there`, "info", "verified") : ""}${j.failed ? badge(`${num(j.failed)} didn't work`, "bad", "error") : ""}${j.queued ? badge(`${num(j.queued)} waiting · ${bytes(j.queued_bytes)}`, "", "hourglass") : ""}</div>
       ${
         j.timed
           ? `<div class="grid grid-cols-3 gap-2 text-center">
@@ -289,8 +281,21 @@ function progressCard(r: CopyReport): string {
       </div>`
           : ""
       }
-      ${j.copied ? `<p class="text-xs text-ink-3">${num(j.verified)} of ${num(j.copied)} checked with Google: they don't count against ${esc(r.dst)}'s storage. Items at once is set on Free storage › Options.</p>` : ""}
-    </div></section>`;
+      ${j.copied ? `<p class="text-xs text-ink-3">${num(j.verified)} of ${num(j.copied)} checked with Google: they don't count against ${esc(r.dst)}'s storage.</p>` : ""}
+    </div>${
+      working.length
+        ? `<div class="border-t border-line">${workBox(
+            working.map((cur) => ({
+              key: cur.key,
+              name: cur.name ?? cur.key,
+              step: cur.step,
+              done: cur.done,
+              total: cur.total,
+              label: cur.step === "local" ? `Copying from ${host()}` : undefined,
+            })),
+          )}</div>`
+        : ""
+    }</section>`;
 }
 
 function render(): void {
@@ -444,7 +449,8 @@ function render(): void {
 function onClick(e: Event): void {
   const b = (e.target as HTMLElement).closest<HTMLElement>("button");
   if (!b) return;
-  if (b.dataset.mirror) {
+  if (b.dataset.pace === "move") void openMoveOptions();
+  else if (b.dataset.mirror) {
     const m = b.dataset.mirror;
     const label =
       m === "off"

@@ -158,7 +158,7 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   year range, from one connected Google account to another (only what the other doesn't have), in
   original quality with dates, favourites, archive and captions. Nothing is deleted in either
   account. Albums and people names don't come over: the connected login cannot list source albums.
-  Several items copy at once (Free storage › Options, Items at once); the page shows each one,
+  Several items copy at once (Items at once, in the same settings as Free storage); the page shows each one,
   the average speed and the time left, and the header's pause button pauses copying there.
 - **Keep in sync:** on Copy accounts, keep one account copied into another (this way) or both
   into each other (both ways). GP Sync compares both libraries straight away and then every hour,
@@ -190,21 +190,25 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
 - **Settings in one place:** Backup (sync, folders, Google accounts), Google Photos (albums,
   dates, sources, duplicates, tools) and App. **Google accounts → Manage** checks logins, reads
   libraries or checks dates for several accounts at once.
-- **History:** a contribution graph (like GitHub's) of photos, videos, data uploaded or network
-  traffic per day, with day details, streaks and 30-day charts.
 - **Alerts:** ntfy or Telegram messages when Google rejects a login, a file fails 5 times or a
   backup finishes, plus a weekly summary every Monday.
 - **Overview at a glance:** everything running now (uploads, freeing storage, copies, date fixes,
-  library reads) in one list at the top, then a card per process with what it is doing, what it
+  Snapchat memories, library reads) in one list at the top, then a card per process with what it is doing, what it
   did today and the last 14 days; tap one for its page. Below: live upload/download, today,
   streak, CPU and memory, health badges and recent activity.
 - **Sync:** normal backup on its own page: what uploads now (and next), backup progress of the
   whole library, and each folder's progress.
+- **Auto free storage:** turn on "Free new items automatically" on Free storage, and what your
+  phones' Google Photos app backs up is freed as it arrives (checked every 15 minutes, in every
+  account): downloaded, checked, deleted in Google and uploaded again free.
+- **Settings where you need them:** "how many at once" and the choices that go with it open in a
+  panel right on the page they affect: tap Moving now on Free storage, or the "at once" button on
+  Sync, Copy accounts and Snapchat. A sheet from the bottom on phones, a window on wider screens.
 - **Smooth live updates:** pages change only what changed (numbers, bars, badges, new rows), so
   lists don't jump, thumbnails don't reload and a chart keeps your hover.
-- **History:** each process has its own history (uploads, freeing storage, copies, date fixes, or
-  everything together): totals, active days, current and longest streak, best day, a heat map of
-  the year, a daily chart and a table per month.
+- **Insights › Activity:** each process has its own history (uploads, freeing storage, copies, date
+  fixes, Snapchat, or everything together): totals, active days, current and longest streak, best
+  day, a heat map of the year, a daily chart and a table per month.
 - **Network:** speed gauges, live traffic, Google response time, data used per day.
 - **Activity:** saved for 90 days in Turso, grouped by day, with filters, search and thumbnails.
   Each entry says what happened: uploaded, date fixed, re-uploaded free, copied, deleted in Google.
@@ -213,7 +217,7 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   from the Android gallery to the installed app). They're saved in the upload folder
   (`<year>/<month>/`), files already there are recognised, and everything is then
   backed up to Google Photos like the rest.
-- **Insights:** every process this week against last, and the chosen one's busiest hours and
+- **Insights › Patterns:** every process this week against last, and the chosen one's busiest hours and
   weekdays; for uploads, total time spent uploading, average time per photo and per video,
   average photo and video size, file types, largest and slowest uploads.
 - **App log and diagnostics:** everything the app prints is kept for 30 days in Turso, searchable,

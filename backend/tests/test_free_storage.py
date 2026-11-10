@@ -25,7 +25,7 @@ def item(key, data=DATA, quota=None, **kw):
         caption=kw.pop("caption", None),
         collection_id="", size_bytes=len(data), quota_charged_bytes=len(data) if quota is None else quota,
         origin=kw.pop("origin", "self"), content_version=1, utc_timestamp=kw.pop("utc_timestamp", 1_700_000_000_000),
-        server_creation_timestamp=0, **kw,
+        server_creation_timestamp=kw.pop("server_creation_timestamp", 0), **kw,
     )  # fmt: skip
 
 
@@ -170,8 +170,42 @@ def test_nothing_is_deleted_where_our_own_uploads_count(library):
     step(client)
     step(client)
     assert client.api.calls == [] and client.uploads == []
-    state, error = sync.q("SELECT state, error FROM reclaim WHERE media_key='BIG'")[0]
-    assert state == "downloaded" and "own uploads count" in error
+    # Nothing is even downloaded: it couldn't be replaced, so downloads would only pile up.
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "queued"
+    assert "own uploads count" in sync.reclaim_state[ACC]["error"]
+
+
+def test_a_phone_backup_found_in_google_is_not_one_of_our_uploads(library):
+    """A file the phone backed up (counted against storage) that GP Sync only found already in
+    Google ('exists') says nothing about GP Sync's own uploads: freeing goes on."""
+    with Storage(library) as st:
+        st.update([item("PHONE", data=b"phone")])  # counts against storage
+    sync.q("INSERT INTO files (path, status, account, sha1) VALUES ('x', 'exists', ?, ?)",
+           (ACC, hashlib.sha1(b"phone").hexdigest()))  # fmt: skip
+    assert not sync._own_uploads_count(ACC)
+    assert sync.storage_report(ACC)["ours"]["counted"] == 0
+    client = FakeClient(library, {b64(DATA)})
+    sync.reclaim_queue(ACC, ["BIG"])
+    step(client)
+    step(client)
+    assert client.uploads and sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "checking"
+
+
+def test_a_broken_checksum_from_google_is_skipped(library):
+    """Google's list sometimes has a structure written out as text instead of an item's checksum.
+    Asking Google about that fails every time (400, invalid base64): the downloaded file's own
+    checksum is used instead, and an item with no usable checksum fails once, clearly."""
+    client = FakeClient(library, {b64(DATA)})
+    sync.reclaim_queue(ACC, ["BIG"])
+    step(client)  # downloaded
+    sync.q(
+        "UPDATE reclaim SET dedup_key=?, local_hash=? WHERE media_key='BIG'",
+        ("{'14': 1885960308, '9': 101}", b64(DATA)),
+    )
+    step(client)
+    assert ("delete", [b64(DATA)]) in client.api.calls and client.uploads
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "checking"
+    assert not sync._is_hash("{'14': 1}") and sync._is_hash(b64(DATA))
 
 
 class StubbornApi(FakeApi):
@@ -198,7 +232,7 @@ def test_refuses_a_download_that_is_not_the_original(library):
     sync.reclaim_queue(ACC, ["SMALL"])  # the fake serves other bytes for it
     step(FakeClient(library, set()))
     state, error, local = sync.q("SELECT state, error, local FROM reclaim WHERE media_key='SMALL'")[0]
-    assert state == "failed" and "not exactly" in error and not local
+    assert state == "failed" and "changed copy" in error and not local
     assert not list((sync.RECLAIM_DIR / ACC / "SMALL").glob("*.jpg"))
 
 
@@ -744,3 +778,37 @@ def test_each_account_reports_what_still_counts(library):
 def test_an_unread_library_reports_nothing_counted(tmp_path, monkeypatch, media):
     monkeypatch.setattr(sync, "GPMC_HOME", tmp_path / "none")
     assert sync.storage_summary()[ACC]["counted"] is None
+
+
+def test_auto_free_queues_new_phone_backups_only(library, monkeypatch):
+    """Auto: new items that count against storage are queued after they settle; items Free storage
+    handled before, and new ones still settling, are left alone. Off: nothing is queued."""
+    client = FakeClient(library, {b64(DATA)})
+    client.update_cache = lambda show_progress=False: None
+    monkeypatch.setattr(sync, "_auto_free_at", {})
+    now = 1_800_000_000
+    assert not sync.auto_free_step(ACC, lambda a: client, now=now)  # off by default
+    sync.update_settings({"reclaim": {"auto": True}})
+    try:
+        sync.q("INSERT INTO reclaim (account, media_key, state) VALUES (?, 'SMALL', 'failed')", (ACC,))
+        assert sync.auto_free_step(ACC, lambda a: client, now=now)
+        assert dict(sync.q("SELECT media_key, state FROM reclaim WHERE account=?", (ACC,))) == {
+            "BIG": "queued",  # new: queued
+            "SMALL": "failed",  # handled before: left as it is
+        }
+        assert not sync.auto_free_step(ACC, lambda a: client, now=now + 60)  # waits between looks
+        with Storage(library) as st:  # a phone backup a minute ago: still settling
+            st.update([item("NEW", data=b"new", server_creation_timestamp=(now + 16 * 60 - 60) * 1000)])
+        assert not sync.auto_free_step(ACC, lambda a: client, now=now + 16 * 60)
+        sync.meta_set(f"reclaim_paused:{ACC}", "1")
+        assert not sync.auto_free_step(ACC, lambda a: client, now=now + 60 * 60)  # paused: nothing
+    finally:
+        sync.meta_set(f"reclaim_paused:{ACC}", "0")
+        sync.update_settings({"reclaim": {"auto": False}})
+
+
+def test_a_download_cut_off_by_the_network_is_tried_again():
+    """A connection that breaks mid-download is the network's fault, not the item's: it stays queued."""
+    import requests
+
+    assert "No connection" in sync.outage_kind(requests.exceptions.ChunkedEncodingError("IncompleteRead"))

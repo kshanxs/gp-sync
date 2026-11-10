@@ -14,4 +14,16 @@ describe("background jobs", () => {
     expect(jobStep({ kind: "library", account: "a" })).toBe("");
     expect(jobLink({ kind: "copy", account: "a" })).toBe("#/copy");
   });
+
+  it("shows Snapchat memories and links to their page", () => {
+    const j = {
+      kind: "snapchat" as const,
+      account: "a@x.com",
+      step: "uploading",
+      name: "Photos/Snapchat/2024/m.jpg",
+    };
+    expect(jobTitle(j)).toBe("Snapchat · a@x.com");
+    expect(jobStep(j)).toBe("Uploading m.jpg");
+    expect(jobLink(j)).toBe("#/snapchat");
+  });
 });

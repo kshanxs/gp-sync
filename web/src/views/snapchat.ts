@@ -1,12 +1,15 @@
+import { workPanel } from "../lib/work-panel";
+import { openUploadOptions, paceButton } from "../lib/pace-sheet";
 import { get, post, type SnapAction, type SnapCopy, type SnapItem, type SnapchatReport } from "../lib/api";
 import { accountChips } from "../lib/account-menu";
 import { confirmDialog } from "../lib/dialog";
 import { $, animateChange, esc, html, toast } from "../lib/dom";
-import { ago, bytes, fileName, num, pct } from "../lib/format";
+import { fileName, num, pct } from "../lib/format";
+import { ring } from "../lib/charts";
 import { icon } from "../lib/icons";
-import { choices, matchBadge, missingNote, SNAP_ACTION_LABEL, SNAP_GROUPS } from "../lib/snapchat";
+import { choices, matchBadge, missingNote, offset, SNAP_ACTION_LABEL, SNAP_GROUPS } from "../lib/snapchat";
 import { setPageStatus, setPauseControl, setRefreshControl, status } from "../lib/store";
-import { badge, openAttrs, thumb, type Tone } from "../lib/ui";
+import { openAttrs, thumb } from "../lib/ui";
 import type { View } from "./view";
 
 // Snapchat: memories from a Snapchat export (made into a folder by scripts/snapchat_export.py, with
@@ -42,53 +45,69 @@ function when(unix: number | null | undefined): string {
   });
 }
 
-function googleThumb(account: string, key: string, kind: string): string {
-  return `<img class="thumb" loading="lazy" decoding="async" alt="" data-kind="${kind}" src="api/storage/thumb?small=1&account=${encodeURIComponent(account)}&key=${encodeURIComponent(key)}">`;
+/** "Jun 4, 2026" and "11:19 PM", for a memory's line and the line under it. */
+function day(unix: number): string {
+  return new Date(unix * 1000).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+}
+function time(unix: number): string {
+  return new Date(unix * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-const ROLE: Record<SnapCopy["role"], [string, Tone]> = {
-  keep: ["Stays", "good"],
-  delete: ["Deleted from Google", "warn"],
-  leave: ["From a camera: stays", ""],
+function googleThumb(account: string, key: string, kind: string, cls = "thumb"): string {
+  return `<img class="${cls}" loading="lazy" decoding="async" alt="" data-kind="${kind}" src="api/storage/thumb?small=1&account=${encodeURIComponent(account)}&key=${encodeURIComponent(key)}">`;
+}
+
+/** Each group's colour, the same in the hero bar, the tiles and the list. */
+const COLOR: Record<SnapAction, string> = {
+  album: "var(--s1)",
+  replace: "var(--s2)",
+  upload: "var(--s3)",
+  skip: "var(--ink-3)",
 };
 
-/** One of Google's copies of a memory: its thumbnail, date and what happens to it. */
-function copyTile(c: SnapCopy, i: SnapItem, r: SnapchatReport): string {
-  const [label, tone] = c.state === "deleted" ? (["Deleted from Google", "good"] as const) : ROLE[c.role];
-  const img =
-    c.state === "deleted"
-      ? `<span class="thumb grid place-items-center text-ink-3">${icon("trash")}</span>`
-      : googleThumb(r.account, c.key, i.kind);
-  const pic = c.url
-    ? `<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer" title="Open in Google Photos">${img}</a>`
-    : img;
-  const late = !!c.taken && Math.abs(c.taken - i.taken) > 120;
-  return `<div class="flex items-center gap-2 rounded-xl border border-line p-1.5 pr-3 text-xs">${pic}
-    <div class="min-w-0"><span class="block text-ink-3">In Google${c.camera ? " · camera" : ""}</span><b class="${late ? "text-warn" : "text-ink-2"}">${esc(when(c.taken))}</b>
-    <span class="mt-0.5 block">${badge(label, tone)}</span></div></div>`;
+/** One of Google's copies: a small thumbnail with a corner mark for what happens to it. */
+function copyThumb(c: SnapCopy, i: SnapItem, r: SnapchatReport): string {
+  const gone = c.state === "deleted";
+  const [what, mark, tone] = gone
+    ? ["Deleted from Google", "trash", "bad"]
+    : c.role === "keep"
+      ? ["Stays in Google", "check", "good"]
+      : c.role === "leave"
+        ? ["From a camera: stays", "camera", ""]
+        : ["Deleted from Google", "trash", "warn"];
+  const tip = `In Google · ${when(c.taken)} · ${what}`;
+  const img = gone
+    ? `<span class="thumb grid size-10 place-items-center text-ink-3">${icon("trash", "size-4")}</span>`
+    : googleThumb(r.account, c.key, i.kind, "thumb size-10");
+  const body = `<span class="sc-copy ${gone ? "gone" : ""}" title="${esc(tip)}">${img}<span class="sc-mark ${tone}">${icon(mark as Parameters<typeof icon>[0], "size-2.5")}</span></span>`;
+  return c.url && !gone
+    ? `<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(tip)}">${body}</a>`
+    : body;
 }
 
-function stateBadge(i: SnapItem, r: SnapchatReport): string {
+/** Where a memory is at, as one small icon. */
+function stateMark(i: SnapItem, r: SnapchatReport): string {
   const now = working(r).find((w) => w.key === i.name);
-  if (now) return badge(now.step === "deleting" ? "Replacing in Google" : "Working on it", "info", "loader");
-  switch (i.state) {
-    case "queued":
-      return badge("Queued", "info", "hourglass");
-    case "done":
-      return badge(i.action === "album" ? "In the album" : "Done", "good", "ok");
-    case "failed":
-      return badge("Didn't work", "bad", "error");
-    default:
-      return "";
-  }
+  const [ic, tone, tip] = now
+    ? (["loader", "text-accent spin", STEP[now.step] ?? "Working on it"] as const)
+    : i.state === "queued"
+      ? (["hourglass", "text-accent", "Queued"] as const)
+      : i.state === "done"
+        ? (["ok", "text-good", i.action === "album" ? "In the album" : "Done"] as const)
+        : i.state === "failed"
+          ? (["error", "text-bad", "Didn't work"] as const)
+          : (["", "", ""] as const);
+  return ic
+    ? `<span class="grid size-7 shrink-0 place-items-center ${tone.includes("spin") ? "text-accent" : tone}" title="${esc(tip)}" aria-label="${esc(tip)}">${icon(ic, `size-4 ${tone.includes("spin") ? "spin" : ""}`)}</span>`
+    : "";
 }
 
 function row(i: SnapItem, r: SnapchatReport): string {
-  const [label, tone, tip] = matchBadge(i);
+  const [label, , tip] = matchBadge(i);
   const open = i.url || i.google?.url;
   const editable = !i.state || i.state === "failed";
   const select = editable
-    ? `<select class="input w-auto py-1 text-xs" data-action="${esc(i.name)}" aria-label="What happens to ${esc(fileName(i.name))}">${choices(
+    ? `<select class="input sc-pick" data-action="${esc(i.name)}" aria-label="What happens to ${esc(fileName(i.name))}">${choices(
         i,
       )
         .map(
@@ -96,70 +115,56 @@ function row(i: SnapItem, r: SnapchatReport): string {
         )
         .join("")}</select>`
     : "";
-  const place = i.place ? ` · ${i.place[0].toFixed(3)}, ${i.place[1].toFixed(3)}` : "";
-  return `<div data-key="${esc(i.name)}" class="row flex-wrap items-start px-4 py-3 sm:flex-nowrap">
-    <span class="flex shrink-0 gap-1.5">
-      <span class="clickable" ${openAttrs(i.name)} title="The memory">${thumb(i.name)}</span>
-    </span>
-    <div class="min-w-0 flex-1 basis-48">
-      <div class="flex flex-wrap items-center gap-2"><span class="truncate text-sm font-medium" title="${esc(i.name)}">${esc(fileName(i.name))}</span>${badge(label, tone, undefined, tip)}${stateBadge(i, r)}${i.decided ? badge("You chose", "warn") : ""}${i.kind === "video" ? `<span class="badge">${icon("video")}</span>` : ""}</div>
-      <div class="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-        <div><span class="block text-ink-3">Snapchat</span><b class="text-ink-2">${esc(when(i.taken))}</b><span class="text-ink-3">${esc(place)}</span></div>
-      </div>
-      ${i.copies.length ? `<div class="mt-2 flex flex-wrap gap-2">${i.copies.map((c) => copyTile(c, i, r)).join("")}</div>` : ""}
-      ${i.local ? `<div class="mt-1 truncate text-xs text-ink-3">Copy here: ${esc(i.local)}</div>` : ""}
-      ${i.error ? `<div class="mt-1 text-xs ${i.state === "failed" ? "text-bad" : "text-ink-3"}">${esc(i.error)}</div>` : ""}
+  // The latest of Google's dates: how much later than Snapchat's it is.
+  const dates = i.copies.map((c) => c.taken).filter((t): t is number => t != null);
+  const latest = dates.length ? Math.max(...dates) : null;
+  const off =
+    latest != null && Math.abs(latest - i.taken) > 120
+      ? `<span class="sc-off ${latest < i.taken ? "older" : ""}" title="${esc(latest < i.taken ? `Google's original is older (${when(latest)}): it keeps its date` : `Google's date: ${when(latest)}`)}">${icon("calendar", "size-3")}${offset(latest - i.taken)}</span>`
+      : "";
+  const place = i.place
+    ? `<span title="${i.place[0].toFixed(4)}, ${i.place[1].toFixed(4)}">${icon("pin", "size-3")}</span>`
+    : "";
+  const copies = i.copies.length
+    ? `<span class="hidden text-ink-3 sm:inline">${icon("arrowRight", "size-3.5")}</span><span class="flex shrink-0 gap-1">${i.copies
+        .slice(0, 3)
+        .map((c) => copyThumb(c, i, r))
+        .join(
+          "",
+        )}${i.copies.length > 3 ? `<span class="grid size-10 place-items-center rounded-lg bg-panel-2 text-xs text-ink-3">+${i.copies.length - 3}</span>` : ""}</span>`
+    : "";
+  return `<div data-key="${esc(i.name)}" class="sc-row">
+    <span class="clickable relative shrink-0" ${openAttrs(i.name)} title="${esc(fileName(i.name))}">${thumb(i.name, "thumb size-12")}${i.kind === "video" ? `<span class="sc-vid">${icon("video", "size-3")}</span>` : ""}</span>
+    <div class="min-w-0 flex-1">
+      <div class="truncate text-sm font-medium">${esc(day(i.taken))}</div>
+      <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3"><span class="tabular-nums">${esc(time(i.taken))}</span><span title="${esc(tip)}">${esc(label)}</span>${place}${off}${i.decided ? `<span class="text-warn">You chose</span>` : ""}</div>
+      ${i.error ? `<div class="mt-0.5 truncate text-xs ${i.state === "failed" ? "text-bad" : "text-ink-3"}" title="${esc(i.error)}">${esc(i.error)}</div>` : ""}
     </div>
-    <div class="row-actions flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 sm:w-auto">${select}${
+    ${copies}
+    <div class="sc-end">${select}${stateMark(i, r)}${
       open
-        ? `<a class="link-btn sm" href="${esc(open)}" target="_blank" rel="noopener noreferrer">${icon("external")}Open in Google Photos</a>`
+        ? `<a class="btn icon sm" href="${esc(open)}" target="_blank" rel="noopener noreferrer" title="Open in Google Photos" aria-label="Open in Google Photos">${icon("external")}</a>`
         : ""
     }</div>
   </div>`;
 }
 
-function exportCard(r: SnapchatReport): string {
-  const notes = [
-    r.exporting.length
-      ? `The export script is still adding memories to ${r.exporting.map(esc).join(", ")}: they wait until it's done.`
-      : "",
-    r.held
-      ? `${num(r.held)} file${r.held === 1 ? " is" : "s are"} in the folder but not in its list, so ${r.held === 1 ? "it isn't" : "they aren't"} backed up. Run the script again to list them.`
-      : "",
-  ]
-    .filter(Boolean)
-    .map((n) => `<p class="mt-3 text-sm text-ink-2">${icon("info", "inline size-4 -mt-0.5")} ${n}</p>`)
-    .join("");
-  return r.manifests
-    .map((m, n) => {
-      const note = missingNote(m.export);
-      return `<section class="card mb-4 p-4">
-        <div class="flex flex-wrap items-center gap-3">
-          <span class="grid size-10 place-items-center rounded-xl bg-panel-2 text-ink-2">${icon("folder", "size-5")}</span>
-          <div class="min-w-0 flex-1"><h2 class="font-semibold">${num(m.export.found ?? r.memories)} memories in ${esc(m.folder)}</h2>
-            <p class="text-xs text-ink-3">Snapchat's date, time and place are inside every file · album ${esc(r.album)} (<a class="underline" href="#/sources">change</a>)</p></div>
-        </div>
-        ${note ? `<p class="mt-3 text-sm text-warn">${icon("warn", "inline size-4 -mt-0.5")} ${esc(note)}. Download the missing parts from Snapchat and run the script again: only new memories are added.</p>` : ""}
-        ${n === 0 ? notes : ""}
-      </section>`;
-    })
-    .join("");
+function chip(ic: Parameters<typeof icon>[0], text: string, tone = "", tip = ""): string {
+  return `<span class="sc-chip ${tone}" ${tip ? `title="${esc(tip)}"` : ""}>${icon(ic, "size-3.5")}${esc(text)}</span>`;
 }
 
 function searchCard(r: SnapchatReport): string {
   const steps = [
-    ["Fingerprint the memories", r.fingerprinted, r.memories],
-    ["Compare with Google's thumbnails", r.thumbs.done, r.thumbs.total],
+    ["Fingerprint", r.fingerprinted, r.memories],
+    ["Compare with Google", r.thumbs.done, r.thumbs.total],
     ["Match", r.checked, r.memories],
   ] as const;
   return `<section class="card mb-4 p-4" aria-live="polite">
-    <h2 class="font-semibold">${icon("search", "inline size-4 -mt-0.5")} Looking for your memories in Google Photos</h2>
-    <p class="mt-1 text-xs text-ink-3">${r.refreshed ? `Library read ${ago(r.refreshed)}` : "Reading your library from Google first"} · nothing changes in Google yet</p>
-    ${r.slow_until ? `<p class="mt-2 text-xs text-warn">${icon("clock", "inline size-3.5 -mt-0.5")} Google asked GP Sync to slow down. Comparing goes on at ${esc(new Date(r.slow_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}; what's done is kept.</p>` : ""}
-    <div class="mt-3 space-y-2">${steps
+    <div class="flex flex-wrap items-center gap-2"><h2 class="font-semibold">${icon("search", "inline size-4 -mt-0.5")} Finding your memories in Google</h2>${r.slow_until ? chip("clock", `Paused by Google until ${new Date(r.slow_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`, "warn") : ""}</div>
+    <div class="mt-3 grid gap-3 sm:grid-cols-3">${steps
       .map(
         ([label, done, total]) =>
-          `<div class="text-xs"><div class="flex justify-between text-ink-2"><span>${label}</span><span>${total ? `${num(done)} of ${num(total)}` : "…"}</span></div><div class="bar mt-1"><i style="width:${total ? pct(done, total) : 0}%"></i></div></div>`,
+          `<div class="text-xs"><div class="flex justify-between text-ink-2"><span>${label}</span><span class="tabular-nums text-ink-3">${total ? `${num(done)} / ${num(total)}` : "…"}</span></div><div class="bar mt-1.5"><i style="width:${total ? pct(done, total) : 0}%"></i></div></div>`,
       )
       .join("")}</div>
   </section>`;
@@ -202,95 +207,109 @@ function working(r: SnapchatReport): NonNullable<SnapchatReport["working"]> {
   return r.working ?? (r.current ? [r.current] : []);
 }
 
-/** A line for what the memories being worked on are at: "uploading a memory · 2 MB of 5 MB", or
- * "3 at once: 2 uploading (4 MB of 9 MB), 1 deleting an extra copy from Google". */
-function nowLine(r: SnapchatReport): string {
-  const w = working(r);
-  if (!w.length) return "";
-  if (w.length === 1) {
-    const c = w[0];
-    return `${STEP[c.step] ?? "working on a memory"}${c.total ? ` · ${bytes(c.done)} of ${bytes(c.total)}` : ""}`;
-  }
-  const by = new Map<string, { n: number; done: number; total: number }>();
-  for (const c of w) {
-    const g = by.get(c.step) ?? { n: 0, done: 0, total: 0 };
-    g.n += 1;
-    g.done += c.done;
-    g.total += c.total;
-    by.set(c.step, g);
-  }
-  const parts = [...by].map(
-    ([step, g]) =>
-      `${g.n} ${SHORT[step] ?? "working"}${g.total ? ` (${bytes(g.done)} of ${bytes(g.total)})` : ""}`,
-  );
-  return `${w.length} at once: ${parts.join(", ")}`;
-}
-
-const SHORT: Record<string, string> = {
-  keeping: "saving an extra copy here",
-  downloading: "downloading an extra copy",
-  local: "copying an extra copy",
-  deleting: "deleting an extra copy",
-  hashing: "checking",
-  uploading: "uploading",
-};
-
-/** What the memory being worked on is at (snapchat_state "current" steps). */
+/** What the memory being worked on is at (snapchat_state "current" steps), for its tooltip. */
 const STEP: Record<string, string> = {
-  keeping: "saving Google's extra copy here before deleting it",
-  downloading: "downloading Google's extra copy before deleting it",
-  local: "copying Google's extra copy from this server",
-  deleting: "deleting an extra copy from Google",
-  hashing: "checking a memory before uploading",
-  uploading: "uploading a memory",
+  keeping: "Saving Google's extra copy here before deleting it",
+  downloading: "Downloading Google's extra copy before deleting it",
+  local: "Copying Google's extra copy from this server",
+  deleting: "Deleting an extra copy from Google",
+  hashing: "Checking before uploading",
+  uploading: "Uploading",
 };
 
-function reviewCard(r: SnapchatReport): string {
-  const busy = Object.values(r.counts).reduce((n, c) => n + c.queued, 0);
-  const done = JOBS.reduce((n, j) => n + r.counts[j.id].done, 0);
+/** The top of the page: a ring for how far it is, the memories split by what happens to them, and
+ * short chips for the folder, the album and anything to know. */
+function hero(r: SnapchatReport): string {
   const total = JOBS.reduce((n, j) => n + r.counts[j.id].total, 0);
-  const todo = JOBS.reduce((n, j) => n + left(r, j.id), 0);
-  if (!todo && !busy) {
-    return total
-      ? `<section class="card mb-4 flex items-center gap-3 p-4 text-sm">${icon("ok", "size-5 text-good")}<span>All ${num(done)} memories are in Google Photos, in the album ${esc(r.album)}.${r.counts.skip.total ? ` ${num(r.counts.skip.total)} left out.` : ""}</span></section>`
-      : "";
+  const done = JOBS.reduce((n, j) => n + r.counts[j.id].done, 0);
+  const busy = Object.values(r.counts).some((c) => c.queued > 0);
+  const p = total ? (done / total) * 100 : 0;
+  const all = Object.values(r.counts).reduce((n, c) => n + c.total, 0) || 1;
+  const seg = SNAP_GROUPS.filter((g) => r.counts[g.id].total)
+    .map(
+      (g) =>
+        `<span style="width:${(r.counts[g.id].total / all) * 100}%;background:${COLOR[g.id]}" title="${esc(`${g.title}: ${num(r.counts[g.id].total)}`)}"></span>`,
+    )
+    .join("");
+  const notes: string[] = [];
+  for (const m of r.manifests) {
+    const note = missingNote(m.export);
+    const missing = m.export.missing ?? 0;
+    if (missing)
+      notes.push(
+        chip(
+          "warn",
+          `${num(missing)} not in the zips`,
+          "warn",
+          `${note}. Download the missing parts from Snapchat and run the script again: only new memories are added.`,
+        ),
+      );
   }
+  if (r.exporting.length)
+    notes.push(chip("loader", "Export still running", "warn", `Still adding to ${r.exporting.join(", ")}`));
+  if (r.held)
+    notes.push(
+      chip(
+        "info",
+        `${num(r.held)} not listed yet`,
+        "warn",
+        "In the folder but not in its list, so not backed up. Run the script again to list them.",
+      ),
+    );
   const dupes = r.duplicates.total - r.duplicates.deleted;
-  return `<section class="card mb-4 p-4">
-    <h2 class="font-semibold">${busy ? `Sending · ${num(done)} of ${num(total)} done` : "What to do with your memories"}</h2>
-    <p class="mt-1 text-xs text-ink-3">Each job starts on its own, in any order. Check the lists below first: change any memory's action, or leave it out.</p>
-    ${busy ? `<div class="bar mt-3"><i style="width:${pct(done, total)}%"></i></div>` : ""}
-    ${busy && nowLine(r) ? `<p class="mt-2 text-xs text-ink-3">${icon("loader", "inline size-3.5 -mt-0.5 spin")} Now: ${esc(nowLine(r))}. Memories that only need the album don't wait for it.</p>` : ""}
-    <div class="mt-3 divide-y divide-line">${JOBS.filter((j) => r.counts[j.id].total)
-      .map((j) => {
-        const n = left(r, j.id);
-        const c = r.counts[j.id];
-        const state = c.queued ? `${num(c.queued)} in progress` : n ? "" : "Done";
-        return `<div class="flex flex-wrap items-center gap-3 py-2.5">
-          ${icon(j.ic, "size-4 shrink-0 text-ink-3")}
-          <div class="min-w-0 flex-1 basis-56 text-sm"><b class="tabular-nums">${num(c.total)}</b> ${esc(j.what(r))}${state ? ` <span class="text-xs text-ink-3">· ${state}</span>` : ""}</div>
-          ${n ? `<button class="btn sm ${j.id === "album" ? "primary" : ""}" data-start="${j.id}">${icon("play", "size-3.5")}${j.button} (${num(n)})</button>` : ""}
-        </div>`;
-      })
-      .join("")}</div>
-    ${dupes ? `<p class="mt-2 text-xs text-ink-3">${icon("copy", "inline size-3.5 -mt-0.5")} ${num(dupes)} extra ${dupes === 1 ? "copy" : "copies"} in Google go as their memory is done. The memory here is the same picture, so only a less certain match is downloaded first.</p>` : ""}
+  if (dupes)
+    notes.push(
+      chip(
+        "copy",
+        `${num(dupes)} extra ${dupes === 1 ? "copy" : "copies"} to remove`,
+        "",
+        "Deleted from Google as their memory is done. Less certain matches are saved here first.",
+      ),
+    );
+  const folders = r.manifests.map((m) => m.folder).join(", ");
+  return `<section class="card sc-hero mb-4 p-4 sm:p-5">
+    <div class="flex items-center gap-4 sm:gap-5">
+      <div class="relative shrink-0">${ring(p, 88, 8)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="text-lg font-semibold tabular-nums">${Math.floor(p)}%</div><div class="text-[9px] uppercase tracking-wider text-ink-3">${busy ? "sending" : "done"}</div></div></div></div>
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-baseline gap-x-2"><h2 class="text-2xl font-semibold tracking-tight tabular-nums">${num(r.memories)}</h2><span class="text-sm text-ink-3">memories</span><span class="text-sm text-ink-3">· ${num(done)} in Google</span></div>
+        <div class="sc-seg mt-3" role="img" aria-label="${esc(SNAP_GROUPS.map((g) => `${g.title} ${r.counts[g.id].total}`).join(", "))}">${seg}</div>
+      </div>
+    </div>
+    <div class="mt-4 flex flex-wrap gap-1.5">${paceButton("upload", status()?.upload_workers ?? 0, status()?.pace?.[r.account]?.upload)}${chip("folder", folders)}${chip("library", `Album ${r.album}`, "", "Change it under Sources")}${notes.join("")}</div>
   </section>`;
 }
 
-function groupCards(r: SnapchatReport): string {
-  return `<div class="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">${SNAP_GROUPS.map((g) => {
-    const c = r.counts[g.id];
-    return `<section class="card flex flex-col p-4 ${show === g.id ? "border-accent" : ""}">
-      <button class="flex items-center gap-2 text-left" data-show="${g.id}">${icon(g.ic, "size-4 text-ink-3")}<span class="font-semibold">${g.title}</span></button>
-      <div class="mt-1 text-2xl font-semibold tabular-nums">${num(c.total)}</div>
-      <p class="mt-1 flex-1 text-xs text-ink-3">${g.hint}</p>
-      ${
-        g.id !== "skip" && c.total
-          ? `<div class="mt-2 text-xs text-ink-3">${num(c.done)} done${c.queued ? ` · ${num(c.queued)} queued` : ""}${c.failed ? ` · <span class="text-bad">${num(c.failed)} didn't work</span>` : ""}</div><div class="bar mt-1"><i style="width:${pct(c.done, c.total)}%"></i></div>`
-          : ""
-      }
-    </section>`;
-  }).join("")}</div>`;
+/** One tile per group: its colour, count and progress, and the button that starts its job. The
+ * tile itself picks the list below. */
+function groupTiles(r: SnapchatReport): string {
+  return `<div class="mb-4 grid grid-cols-2 gap-3 xl:grid-cols-4" role="tablist" aria-label="Groups">${SNAP_GROUPS.map(
+    (g) => {
+      const c = r.counts[g.id];
+      const n = g.id === "skip" ? 0 : left(r, g.id);
+      const job = JOBS.find((j) => j.id === g.id);
+      const state =
+        g.id === "skip"
+          ? `<span class="text-ink-3">Nothing happens</span>`
+          : !c.total
+            ? `<span class="text-ink-3">None</span>`
+            : c.queued
+              ? `<span class="text-accent">${icon("loader", "inline size-3 -mt-0.5 spin")} ${num(c.queued)} going</span>`
+              : !n
+                ? `<span class="text-good">${icon("ok", "inline size-3.5 -mt-0.5")} Done</span>`
+                : `<span class="text-ink-3">${num(n)} ready</span>`;
+      const go =
+        job && n && !c.queued
+          ? `<button class="btn sm ${g.id === "album" ? "primary" : ""} mt-3 w-full justify-center" data-start="${g.id}">${icon("play", "size-3.5")}${job.button}</button>`
+          : "";
+      return `<div class="card sc-tile ${show === g.id ? "on" : ""}" style="--tc:${COLOR[g.id]}" role="tab" tabindex="0" aria-selected="${show === g.id}" data-show="${g.id}" title="${esc(g.hint)}">
+        <div class="flex items-center gap-2"><span class="sc-ic">${icon(g.ic, "size-4")}</span><span class="min-w-0 truncate text-sm font-medium">${g.title}</span></div>
+        <div class="mt-2 text-2xl font-semibold tabular-nums">${num(c.total)}</div>
+        <div class="mt-0.5 text-xs">${state}${c.failed ? ` <span class="text-bad">· ${num(c.failed)} failed</span>` : ""}</div>
+        ${g.id !== "skip" && c.total ? `<div class="sc-bar mt-2"><i style="width:${pct(c.done, c.total)}%"></i></div>` : ""}
+        ${go}
+      </div>`;
+    },
+  ).join("")}</div>`;
 }
 
 function render(): void {
@@ -300,14 +319,12 @@ function render(): void {
     $("#sc-chips"),
     r && r.memories
       ? accountChips(r.account, (a) =>
-          a === r.account
-            ? { line: "Memories go here", tone: "text-accent" }
-            : { line: "Pick to send them here instead" },
+          a === r.account ? { line: "Memories go here", tone: "text-accent" } : { line: "Use this account" },
         )
       : "",
   );
   if (!r) return;
-  if (!accs.length) {
+  if (status() && !accs.length) {
     html(
       $("#sc-body"),
       `<div class="card empty">${icon("users")}Connect a Google account first (Settings › Google accounts)</div>`,
@@ -326,10 +343,10 @@ function render(): void {
       $("#sc-body"),
       `<section class="card p-5 text-sm text-ink-2">
         <h2 class="text-lg font-semibold tracking-tight">Bring in your Snapchat Memories</h2>
-        <ol class="mt-3 list-decimal space-y-2 pl-5">
-          <li>In Snapchat: Settings › My Data, tick <b>Memories</b> (with “Export your Memories”), and download every zip.</li>
-          <li>On the server, run <code>python3 scripts/snapchat_export.py &lt;folder with the zips&gt; &lt;Photos/Snapchat&gt;</code> (needs exiftool and ffmpeg). It writes Snapchat's date, time and place into every file.</li>
-          <li>The memories show up here. GP Sync looks for each one in Google Photos before anything is uploaded.</li>
+        <ol class="mt-4 grid gap-3 sm:grid-cols-3">
+          <li class="sc-step">${icon("download", "size-5")}<b>Download</b><span>Snapchat › Settings › My Data: tick Memories, download every zip.</span></li>
+          <li class="sc-step">${icon("code", "size-5")}<b>Run the script</b><span><code>python3 scripts/snapchat_export.py &lt;zips&gt; &lt;Photos/Snapchat&gt;</code></span></li>
+          <li class="sc-step">${icon("sparkles", "size-5")}<b>Review here</b><span>Each memory is found in Google before anything is uploaded.</span></li>
         </ol>
       </section>`,
     );
@@ -373,14 +390,31 @@ function render(): void {
     },
   });
   const group = SNAP_GROUPS.find((g) => g.id === show) ?? SNAP_GROUPS[0];
-  const top = `${exportCard(r)}
-    ${r.error && !r.slow_until ? `<section class="card mb-4 p-4 text-sm text-bad" role="alert">${esc(r.error)}</section>` : ""}
-    ${r.searching ? searchCard(r) : reviewCard(r)}
-    ${groupCards(r)}`;
+  const top = `${r.error && !r.slow_until ? `<section class="card mb-4 flex items-center gap-2 p-3 text-sm text-bad" role="alert">${icon("error", "size-4 shrink-0")}${esc(r.error)}</section>` : ""}
+    ${hero(r)}
+    ${r.searching ? searchCard(r) : groupTiles(r)}
+    ${(() => {
+      const w = working(r);
+      return w.length
+        ? `<div class="mb-4">${workPanel(
+            "Working now",
+            "loader",
+            w.map((c) => ({
+              key: c.key,
+              name: fileName(c.key),
+              step: c.step,
+              done: c.done,
+              total: c.total,
+              label: STEP[c.step],
+            })),
+          )}</div>`
+        : "";
+    })()}`;
   const list = `<section class="card min-w-0 overflow-hidden">
-      <div class="flex flex-wrap items-center gap-3 border-b border-line p-4">
-        <div class="min-w-0 flex-1 basis-64"><h2 class="font-semibold">${group.title}</h2>
-          <p class="mt-1 text-xs text-ink-3">${group.hint} Pick another action per memory if a match looks wrong.</p></div>
+      <div class="flex items-center gap-2 border-b border-line px-4 py-3">
+        <span class="size-2.5 shrink-0 rounded-full" style="background:${COLOR[group.id]}"></span>
+        <h2 class="min-w-0 flex-1 truncate font-semibold">${group.title} <span class="font-normal text-ink-3">· ${num(r.counts[group.id].total)}</span></h2>
+        <span class="hidden text-xs text-ink-3 sm:inline">Memory ${icon("arrowRight", "inline size-3")} Google's copies</span>
       </div>
       <div id="sc-list" aria-live="polite">${
         r.items.length
@@ -468,8 +502,12 @@ async function pickAccount(next: string): Promise<void> {
 }
 
 function onClick(e: Event): void {
-  const b = (e.target as HTMLElement).closest<HTMLElement>("button");
+  const b = (e.target as HTMLElement).closest<HTMLElement>("button, [data-show]");
   if (!b) return;
+  if (b.dataset.pace === "upload") {
+    void openUploadOptions(() => void load(), status()?.pace?.[report?.account ?? ""]?.upload);
+    return;
+  }
   if (b.dataset.acc) void pickAccount(b.dataset.acc);
   else if (b.dataset.start) void start(b.dataset.start as Exclude<SnapAction, "skip">);
   else if (b.dataset.show) {
@@ -503,16 +541,23 @@ const snapchat: View = {
     listHtml = "";
     el.innerHTML = `
     <div id="sc-chips"></div>
-    <details class="mb-4 px-1 text-sm text-ink-3">
-      <summary class="cursor-pointer font-medium text-ink-2">How it works</summary>
-      <div class="mt-2 space-y-2 leading-relaxed">
-        <p>Each memory is looked for in Google Photos: the same file, a photo or video taken in the same second (a snap saved to the camera roll), or one that looks the same (compared with Google's thumbnail).</p>
-        <p>Snapchat's date wins over copies Google dated later: the memory replaces them, and albums you made yourself don't carry over. An original Google has (older, or from a camera) keeps its own date.</p>
-        <p>Extra copies are deleted from Google. The memory here is the same picture; only a less certain match is downloaded first (Downloads). Copies on this server aren't uploaded as well, and every memory goes into the album.</p>
-      </div>
+    <details class="sc-how mb-4">
+      <summary>${icon("info", "size-4")}How it works</summary>
+      <ol class="mt-3 grid gap-3 sm:grid-cols-3">
+        <li class="sc-step">${icon("search", "size-5")}<b>Find</b><span>Each memory is looked for in Google: the same file, the same second, or a picture that looks the same.</span></li>
+        <li class="sc-step">${icon("calendar", "size-5")}<b>Decide</b><span>Right date: into the album. Later date: replaced with Snapchat's. Missing: uploaded. Originals keep their date.</span></li>
+        <li class="sc-step">${icon("copy", "size-5")}<b>Clean up</b><span>Extra copies leave Google. Less certain ones are saved here first.</span></li>
+      </ol>
     </details>
     <div id="sc-body"><div class="card skeleton h-72"></div></div>`;
     el.addEventListener("click", onClick);
+    el.addEventListener("keydown", (e) => {
+      const t = e.target as HTMLElement;
+      if (t.dataset.show && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        t.click();
+      }
+    });
     el.addEventListener("change", (e) => void onChange(e));
     void load();
     timer = window.setInterval(() => {

@@ -27,6 +27,7 @@ export const PROCESS_HREF: Record<ProcessKey, string> = {
   freed: "#/storage",
   copied: "#/copy",
   fixed: "#/dates",
+  snapchat: "#/snapchat",
 };
 
 const VERB: Record<ProcessKey, string> = {
@@ -34,6 +35,7 @@ const VERB: Record<ProcessKey, string> = {
   freed: "Freeing",
   copied: "Copying",
   fixed: "Fixing",
+  snapchat: "Sending",
 };
 
 /** How far through the queue: items finished out of finished plus waiting. It only moves forward
@@ -147,6 +149,35 @@ export function liveProcesses(s: Status): Live[] {
     detail: line(dateJobs.length > 0, !!s.all_paused, dateWaiting, "Fixing a date", "Nothing to fix"),
     verb: VERB.fixed,
     href: PROCESS_HREF.fixed,
+  });
+
+  // Snapchat memories, every account. Memories that only need the album finish without showing as
+  // a job, so anything queued and not paused counts as running.
+  const snaps = Object.values(s.snapchat ?? {});
+  const snapJobs = jobs.filter((j) => j.kind === "snapchat");
+  const snapWaiting = snaps.reduce((a, x) => a + x.queued, 0);
+  const snapPaused = snapWaiting > 0 && snaps.filter((x) => x.queued).every((x) => x.paused);
+  const snapRunning = snapJobs.length > 0 || (snapWaiting > 0 && !snapPaused);
+  out.push({
+    key: "snapchat",
+    running: snapRunning,
+    paused: snapPaused,
+    waiting: snapWaiting,
+    pct: snapWaiting
+      ? queuePct(
+          snaps.reduce((a, x) => a + x.done, 0),
+          snapWaiting,
+        )
+      : null,
+    detail: line(
+      snapRunning,
+      snapPaused,
+      snapWaiting,
+      `${num(snapJobs.length)} moving · ${num(snapWaiting)} waiting`,
+      snaps.length ? `${num(snaps.reduce((a, x) => a + x.done, 0))} memories in Google` : "No memories",
+    ),
+    verb: VERB.snapchat,
+    href: PROCESS_HREF.snapchat,
   });
   return out;
 }

@@ -130,10 +130,17 @@ export function tile(opts: {
   tone?: Tone;
   /** Opens this page when the tile is clicked. */
   href?: string;
+  /** Opens this sheet when the tile is clicked (data-pace: its settings, see lib/pace-sheet.ts). */
+  open?: string;
 }): string {
-  const tag = opts.href ? "a" : "div";
-  return `<${tag} class="card metric-card lift flex min-w-0 flex-col p-4${opts.href ? " tile-link" : ""}"${opts.href ? ` href="${opts.href}"` : ""}${opts.id ? ` id="${opts.id}"` : ""}>
-    <div class="flex min-w-0 items-center gap-2.5"><span class="metric-icon grid size-9 shrink-0 place-items-center rounded-xl">${icon(opts.ic, "size-4")}</span><span class="label line-clamp-2 min-w-0 [overflow-wrap:anywhere]" title="${esc(opts.label)}">${esc(opts.label)}</span></div>
+  const tag = opts.href ? "a" : opts.open ? "button" : "div";
+  const attrs = opts.href
+    ? ` href="${opts.href}"`
+    : opts.open
+      ? ` type="button" data-pace="${opts.open}"`
+      : "";
+  return `<${tag} class="card metric-card lift flex min-w-0 flex-col p-4${opts.href ? " tile-link" : ""}${opts.open ? " tile-link tile-open" : ""}"${attrs}${opts.id ? ` id="${opts.id}"` : ""}>
+    <div class="flex min-w-0 items-center gap-2.5"><span class="metric-icon grid size-9 shrink-0 place-items-center rounded-xl">${icon(opts.ic, "size-4")}</span><span class="label line-clamp-2 min-w-0 [overflow-wrap:anywhere]" title="${esc(opts.label)}">${esc(opts.label)}</span>${opts.open ? `<span class="tile-hint" title="Settings">${icon("sliders", "size-4")}</span>` : ""}</div>
     <div class="num mt-3 truncate text-xl sm:text-2xl" data-v>${opts.value}</div>
     <div class="mt-0.5 truncate text-xs text-ink-3" data-s>${opts.sub ?? ""}</div>
     ${opts.chart !== undefined ? `<div class="mt-auto pt-2" data-c>${opts.chart}</div>` : ""}

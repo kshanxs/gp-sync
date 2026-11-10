@@ -535,12 +535,13 @@ def test_uploads_run_side_by_side_like_a_backup(snaps):
     library(item("OTHER", picture(999), T - 400 * DAY))
     client = Google(thumbs={"OTHER": picture(999)})
     together = threading.Barrier(3, timeout=5)  # only passes when three uploads are in flight at once
-    seen = []
+    seen, jobs = [], []
     upload = client._upload_file
 
     def slow_upload(*a, **kw):
         together.wait()
         seen.append(len(sync.snapchat_report(ACC)["working"]))
+        jobs.append(sum(j["kind"] == "snapchat" for j in sync.background_jobs()))
         return upload(*a, **kw)
 
     client._upload_file = slow_upload
@@ -550,6 +551,10 @@ def test_uploads_run_side_by_side_like_a_backup(snaps):
     sync.snapchat_start(ACC, ["upload"])
     assert sync.snapchat_step(ACC, lambda _a: client)  # all six in one step, three at a time
     assert sorted(client.api.sent) == [T + n * 10 for n in range(6)]
-    assert min(seen) == 3
+    assert max(seen) == 3  # three at the same moment (one may finish before another looks)
     r = sync.snapchat_report(ACC)
     assert r["counts"]["upload"]["done"] == 6 and r["working"] == [] and r["current"] is None
+    # The Overview sees them: running jobs while they went up, then the summary and today's count.
+    assert max(jobs) == 3
+    assert sync.snapchat_summary()[ACC] == {"queued": 0, "done": 6, "failed": 0, "total": 6, "paused": False}
+    assert sync.process_activity(1)["processes"]["snapchat"]["count"] == 6

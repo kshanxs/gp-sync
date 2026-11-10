@@ -14,7 +14,9 @@ import { host, setPageStatus, setPauseControl, setRefreshControl, status } from 
 import { accountChips, freeingAccounts, openingAccount, rememberAccount } from "../lib/account-menu";
 import { columns } from "../lib/charts";
 import { confirmDialog } from "../lib/dialog";
-import { atOnceOptions, atOnceText } from "../lib/pace";
+import { atOnceText } from "../lib/pace";
+import { openMoveOptions, paceButton } from "../lib/pace-sheet";
+import { workPanel, type WorkItem } from "../lib/work-panel";
 import { accountLine, badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
@@ -177,79 +179,47 @@ function progressBar(done: number, total: number, known = true): string {
     : `<span class="bar indeterminate mt-1.5 block" role="progressbar" aria-busy="true"><i></i></span>`;
 }
 
-const WAITING_STEP: Record<string, { label: string; note: string; ic: Parameters<typeof icon>[0] }> = {
-  downloaded: { label: "Downloaded", note: "Replacing in Google next", ic: "hourglass" },
-  in_google: { label: "Replacing in Google", note: "Trying again soon", ic: "hourglass" },
-  checking: { label: "Checking with Google", note: "Google confirms it is free", ic: "loader" },
+const WAITING_NOTE: Record<string, string> = {
+  downloaded: "Replacing in Google next",
+  in_google: "Trying again soon",
+  checking: "Google confirms it is free",
 };
 
-/** Items under way, from download to Google's check: the step each is on and a moving progress
- * bar. An item stays here until it is freed, so it can be followed step by step. New items don't
- * wait for the check, so there can be more rows than items at once. */
+/** Items under way, from download to Google's check, in the shared work panel. An item stays until
+ * it is freed, so it can be followed step by step; new items don't wait for the check, so there can
+ * be more rows than items at once. */
 function workingCard(r: StorageReport): string {
   const w = new Map((r.working ?? []).map((c) => [c.key, c]));
+  const items: WorkItem[] = [];
   // Biggest first, as the server lists them, so a row keeps its place as its item moves on.
-  const rows: (ReclaimProgress | StorageItem)[] = r.items.filter(
-    (i) => w.has(i.key) || i.state in WAITING_STEP,
-  );
-  for (const c of w.values()) if (!rows.some((x) => x.key === c.key)) rows.push(c);
-  if (!rows.length) return "";
+  for (const i of r.items) {
+    const c = w.get(i.key);
+    if (c)
+      items.push({
+        key: c.key,
+        name: c.name ?? i.name,
+        step: c.step,
+        done: c.done,
+        total: c.total,
+        label: c.step === "local" ? `Copying from ${host()}` : undefined,
+      });
+    else if (i.state in WAITING_NOTE)
+      items.push({
+        key: i.key,
+        name: i.name,
+        step: i.state,
+        pct: i.state === "downloaded" ? 100 : undefined,
+        // Why it waits, when there is a reason (a hold, or Google's error), else what comes next.
+        note: i.error || WAITING_NOTE[i.state],
+      });
+  }
+  for (const c of w.values())
+    if (!items.some((x) => x.key === c.key))
+      items.push({ key: c.key, name: c.name ?? c.key, step: c.step, done: c.done, total: c.total });
   const pausing = r.paused && w.size > 0;
-  return `<section class="card mt-4 min-w-0 overflow-hidden">
-    ${cardHead(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", pausing ? `${num(w.size)} finishing their step` : [w.size ? `${num(w.size)} moving` : "", rows.length > w.size ? `${num(rows.length - w.size)} waiting for Google` : ""].filter(Boolean).join(" · "))}
-    <ul class="divide-y divide-line">${rows
-      .map((x) => {
-        const c = w.get(x.key);
-        if (!c) {
-          const i = x as StorageItem;
-          const st = WAITING_STEP[i.state]!;
-          return `<li data-key="${esc(i.key)}" class="flex items-center gap-3 px-4 py-3">
-        <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2 text-accent">${icon(st.ic, `size-4 ${st.ic === "loader" ? "spin" : ""}`)}</span>
-        <span class="min-w-0 flex-1">
-          <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium" title="${esc(i.name)}">${esc(i.name)}</span></span>
-          ${i.state === "downloaded" ? '<span class="bar mt-1.5 block"><i style="width:100%"></i></span>' : progressBar(0, 0, false)}
-          <span class="mt-1 flex justify-between gap-2 text-xs text-ink-3"><span>${st.label}</span><span class="hidden truncate sm:inline" title="${esc(i.error ?? "")}">${esc(i.state === "in_google" && i.error ? i.error : st.note)}</span></span>
-        </span>
-      </li>`;
-        }
-        const step = c.step === "local" ? { ...STEP.local, label: `Copying from ${host()}` } : STEP[c.step];
-        const known = c.step !== "deleting";
-        const share = Math.floor(pct(c.done, c.total));
-        return `<li data-key="${esc(c.key)}" class="flex items-center gap-3 px-4 py-3">
-        <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2 text-accent">${icon(step.ic, `size-4 ${known ? "" : "spin"}`)}</span>
-        <span class="min-w-0 flex-1">
-          <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium" title="${esc(c.name ?? c.key)}">${esc(c.name ?? c.key)}</span><span class="ml-auto shrink-0 text-sm font-semibold tabular-nums">${known ? `${share}%` : ""}</span></span>
-          ${progressBar(c.done, c.total, known)}
-          <span class="mt-1 flex justify-between text-xs text-ink-3 tabular-nums"><span>${step.label}</span><span>${known ? `${bytes(c.done)} of ${bytes(c.total)}` : "Waiting for Google"}</span></span>
-        </span>
-      </li>`;
-      })
-      .join("")}</ul>
-  </section>`;
-}
-
-function sw(id: string, on: boolean, label: string): string {
-  return `<button type="button" role="switch" class="switch shrink-0" id="${id}" aria-checked="${on}" aria-label="${esc(label)}"></button>`;
-}
-
-/** Choices that used to be asked every time: set once here. */
-function optionsCard(p: ReclaimPrefs): string {
-  const row = (id: string, on: boolean, title: string, hint: string) =>
-    `<div class="flex items-start gap-3 px-4 py-3"><span class="min-w-0 flex-1"><span class="block text-sm font-medium">${esc(title)}</span><span class="block text-xs text-ink-3">${esc(hint)}</span></span>${sw(id, on, title)}</div>`;
-  return `<section class="card mt-4 min-w-0 overflow-hidden">
-    ${cardHead("Options", "sliders", "Saved for every account")}
-    <div class="grid divide-y divide-line md:grid-cols-2 md:divide-y-0">
-      <div class="divide-y divide-line md:border-r md:border-line">
-        ${row("st-opt-confirm", p.confirm, "Ask before freeing", "Off: Free up starts at once, with the choices here.")}
-        ${row("st-opt-keep", p.keep, "Keep the downloaded copies", "On: each copy stays on this server, under Downloads. Off: it is deleted once Google has the free upload.")}
-      </div>
-      <div class="divide-y divide-line">
-        <div class="flex items-start gap-3 px-4 py-3"><span class="min-w-0 flex-1"><span class="block text-sm font-medium">Items at once</span><span class="block text-xs text-ink-3">Per account, for Free storage and Copy accounts. Dynamic runs more side by side while Google keeps up (up to 12, many for small photos, few for big videos) and slows down when Google asks. Each needs its size free here while it moves.</span></span>
-          <select id="st-opt-workers" class="input w-44 shrink-0" aria-label="Items at once">${atOnceOptions(p.workers)}</select></div>
-        ${row("st-opt-album", p.album, "Add freed items to an album", `Album “${p.album_name}” in Google Photos: an easy place to check them. Captions are never changed.`)}
-      </div>
-    </div>
-  </section>`;
+  return items.length
+    ? `<div class="mt-4">${workPanel(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", items, paceButton("move", r.prefs?.workers ?? 0, r.pace))}</div>`
+    : "";
 }
 
 function renderList(r: StorageReport): void {
@@ -279,9 +249,16 @@ function renderList(r: StorageReport): void {
         ? `<section class="card mb-4 flex flex-wrap items-start gap-3 border-bad/40 p-4">${icon("warn", "size-5 shrink-0 text-bad")}<div class="min-w-0 flex-1 text-sm"><div class="font-medium">Stopped: Google counted a re-upload against storage</div><div class="mt-0.5 text-ink-3">Nothing more is moved. Downloaded files stay here, and nothing was deleted.</div></div><button class="btn sm" id="st-unblock">Try again anyway</button></section>`
         : ""
     }
-    ${r.error ? `<section class="card mb-4 p-4 text-sm text-bad">${esc(r.error)}</section>` : ""}
+    ${r.error && !(oursCount && r.error.includes("own uploads")) ? `<section class="card mb-4 p-4 text-sm text-bad">${esc(r.error)}</section>` : ""}
     ${checkNote(r.check)}
     ${oursCount ? `<section class="card mb-4 flex items-start gap-3 p-4 text-sm">${icon("warn", "size-5 shrink-0 text-warn")}<div><div class="font-medium">GP Sync's uploads count against storage in this account</div><div class="mt-0.5 text-ink-3">Re-uploading wouldn't free anything, so nothing is deleted here.</div></div></section>` : ""}
+    ${
+      r.prefs
+        ? `<section class="card mb-4 flex items-center gap-3 px-4 py-3"><span class="grid size-9 shrink-0 place-items-center rounded-xl bg-panel-2 ${r.prefs.auto ? "text-accent" : "text-ink-3"}">${icon("zap", "size-4")}</span>
+        <span class="min-w-0 flex-1"><span class="block text-sm font-medium">Free new items automatically</span><span class="block text-xs text-ink-3">${r.prefs.auto ? "On: what your phones back up to Google Photos is freed as it arrives, in every account" : "Off: new phone backups wait here until you free them"}</span></span>
+        <button type="button" role="switch" class="switch shrink-0" id="st-auto" aria-checked="${!!r.prefs.auto}" aria-label="Free new items automatically"></button></section>`
+        : ""
+    }
     <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
       ${tile({ label: "Using storage", value: bytes(r.counted_bytes), ic: "cloud", sub: r.refreshing ? "Reading your library…" : `${num(r.counted)} of ${num(r.total)} items${r.refreshed ? ` · read ${ago(r.refreshed)}` : ""}` })}
       ${tile({ label: "Freed by GP Sync", value: bytes(r.freed.bytes), ic: "sparkles", sub: r.freed.count ? `${num(r.freed.count)} item${r.freed.count === 1 ? "" : "s"} · see details` : "Nothing freed yet", tone: r.freed.count ? "good" : "", href: `#/storage/${encodeURIComponent(account)}/freed` })}
@@ -289,11 +266,14 @@ function renderList(r: StorageReport): void {
         label: "Moving now",
         value: `${num(working.size)} of ${workers}`,
         ic: "hourglass",
+        open: "move",
         sub: r.paused
           ? `Paused · ${num(r.left?.count ?? busy)} waiting`
           : r.left?.count
             ? `${num(r.left.count)} waiting in the queue`
-            : "Nothing waiting",
+            : r.prefs?.auto
+              ? "Auto: new items freed as they arrive"
+              : "Nothing waiting",
       })}
       ${tile({
         label: "Left to free",
@@ -335,14 +315,13 @@ function renderList(r: StorageReport): void {
           : `<div class="empty">${icon("shield")}No ${KIND_NAME[kind]} in this account count against storage</div>`
       }
     </section>
-    ${r.prefs ? optionsCard(r.prefs) : ""}
     <section class="card mt-4">${cardHead("How it works", "info")}
       <div class="card-b grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div class="flex gap-3"><span class="grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-xs">1</span><span class="text-sm"><b>Downloaded</b> here and checked against the checksum Google gives for it.</span></div>
         <div class="flex gap-3"><span class="grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-xs">2</span><span class="text-sm"><b>Deleted in Google</b>, Trash included, only after the copy here is checked again.</span></div>
         <div class="flex gap-3"><span class="grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-xs">3</span><span class="text-sm"><b>Uploaded again</b> the free way, then Google is asked that it doesn't count.</span></div>
       </div>
-      <div class="border-t border-line px-4 py-3 text-xs text-ink-3">${atOnceText(r.prefs?.workers ?? 0, r.pace).replace(/^u/, "U")} items at once (Options). Each item goes step by step and every step is saved, so an update or restart resumes safely. Keeps quality, date, favourite, archive and caption. Albums, shared links and comments are lost. A few videos download as a copy Google changed slightly (an edited date): that copy is used when it matches the checksum Google lists for it.</div>
+      <div class="border-t border-line px-4 py-3 text-xs text-ink-3">${atOnceText(r.prefs?.workers ?? 0, r.pace).replace(/^u/, "U")} items at once (tap Moving now to change). Each item goes step by step and every step is saved, so an update or restart resumes safely. Keeps quality, date, favourite, archive and caption. Albums, shared links and comments are lost. A few videos download as a copy Google changed slightly (an edited date): that copy is used when it matches the checksum Google lists for it.</div>
     </section>`,
   );
 }
@@ -642,34 +621,19 @@ async function start(keys: string[]): Promise<boolean> {
   return true;
 }
 
-function toggleOption(b: HTMLElement): void {
-  const on = b.getAttribute("aria-checked") !== "true";
-  b.setAttribute("aria-checked", String(on));
-  if (b.id === "st-opt-confirm")
-    void savePrefs({ confirm: on }, on ? "Free storage asks first" : "Free storage starts without asking");
-  else if (b.id === "st-opt-keep")
-    void savePrefs(
-      { keep: on },
-      on ? "Downloaded copies are kept" : "Downloaded copies are deleted after the upload",
-    );
-  else
-    void savePrefs(
-      { album: on },
-      on
-        ? `Freed items go into “${report?.prefs?.album_name ?? "Freed by GP Sync"}”`
-        : "No album for freed items",
-    );
-}
-
 function onClick(e: Event): void {
   const t = e.target as HTMLElement;
   const b = t.closest<HTMLElement>("button");
   if (!b) return;
-  if (b.id === "st-read") void act("refresh", {}, "Reading your library from Google");
+  if (b.dataset.pace === "move") void openMoveOptions(() => void load(), report?.pace);
+  else if (b.id === "st-auto") {
+    const on = b.getAttribute("aria-checked") !== "true";
+    b.setAttribute("aria-checked", String(on));
+    void savePrefs({ auto: on }, on ? "New items are freed automatically" : "Auto free storage is off");
+  } else if (b.id === "st-read") void act("refresh", {}, "Reading your library from Google");
   else if (b.dataset.acc) {
     if (b.dataset.acc !== account) pickAccount(b.dataset.acc);
-  } else if (b.id.startsWith("st-opt-")) toggleOption(b);
-  else if (b.id === "st-unblock") {
+  } else if (b.id === "st-unblock") {
     if (confirm("Google counted a re-upload against storage last time. Try again anyway?"))
       void act("check", { unblock: true });
   } else if (b.dataset.get) void start([b.dataset.get]);
@@ -736,13 +700,7 @@ const storage: View = {
     el.addEventListener("click", onClick);
     el.addEventListener("change", (e) => {
       const t = e.target as HTMLInputElement;
-      if (t.id === "st-opt-workers") {
-        const n = Number(t.value);
-        void savePrefs(
-          { workers: n },
-          n ? `Up to ${n} item${n === 1 ? "" : "s"} at once` : "Items at once: dynamic",
-        );
-      } else if (t.dataset.pick) {
+      if (t.dataset.pick) {
         if (t.checked) picked.add(t.dataset.pick);
         else picked.delete(t.dataset.pick);
         const btn = document.getElementById("st-picked") as HTMLButtonElement | null;

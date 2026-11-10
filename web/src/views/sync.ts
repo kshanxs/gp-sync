@@ -2,6 +2,8 @@
 // folder's progress, and the upload history (today, streak, where the photos are, times, the year).
 // The Overview shows only what runs now, for every process, and links here.
 
+import { workBox } from "../lib/work-panel";
+import { openUploadOptions, paceButton } from "../lib/pace-sheet";
 import { get, post, tz, type FolderReport, type History, type Insights, type Status } from "../lib/api";
 import { donut, heatLegend, heatmap, ring, setRing, sparkline, type Slice } from "../lib/charts";
 import { $, $$, animateChange, esc, html } from "../lib/dom";
@@ -346,30 +348,21 @@ function controls(s: Status): void {
   });
 }
 
-/** "Uploading 1.2 MB of 3 MB", or the step ("Checking Google · 3 MB") before bytes go up. */
-function otherStep(u: NonNullable<Status["current"]>): string {
-  if (u.step === "uploading" && u.bytes_total) return `${bytes(u.bytes_done)} of ${bytes(u.bytes_total)}`;
-  return `${STEPS[u.step] ?? "Working"} · ${bytes(u.bytes_total)}`;
-}
-
-/** A full-width bar: the upload's progress, or a sliding one while the file is checked (the
- * fingerprint step counts bytes too, so its count would fill the bar and then empty it). */
-function otherBar(u: NonNullable<Status["current"]>): string {
-  const up = u.step === "uploading" || u.step === "finalizing";
-  const w = u.step === "finalizing" ? 100 : pct(u.bytes_done, u.bytes_total);
-  return `<span class="bar mt-1 block h-1.5 ${up ? "" : "indeterminate"}"><i style="width:${up ? w : 35}%"></i></span>`;
-}
-
-/** The other files uploading at the same time (Settings › Sync, Files at once). */
+/** The other files uploading at the same time (Settings › Sync, Files at once), in the shared work
+ * panel: how many on each step, then a list that scrolls in its own box. */
 function alsoUploading(s: Status, shown: string): string {
   const others = (s.uploading ?? []).filter((u) => u.name !== shown);
   if (!others.length) return "";
-  return `<ul class="mt-3 space-y-2.5">${others
-    .map(
-      (u) =>
-        `<li class="text-xs"><div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate" title="${esc(u.name)}">${esc(fileName(u.name))}</span><span class="shrink-0 text-ink-3 tabular-nums">${esc(otherStep(u))}</span></div>${otherBar(u)}</li>`,
-    )
-    .join("")}</ul>`;
+  return `<div class="-mx-4 mt-3 border-y border-line">${workBox(
+    others.map((u) => ({
+      key: u.name,
+      name: fileName(u.name),
+      step: u.step,
+      done: u.bytes_done,
+      total: u.bytes_total,
+      label: STEPS[u.step],
+    })),
+  )}</div>`;
 }
 
 function upNext(s: Status, current: string): string {
@@ -463,13 +456,13 @@ const sync: View = {
       </section>
       <section class="order-3 grid grid-cols-2 gap-4 lg:order-none">
         ${tile({ id: "sy-today", label: "Today", value: "–", ic: "calendar", chart: "", href: "#/activity/uploaded" })}
-        ${tile({ id: "sy-streak", label: "Streak", value: "–", ic: "flame", chart: "", href: "#/history" })}
+        ${tile({ id: "sy-streak", label: "Streak", value: "–", ic: "flame", chart: "", href: "#/insights/activity" })}
         ${tile({ id: "sy-space", label: "Space here", value: "–", ic: "disk", chart: "" })}
         ${tile({ id: "sy-scan", label: "Last scan", value: "–", ic: "search" })}
       </section>
       </div>
       <section class="card order-2 lg:order-none lg:col-span-7">
-        ${cardHead("Now", "cloudUp", '<a href="#/upload" class="hover:text-ink">Upload from phone ›</a>')}
+        ${cardHead("Now", "cloudUp", '<span id="sy-pace"></span><a href="#/upload" class="ml-2 hover:text-ink">Upload from phone ›</a>')}
         <div class="card-b" id="sy-now"><div class="skeleton h-24"></div></div>
       </section>
 
@@ -478,7 +471,7 @@ const sync: View = {
         <div id="sy-folders"><div class="card-b"><div class="skeleton h-24"></div></div></div>
       </section>
       <section class="card order-4 self-start lg:order-none lg:col-span-5">
-        ${cardHead("Upload times and sizes", "timer", '<a href="#/insights" class="hover:text-ink">Insights ›</a>')}
+        ${cardHead("Upload times and sizes", "timer", '<a href="#/insights/patterns" class="hover:text-ink">Insights ›</a>')}
         <div class="card-b" id="sy-times"><div class="skeleton h-40"></div></div>
       </section>
 
@@ -492,6 +485,12 @@ const sync: View = {
         <div class="card-b"><div class="scroll-thin fade-x overflow-x-auto pb-1" id="sy-year"><div class="skeleton h-28"></div></div><div class="mt-2 flex justify-end">${heatLegend()}</div></div>
       </section>
     </div>`;
+    el.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest('[data-pace="upload"]')) {
+        const acc = last?.accounts?.[0] ?? "";
+        void openUploadOptions(undefined, last?.pace?.[acc]?.upload);
+      }
+    });
     $("#sy-share-by").addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
       if (!b || shareBy === b.dataset.by) return;
@@ -514,6 +513,10 @@ const sync: View = {
   update(s) {
     last = s;
     controls(s);
+    const acc = s.accounts?.[0] ?? "";
+    const pace = paceButton("upload", s.upload_workers ?? 0, s.pace?.[acc]?.upload);
+    const slot = document.getElementById("sy-pace");
+    if (slot && slot.innerHTML !== pace) slot.innerHTML = pace;
     // New uploads: refresh the heat map and streak now instead of waiting for the minute timer.
     if (s.library.synced_files !== slowSynced && Date.now() - slowAt > 10_000) {
       if (slowSynced >= 0) void loadSlow();

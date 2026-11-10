@@ -1824,3 +1824,236 @@ svg:hover .donut-arc:not(:hover) {
 :is(.set-tabs, .fade-x)[data-fade-r="true"] {
   --fade-r: 48px;
 }
+
+/* ---- Snapchat page */
+/* The memories split by what happens to them, one colour per group. */
+.sc-seg {
+  @apply flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-panel-2;
+}
+.sc-seg > span {
+  @apply block h-full min-w-1 first:rounded-l-full last:rounded-r-full;
+  transition: width 0.6s ease;
+}
+.sc-chip,
+.work-chip {
+  @apply inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-line bg-panel-2/60 px-2.5 py-1 text-xs text-ink-2;
+}
+.sc-chip.warn {
+  @apply border-warn/30 text-warn;
+}
+.sc-chip.live {
+  @apply border-accent/30 text-ink-2;
+}
+.sc-chip.live svg {
+  @apply text-accent;
+}
+/* A group tile: its colour on the icon, the progress and a thin edge when picked. */
+.sc-tile {
+  @apply flex cursor-pointer flex-col p-4 transition-colors duration-150;
+}
+.sc-tile:hover {
+  border-color: color-mix(in oklab, var(--tc) 40%, var(--line));
+}
+.sc-tile.on {
+  border-color: var(--tc);
+  box-shadow:
+    inset 0 0 0 1px var(--tc),
+    0 8px 28px -14px var(--tc);
+}
+.sc-tile:focus-visible {
+  @apply outline-2 outline-offset-2 outline-accent;
+}
+.sc-ic {
+  @apply grid size-8 shrink-0 place-items-center rounded-xl;
+  color: var(--tc);
+  background: color-mix(in oklab, var(--tc) 16%, transparent);
+}
+.sc-bar {
+  @apply h-1.5 overflow-hidden rounded-full bg-panel-2;
+}
+.sc-bar > i {
+  @apply block h-full rounded-full;
+  background: var(--tc);
+  transition: width 1.2s linear;
+}
+/* One memory per line: its picture, date and match, then Google's copies, then its state. */
+.sc-row {
+  @apply flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 sm:flex-nowrap;
+}
+.sc-end {
+  @apply ml-auto flex shrink-0 items-center gap-1.5;
+}
+.sc-pick {
+  @apply w-auto py-1 pr-7 text-xs;
+}
+.sc-vid {
+  @apply absolute right-0.5 bottom-0.5 grid size-4 place-items-center rounded bg-black/60 text-white;
+}
+.sc-copy {
+  @apply relative block;
+}
+.sc-copy.gone .thumb {
+  @apply opacity-50;
+}
+.sc-mark {
+  @apply absolute -right-1 -bottom-1 grid size-4 place-items-center rounded-full bg-panel text-ink-3 ring-1 ring-line;
+}
+.sc-mark.good {
+  @apply bg-good text-white ring-0;
+}
+.sc-mark.warn {
+  @apply bg-warn text-black ring-0;
+}
+.sc-mark.bad {
+  @apply bg-bad text-white ring-0;
+}
+.sc-off {
+  @apply inline-flex items-center gap-1 rounded-full px-1.5 font-medium text-warn;
+  background: color-mix(in oklab, var(--warn) 14%, transparent);
+}
+.sc-off.older {
+  @apply bg-panel-2 font-normal text-ink-3;
+}
+/* "How it works" and the first-run steps: three short cards with an icon. */
+.sc-how > summary {
+  @apply inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full px-1 text-sm font-medium text-ink-3 hover:text-ink-2;
+}
+.sc-how > summary::-webkit-details-marker {
+  display: none;
+}
+.sc-step {
+  @apply flex flex-col gap-1 rounded-2xl border border-line bg-panel-2/40 p-3 text-xs text-ink-3;
+}
+.sc-step > svg {
+  @apply mb-1 text-accent;
+}
+.sc-step > b {
+  @apply text-sm text-ink;
+}
+.sc-step code {
+  @apply break-all;
+}
+
+/* ---- Sheets: settings for what is on screen, over the page (lib/sheet.ts). A sheet from the
+   bottom on phones, a centred window from sm up. */
+.sheet-wrap {
+  @apply fixed inset-0 z-[60] flex items-end justify-center bg-black/55 sm:items-center sm:p-4;
+  animation: sheet-fade 0.16s ease-out;
+}
+.sheet {
+  @apply w-full max-w-lg overflow-hidden rounded-b-none shadow-2xl sm:rounded-b-[inherit];
+  max-height: min(88dvh, 44rem);
+  display: flex;
+  flex-direction: column;
+  animation: sheet-up 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--surface); /* solid: the page must not show through the choices */
+}
+.sheet-body {
+  @apply divide-y divide-line overflow-y-auto;
+}
+.sheet-row {
+  @apply flex items-start gap-3 px-4 py-3.5;
+}
+.sheet-row.flex-col {
+  @apply items-stretch gap-2;
+}
+.sheet-wrap.closing {
+  animation: sheet-fade 0.16s ease-in reverse forwards;
+}
+.sheet-wrap.closing .sheet {
+  animation: sheet-up 0.16s ease-in reverse forwards;
+}
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+/* A row of choices, one picked (items at once, speed limit). */
+.pace-pick {
+  @apply grid gap-1.5;
+  grid-template-columns: repeat(auto-fill, minmax(2.75rem, 1fr));
+}
+.pace-pick[data-pick="speed"] {
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+}
+.pace-pick > [data-n="0"] {
+  grid-column: span 2;
+}
+.pace-pick[data-pick="speed"] > [data-n="0"] {
+  grid-column: auto;
+}
+.pace-pick > button {
+  @apply inline-flex items-center whitespace-nowrap justify-center gap-1 rounded-xl border border-line bg-panel-2/50 px-3 py-2 text-sm text-ink-2 transition-colors;
+}
+.pace-pick > button:hover {
+  @apply text-ink;
+}
+.pace-pick > button[aria-checked="true"] {
+  @apply border-accent bg-accent/15 font-medium text-ink;
+}
+/* The button that opens it, the same on every page. */
+.pace-btn {
+  @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-panel-2/60 px-2.5 py-1 text-xs text-ink-2 transition-colors hover:border-accent/50 hover:text-ink;
+}
+.pace-btn > svg {
+  @apply text-accent;
+}
+/* A tile that opens a sheet (Free storage's Moving now): a hint it can be tapped. */
+.tile-open {
+  @apply cursor-pointer text-left;
+}
+.tile-open .tile-hint {
+  @apply ml-auto text-ink-3 transition-colors;
+}
+.tile-open:hover .tile-hint {
+  @apply text-accent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet-wrap,
+  .sheet,
+  .sheet-wrap.closing,
+  .sheet-wrap.closing .sheet {
+    animation: none;
+  }
+}
+
+/* Tabs at the top of a page that holds several views (Insights: Activity, Patterns). */
+.page-tabs {
+  @apply flex gap-1 rounded-2xl border border-line bg-panel-2/40 p-1;
+}
+.page-tabs > a {
+  @apply inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium text-ink-3 transition-colors hover:text-ink sm:flex-none;
+}
+.page-tabs > a[aria-selected="true"] {
+  @apply bg-panel text-ink shadow-sm ring-1 ring-line;
+}
+.page-tabs > a[aria-selected="true"] > svg {
+  @apply text-accent;
+}
+
+/* ---- Work under way (lib/work-panel.ts): a summary, then a list that scrolls in its own box. */
+.work-sum {
+  @apply border-b border-line px-4 py-3;
+}
+.work-chip > svg {
+  @apply text-accent;
+}
+.work-list {
+  @apply max-h-[22rem] divide-y divide-line overflow-y-auto overscroll-contain;
+}
+.work-row {
+  @apply flex items-center gap-3 px-4 py-2.5;
+}
+a.work-row {
+  @apply transition-colors hover:bg-panel-2;
+}
+.work-ic {
+  @apply grid size-8 shrink-0 place-items-center rounded-lg bg-panel-2 text-accent;
+}
