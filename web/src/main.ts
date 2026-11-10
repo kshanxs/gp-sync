@@ -465,10 +465,15 @@ function boot(): void {
     const item = target.closest<HTMLElement>("[data-open]");
     if (!item || target.closest("a, button:not([data-open]), input, select")) return false;
     const gallery = item.closest("[data-gallery]") ?? item.parentElement ?? document.body;
-    const list = [
-      ...new Set([...gallery.querySelectorAll<HTMLElement>("[data-open]")].map((x) => x.dataset.open ?? "")),
-    ];
-    openViewer(list, list.indexOf(item.dataset.open ?? ""), item.dataset.info === "1");
+    // One entry per file (a file can show twice), with its thumbnail for the open animation.
+    const byName = new Map<string, HTMLElement>();
+    for (const x of gallery.querySelectorAll<HTMLElement>("[data-open]"))
+      if (!byName.has(x.dataset.open ?? "")) byName.set(x.dataset.open ?? "", x);
+    byName.set(item.dataset.open ?? "", item);
+    const list = [...byName.keys()];
+    void openViewer(list, list.indexOf(item.dataset.open ?? ""), item.dataset.info === "1", [
+      ...byName.values(),
+    ]);
     return true;
   };
   document.addEventListener("click", (e) => openFrom(e.target as HTMLElement));

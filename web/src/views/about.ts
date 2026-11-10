@@ -44,6 +44,12 @@ function credits(a: About): { backend: Credit[]; frontend: Credit[] } {
         version: p["pillow-heif"],
       },
       {
+        name: "PyAV",
+        role: "Video thumbnails (FFmpeg's decoders, so iPhone HEVC videos get a picture too)",
+        url: "https://github.com/PyAV-Org/PyAV",
+        version: p.av,
+      },
+      {
         name: "Redis",
         role: "Optional shared cache (set REDIS_URL); the app caches in its own memory by default",
         url: "https://redis.io",
@@ -72,6 +78,7 @@ function credits(a: About): { backend: Credit[]; frontend: Credit[] } {
           TypeScript: "https://www.typescriptlang.org",
           "Tailwind CSS": "https://tailwindcss.com",
           Lucide: "https://lucide.dev",
+          PhotoSwipe: "https://photoswipe.com",
         }[name] ?? "#",
       role:
         {
@@ -84,6 +91,7 @@ function credits(a: About): { backend: Credit[]; frontend: Credit[] } {
           TypeScript: "Typed dashboard code",
           "Tailwind CSS": "Styling",
           Lucide: "Icons",
+          PhotoSwipe: "Photo viewer: zoom, pan and swipe",
         }[name] ?? "",
     })),
   };
@@ -122,8 +130,8 @@ const about: View = {
         <div class="card-b grid grid-cols-1 gap-4 text-sm text-ink-2 md:grid-cols-2 xl:grid-cols-4">
           <p><b class="text-ink">App:</b> designed, built and maintained by <a class="text-accent" href="https://github.com/kshanxs" target="_blank" rel="noopener">kshanxs</a>, under the MIT license.</p>
           <p><b class="text-ink">Uploads:</b> <a class="text-accent" href="https://github.com/xob0t/google_photos_mobile_client" target="_blank" rel="noopener">gpmc</a> by xob0t (MIT), which talks to Google Photos like the Android app, so uploads keep their original quality. Signing in uses <a class="text-accent" href="https://revanced.app" target="_blank" rel="noopener">ReVanced</a> and GmsCore.</p>
-          <p><b class="text-ink">Data:</b> <a class="text-accent" href="https://github.com/tursodatabase/turso" target="_blank" rel="noopener">Turso</a> and SQLite store statistics and upload state; answers are cached in the app's own memory (or <a class="text-accent" href="https://redis.io" target="_blank" rel="noopener">Redis</a> if you set one up); Pillow and pillow-heif make thumbnails.</p>
-          <p><b class="text-ink">Dashboard:</b> TypeScript built with <a class="text-accent" href="https://viteplus.dev" target="_blank" rel="noopener">Vite+</a> by VoidZero, Tailwind CSS and Lucide icons. Runs on any Docker host${status()?.platform === "umbrel" ? `, here on <a class="text-accent" href="https://umbrel.com" target="_blank" rel="noopener">Umbrel</a>` : ""}.</p>
+          <p><b class="text-ink">Data:</b> <a class="text-accent" href="https://github.com/tursodatabase/turso" target="_blank" rel="noopener">Turso</a> and SQLite store statistics and upload state; answers are cached in the app's own memory (or <a class="text-accent" href="https://redis.io" target="_blank" rel="noopener">Redis</a> if you set one up); Pillow and pillow-heif make thumbnails, and PyAV makes them for videos.</p>
+          <p><b class="text-ink">Dashboard:</b> TypeScript built with <a class="text-accent" href="https://viteplus.dev" target="_blank" rel="noopener">Vite+</a> by VoidZero, Tailwind CSS, Lucide icons and the PhotoSwipe viewer. Runs on any Docker host${status()?.platform === "umbrel" ? `, here on <a class="text-accent" href="https://umbrel.com" target="_blank" rel="noopener">Umbrel</a>` : ""}.</p>
         </div>
         <div class="flex flex-wrap gap-2 border-t border-line p-4"><a class="btn" href="https://github.com/kshanxs/gp-sync" target="_blank" rel="noopener">${icon("branch")}Source code</a><a class="btn" href="#/settings/api">${icon("code")}REST API</a></div>
       </section>

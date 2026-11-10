@@ -181,8 +181,17 @@ export const eventMeta: Record<string, { tone: Tone; icon: IconName; label: stri
 /** Thumbnail with a photo/video icon if it can't be shown (see the error handler in main.ts).
  *  With the file's time (`v`) the picture can be kept by the browser for good. */
 export function thumb(name: string, cls = "thumb", v?: number): string {
-  const ver = v ? `&v=${v}` : "";
-  return `<img class="${cls}" loading="lazy" decoding="async" src="api/thumb?path=${encodeURIComponent(name)}${ver}" alt="" data-kind="${kindIcon(name)}">`;
+  const src = `api/thumb?path=${encodeURIComponent(name)}${v ? `&v=${v}` : ""}`;
+  return `<img class="${cls}" loading="lazy" decoding="async" src="${src}"${cls.includes("size-full") ? sharp(src) : ""} alt="" data-kind="${kindIcon(name)}">`;
+}
+
+/** About how wide a grid tile is shown: phones two across, wider screens a few hundred pixels. */
+const TILE_SIZES = "(min-width: 1280px) 300px, (min-width: 640px) 260px, 50vw";
+
+/** A tile's picture in two sizes (320 and 640 pixels): the browser takes the sharp one on dense
+ * screens and big tiles, the small one elsewhere. Small row icons keep the one size. */
+export function sharp(src: string): string {
+  return ` srcset="${src} 320w, ${src}&w=640 640w" sizes="${TILE_SIZES}"`;
 }
 
 export function thumbFallback(img: HTMLImageElement): void {

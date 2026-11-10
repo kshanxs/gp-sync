@@ -6,6 +6,8 @@ import threading
 from pathlib import Path
 
 THUMB_SIZE = 320
+# The sharp size, for phones' dense screens and big tiles; made only when a page asks for it.
+THUMB_BIG = 640
 _thumb_slots = threading.BoundedSemaphore(2)  # thumbnails are CPU heavy; two at a time
 _heif_ready = False
 
@@ -84,7 +86,33 @@ def make_thumbnail(source, target, size=THUMB_SIZE, quality=72):
     return target
 
 
-def save_bytes(data, target):
+def video_thumbnail(source, target, size=THUMB_SIZE, quality=72):
+    """Write a WebP thumbnail of a video: a frame about a second in (past a black or blurry start),
+    turned upright the way the phone recorded it. Raises if the video can't be read."""
+    import av
+    from PIL import Image
+
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with _thumb_slots, av.open(str(source)) as c:
+        stream = c.streams.video[0]
+        stream.thread_type = "AUTO"
+        seconds = (c.duration or 0) / av.time_base
+        if seconds > 2:
+            c.seek(int(min(1.0, seconds * 0.1) * av.time_base))  # nearest keyframe before it
+        frame = next(c.decode(stream))
+        im = frame.to_image()
+        # Phones store how to turn the picture (degrees, counter-clockwise), not turned pixels.
+        turn = round((getattr(frame, "rotation", 0) or 0) / 90) * 90 % 360
+        if turn:
+            im = im.transpose({90: Image.Transpose.ROTATE_90, 180: Image.Transpose.ROTATE_180,
+                               270: Image.Transpose.ROTATE_270}[turn])  # fmt: skip
+        im.thumbnail((size, size))
+        _save_webp(im.convert("RGB"), target, quality)
+    return target
+
+
+def save_bytes(data, target, size=THUMB_SIZE):
     """Store thumbnail bytes from Google (JPEG) as our cached WebP."""
     import io
 
@@ -93,8 +121,8 @@ def save_bytes(data, target):
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(io.BytesIO(data)) as im:
-        im.thumbnail((THUMB_SIZE, THUMB_SIZE))
-        _save_webp(im.convert("RGB"), target, 72)
+        im.thumbnail((size, size))
+        _save_webp(im.convert("RGB"), target, 72 if size <= THUMB_SIZE else 78)
     return target
 
 

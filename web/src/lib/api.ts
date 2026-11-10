@@ -608,6 +608,9 @@ export interface StorageItem {
   quota: number;
   taken: number;
   google_url: string;
+  /** Its shape in pixels, from Google's list (null when it has none). */
+  width?: number | null;
+  height?: number | null;
   state: ReclaimState;
   error?: string;
   updated?: number;

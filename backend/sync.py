@@ -2470,43 +2470,52 @@ def safe_media_path(name):
     return p
 
 
-def thumbnail(name):
-    """Path of a cached WebP thumbnail for a media file, made on first request."""
+def thumbnail(name, size=media.THUMB_SIZE):
+    """Path of a cached WebP thumbnail for a media file, made on first request. `size`: the usual
+    one, or media.THUMB_BIG for dense screens and big tiles."""
     p = safe_media_path(name)
     if not p:
         return None
+    big = size > media.THUMB_SIZE
     mtime = p.stat().st_mtime
-    target = media.thumb_path(THUMBS, str(p), mtime)
+    target = media.thumb_path(THUMBS, str(p), f"{mtime}-{size}" if big else mtime)
     if target.exists():
         return target
+    quality = 78 if big else 72
     if ext(p.name) in THUMB_EXTS:
-        return media.make_thumbnail(p, target)
+        return media.make_thumbnail(p, target, size, quality)
     poster = q("SELECT poster FROM snap_items WHERE path=? AND poster IS NOT NULL", (str(p),))
     if poster and os.path.isfile(poster[0][0]):  # a Snapchat memory's first frame
-        return media.make_thumbnail(poster[0][0], target)
-    # Videos: ask Google for its thumbnail of the uploaded copy.
+        return media.make_thumbnail(poster[0][0], target, size, quality)
+    if ext(p.name) in VIDEO_EXTS:  # a frame of the video itself, uploaded or not
+        try:
+            return media.video_thumbnail(p, target, size, quality)
+        except Exception as e:
+            print(f"Video thumbnail for {name}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    # Else Google's thumbnail of the uploaded copy.
     row = q("SELECT media_key, account FROM files WHERE path=? AND media_key IS NOT NULL", (str(MEDIA / name),))
     accs = dict(accounts())
     if row and row[0][1] in accs:
         from gpmc.api import Api
 
-        data = Api(accs[row[0][1]]).get_thumbnail(row[0][0], width=media.THUMB_SIZE)
-        return media.save_bytes(data, target)
+        data = Api(accs[row[0][1]]).get_thumbnail(row[0][0], width=size)
+        return media.save_bytes(data, target, size)
     return None
 
 
-def google_thumb(name):
+def google_thumb(name, size=media.THUMB_SIZE):
     """Thumbnail of an item that is only in Google (for the storage page)."""
     account, _, key = name.partition("\n")
     auth = dict(accounts()).get(account)
     if not auth or not re.fullmatch(r"[\w-]+", key):
         return None
-    target = THUMBS / "google" / f"{hashlib.sha1(name.encode()).hexdigest()}.webp"
+    big = size > media.THUMB_SIZE
+    target = THUMBS / "google" / f"{hashlib.sha1(name.encode()).hexdigest()}{f'-{size}' if big else ''}.webp"
     if target.exists():
         return target
     from gpmc.api import Api
 
-    return media.save_bytes(Api(auth).get_thumbnail(key, width=media.THUMB_SIZE), target)
+    return media.save_bytes(Api(auth).get_thumbnail(key, width=size), target, size)
 
 
 def _small_thumb_path(account, key):
@@ -3082,6 +3091,20 @@ def storage_report(account, limit=500, kind="all"):
     # Only the chosen kind's items are listed, so "Videos" still fills the list even when the biggest
     # items overall are photos. The totals above stay for all kinds.
     shown_items = [i for i in items if only in ("all", i[3])][:limit]
+    # Each shown item's shape, so the page can lay them out in rows at their real proportions.
+    dims = {}
+    for i in range(0, len(shown_items), 500):
+        part = [it[0] for it in shown_items[i : i + 500]]
+        for key, w, h in (
+            _library_rows(
+                account,
+                f"SELECT media_key, width, height FROM remote_media WHERE media_key IN ({','.join('?' * len(part))})",
+                part,
+            )
+            or []
+        ):
+            if w and h:
+                dims[key] = (w, h)
     return {
         **out,
         "listed": rows is not None,
@@ -3107,6 +3130,8 @@ def storage_report(account, limit=500, kind="all"):
                 "quota": quota,
                 "taken": taken,
                 "google_url": f"https://photos.google.com/photo/{key}",
+                "width": dims.get(key, (None, None))[0],
+                "height": dims.get(key, (None, None))[1],
                 **job(key),
             }
             for key, _dedup, name, kind, size, quota, taken in shown_items
@@ -3955,7 +3980,8 @@ def _own_uploads(account):
 
 def _own_uploads_count(account):
     """True when GP Sync's own uploads count against storage in this account: freeing would only
-    move the cost, so nothing is deleted there."""
+    move the cost, so nothing is deleted there. When they don't (any more), the note left on items
+    that waited for it is cleared, so they don't keep saying so while they wait their turn."""
     ours = _own_uploads(account)
     for i in range(0, len(ours), 500):
         part = ours[i : i + 500]
@@ -3967,6 +3993,12 @@ def _own_uploads_count(account):
         )
         if rows:
             return True
+    q(
+        "UPDATE reclaim SET error='' WHERE account=? AND error=? AND state IN ('queued', 'downloaded', 'in_google')",
+        (account, OURS_COUNT),
+    )
+    if reclaim_state[account]["error"] == OURS_COUNT:
+        reclaim_state[account]["error"] = ""
     return False
 
 
@@ -6689,7 +6721,7 @@ def _finish_upload(tmp, name, length, when, sha1_hex, folder=""):
 
 
 def about():
-    packages = ("gpmc", "pyturso", "pillow", "pillow-heif", "requests", "rich", "redis")
+    packages = ("gpmc", "pyturso", "pillow", "pillow-heif", "av", "requests", "rich", "redis")
     return {
         "version": VERSION,
         "backend_version": BACKEND_VERSION,
@@ -7057,6 +7089,8 @@ class Handler(BaseHTTPRequestHandler):
             account, key = arg("account", ""), arg("key", "")
             if arg("small", "") == "1":
                 self.image("gthumb-small", f"{account}\n{key}", google_thumb_small)
+            elif arg("w", "") == str(media.THUMB_BIG):
+                self.image("gthumb-big", f"{account}\n{key}", lambda n: google_thumb(n, media.THUMB_BIG))
             else:
                 self.image("gthumb", f"{account}\n{key}", google_thumb)
         elif path == "/api/folders/files":
@@ -7118,7 +7152,10 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif path == "/api/thumb":
-            self.image("thumb", arg("path", ""), thumbnail)
+            if arg("w", "") == str(media.THUMB_BIG):
+                self.image("thumb-big", arg("path", ""), lambda n: thumbnail(n, media.THUMB_BIG))
+            else:
+                self.image("thumb", arg("path", ""), thumbnail)
         elif path == "/api/insights":
             tz = arg("tz", 0, -840, 840)
             self.cached(f"insights:{tz}", 60, lambda: insights(tz))

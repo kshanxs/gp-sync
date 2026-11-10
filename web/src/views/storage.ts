@@ -17,7 +17,7 @@ import { confirmDialog } from "../lib/dialog";
 import { atOnceText } from "../lib/pace";
 import { openMoveOptions } from "../lib/pace-sheet";
 import { workPanel, type WorkItem } from "../lib/work-panel";
-import { accountLine, badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
+import { accountLine, badge, cardHead, checkNote, sharp, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // Free up Google storage: items that count against it are downloaded (and proven to be Google's
@@ -78,8 +78,10 @@ async function savePrefs(change: Partial<ReclaimPrefs>, done?: string): Promise<
   void load();
 }
 
-const thumbOf = (key: string, kind: string, cls = "thumb") =>
-  `<img class="${cls}" loading="lazy" decoding="async" alt="" data-kind="${kind}" src="api/storage/thumb?account=${encodeURIComponent(account)}&key=${encodeURIComponent(key)}">`;
+const thumbOf = (key: string, kind: string, cls = "thumb") => {
+  const src = `api/storage/thumb?account=${encodeURIComponent(account)}&key=${encodeURIComponent(key)}`;
+  return `<img class="${cls}" loading="lazy" decoding="async" alt="" data-kind="${kind}" src="${src}"${cls.includes("size-full") ? sharp(src) : ""}>`;
+};
 
 const STEP = {
   downloading: { label: "Downloading", ic: "download" },
@@ -138,15 +140,21 @@ function actions(i: StorageItem, r: StorageReport, cur: ReclaimProgress | undefi
   }
 }
 
-/** One item as a thumbnail tile, like the Library grid. */
+/** An item's shape for the rows (width ÷ height), kept between 3:4 and 2:1 so a panorama or a tall
+ * screenshot doesn't take a whole row or shrink to a sliver. Square when unknown. */
+function shape(i: StorageItem): number {
+  return i.width && i.height ? Math.min(2, Math.max(0.75, i.width / i.height)) : 1;
+}
+
+/** One item as a thumbnail tile, in rows at its own proportions (like Google Photos). */
 function gridTile(i: StorageItem, r: StorageReport, working: Map<string, ReclaimProgress>): string {
   const cur = working.get(i.key);
   const s = stateOf(i, cur);
   const hint = ["downloaded", "in_google", "failed", "counts"].includes(i.state) ? (i.error ?? "") : "";
   const pickable = i.state === "" && !r.blocked;
   const chosen = picked.has(i.key);
-  return `<figure data-key="${esc(i.key)}" class="media-tile group relative overflow-hidden rounded-xl border ${chosen ? "border-accent" : "border-line"} bg-panel">
-    <label class="shimmer relative block aspect-square overflow-hidden ${pickable ? "cursor-pointer" : "cursor-default"}">
+  return `<figure data-key="${esc(i.key)}" style="--ar:${shape(i).toFixed(3)}" class="media-tile group relative overflow-hidden rounded-xl border ${chosen ? "border-accent" : "border-line"} bg-panel">
+    <label class="shimmer relative block aspect-(--ar) overflow-hidden ${pickable ? "cursor-pointer" : "cursor-default"}">
       ${thumbOf(i.key, i.kind, "zoom-img fade-img size-full object-cover")}
       ${pickable ? `<input type="checkbox" class="peer sr-only" data-pick="${esc(i.key)}" ${chosen ? "checked" : ""} aria-label="Pick ${esc(i.name)}">` : ""}
       ${pickable ? `<span class="absolute inset-0 transition-colors peer-checked:bg-accent/25"></span><span class="absolute top-2 left-2 grid size-6 place-items-center rounded-full border border-white/70 bg-black/30 text-white opacity-0 transition-opacity group-hover:opacity-100 peer-checked:opacity-100 peer-checked:bg-accent peer-checked:border-accent">${icon("check", "size-3.5")}</span>` : ""}
@@ -212,6 +220,7 @@ function workingCard(r: StorageReport): string {
         pct: i.state === "downloaded" ? 100 : undefined,
         // Why it waits, when there is a reason (a hold, or Google's error), else what comes next.
         note: i.error || WAITING_NOTE[i.state],
+        waiting: true,
       });
   }
   for (const c of w.values())
@@ -307,7 +316,7 @@ function renderList(r: StorageReport): void {
       <p class="border-b border-line px-4 py-2.5 text-xs text-ink-3">Items under way are listed first. Other accounts run alongside, and copies too. Downloads need free space here: ${bytes(r.free_space)} left.</p>
       ${
         listed.length
-          ? `<div class="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" data-gallery>${listed
+          ? `<div class="rows-grid p-4" data-gallery>${listed
               .slice(0, shown)
               .map((i) => gridTile(i, r, working))
               .join(

@@ -10,7 +10,7 @@ import { bytes, clock, fileName, num, pct, speed } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
 import { NetChart, rangeButtons, type Range } from "../lib/netchart";
 import { jobLink, jobTitle } from "../lib/jobs";
-import { workBox, type WorkItem } from "../lib/work-panel";
+import { workBox, workCount, type WorkItem } from "../lib/work-panel";
 import { badge, cardHead, eventMeta, openAttrs, spaceTone, thumb, tile, type Tone } from "../lib/ui";
 import { liveProcesses, PROCESS_HREF } from "../lib/live";
 import { PROCESS, PROCESS_KEYS } from "../lib/processes";
@@ -183,10 +183,7 @@ function renderProcs(s: Status): void {
 }
 
 function runningCount(s: Status): string {
-  const n = runningWork(s).length;
-  return n
-    ? `<span class="badge info">${num(n)} running</span>`
-    : `<span class="text-xs text-ink-3">Nothing running</span>`;
+  return workCount(runningWork(s));
 }
 
 function runningList(s: Status): string {

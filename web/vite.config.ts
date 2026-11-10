@@ -32,6 +32,7 @@ export default defineConfig({
       TypeScript: versionOf("typescript"),
       "Tailwind CSS": versionOf("tailwindcss"),
       Lucide: versionOf("lucide"),
+      PhotoSwipe: versionOf("photoswipe"),
     }),
   },
   build: {

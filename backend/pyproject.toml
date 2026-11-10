@@ -1,6 +1,6 @@
 [project]
 name = "gphotos-sync"
-version = "1.6.1"
+version = "1.7.0"
 description = "Back up a folder of photos and videos to Google Photos, with a small web dashboard."
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -12,6 +12,8 @@ dependencies = [
     # Thumbnails (pillow-heif opens iPhone HEIC photos).
     "pillow==13.0.0",
     "pillow-heif==1.8.1",
+    # Video thumbnails (PyAV: FFmpeg's decoders in a wheel, no system FFmpeg needed).
+    "av==19.0.2",
     # Optional cache (the Umbrel app runs Redis next to it; without Redis a memory cache is used).
     "redis==8.1.0",
 ]

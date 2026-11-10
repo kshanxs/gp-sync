@@ -1,8 +1,12 @@
-// Full-screen viewer for photos and videos, with an info panel (status, errors, retry).
-// Swipe or use the arrow keys to move, Esc or swipe down to close.
+// Full-screen viewer for photos and videos (PhotoSwipe): it grows out of the thumbnail, pinch or
+// double-tap to zoom, drag to pan, swipe between files, swipe down or Esc to close. The top bar has
+// the file's name, Google Photos, download and Details (status, errors, retry), as before.
+// PhotoSwipe is loaded the first time a file is opened, so pages that never open one don't pay for it.
 
+import type PhotoSwipe from "photoswipe";
+import type { SlideData } from "photoswipe";
 import { get, mediaUrl, post, previewUrl, thumbUrl, type FileInfo } from "./api";
-import { $, esc, toast } from "./dom";
+import { esc, toast } from "./dom";
 import { ago, bytes, clock, date, fileName, folderOf, ms } from "./format";
 import { icon } from "./icons";
 import { refresh } from "./store";
@@ -16,90 +20,46 @@ const STATUS: Record<string, [string, Tone]> = {
   missing: ["No longer in the folder", "warn"],
 };
 
-let names: string[] = [];
-let index = 0;
-let root: HTMLElement | null = null;
+const VIDEO = /\.(mp4|m4v|mov|webm)$/i;
+/** Longest side of the server's preview (api/preview): the size a photo is shown at before its own
+ * size is known. */
+const PREVIEW = 1600;
+/** Width of the Details panel beside the picture, on wider screens. */
+const PANEL = 384;
+
+interface Slide extends SlideData {
+  name: string;
+  video: boolean;
+}
+
+let pswp: PhotoSwipe | null = null;
 let infoOpen = false;
-let touch: { x: number; y: number } | null = null;
+let infoFor = ""; // the file the Details panel shows (or is loading)
 
-function el(): HTMLElement {
-  if (root) return root;
-  root = document.createElement("div");
-  root.id = "viewer";
-  root.className = "fixed inset-0 z-[55] hidden flex-col bg-black/90 backdrop-blur-xl";
-  root.setAttribute("role", "dialog");
-  root.setAttribute("aria-modal", "true");
-  root.innerHTML = `
-    <div class="flex h-14 shrink-0 items-center gap-2 px-3 text-white sm:px-4" style="padding-top:env(safe-area-inset-top)">
-      <button class="btn icon border-white/10 bg-white/10 text-white" data-v="close" aria-label="Close">${icon("x")}</button>
-      <div class="min-w-0 flex-1"><div class="truncate text-sm font-medium" id="vw-name"></div><div class="truncate text-xs text-white/60" id="vw-sub"></div></div>
-      <a class="btn icon border-white/10 bg-white/10 text-white" id="vw-google" target="_blank" rel="noopener" title="Open in Google Photos" aria-label="Open in Google Photos">${icon("external")}</a>
-      <a class="btn icon border-white/10 bg-white/10 text-white" id="vw-dl" title="Download original" aria-label="Download original">${icon("download")}</a>
-      <button class="btn icon border-white/10 bg-white/10 text-white" data-v="info" title="Details" aria-label="Details">${icon("info")}</button>
-    </div>
-    <div class="relative flex min-h-0 flex-1">
-      <div class="relative flex min-w-0 flex-1">
-      <div class="relative flex min-w-0 flex-1 items-center justify-center overflow-hidden" id="vw-stage"></div>
-      <button class="btn icon absolute top-1/2 left-3 hidden -translate-y-1/2 border-white/10 bg-white/10 text-white sm:inline-flex" data-v="prev" aria-label="Previous">${icon("chevron", "size-5 rotate-180")}</button>
-      <button class="btn icon absolute top-1/2 right-3 hidden -translate-y-1/2 border-white/10 bg-white/10 text-white sm:inline-flex" data-v="next" aria-label="Next" id="vw-next">${icon("chevron", "size-5")}</button>
-      </div>
-      <aside id="vw-info" class="scroll-thin absolute inset-x-0 bottom-0 hidden max-h-[60%] overflow-y-auto rounded-t-3xl border-t border-line bg-bg p-4 sm:static sm:max-h-none sm:w-96 sm:rounded-none sm:border-t-0 sm:border-l"></aside>
-    </div>`;
-  document.body.append(root);
-  root.addEventListener("click", (e) => {
-    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-v]");
-    const act = b?.dataset.v;
-    if (act === "close") close();
-    else if (act === "prev") go(-1);
-    else if (act === "next") go(1);
-    else if (act === "info") {
-      infoOpen = !infoOpen;
-      $("#vw-info").classList.toggle("hidden", !infoOpen);
-    } else if (act === "retry") void retry(b as HTMLButtonElement);
-    else if ((e.target as HTMLElement).id === "vw-stage") close();
-  });
-  root.addEventListener("touchstart", (e) => {
-    const t = e.touches[0];
-    if (t && !(e.target as HTMLElement).closest("#vw-info")) touch = { x: t.clientX, y: t.clientY };
-  });
-  root.addEventListener("touchend", (e) => {
-    const t = e.changedTouches[0];
-    if (!touch || !t) return;
-    const dx = t.clientX - touch.x;
-    const dy = t.clientY - touch.y;
-    touch = null;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) go(dx < 0 ? 1 : -1);
-    else if (dy > 90) close();
-  });
-  document.addEventListener("keydown", (e) => {
-    if (root?.classList.contains("hidden")) return;
-    if (e.key === "Escape") close();
-    else if (e.key === "ArrowRight") go(1);
-    else if (e.key === "ArrowLeft") go(-1);
-    else if (e.key === "i") $("[data-v=info]", root!).click();
-  });
-  return root;
+/** A first size for a file, from its thumbnail on the page (same shape), fixed once it loads. */
+function guessSize(el: Element | undefined): { width: number; height: number } {
+  const img = el?.matches("img") ? (el as HTMLImageElement) : el?.querySelector("img");
+  const w = img?.naturalWidth || 4;
+  const h = img?.naturalHeight || 3;
+  const k = PREVIEW / Math.max(w, h);
+  return { width: Math.round(w * k), height: Math.round(h * k) };
 }
 
-function close(): void {
-  root?.classList.add("hidden");
-  root?.classList.remove("flex");
-  $("#vw-stage", root!).innerHTML = "";
-  document.body.style.overflow = "";
-}
-
-function go(step: number): void {
-  if (names.length < 2) return;
-  index = (index + step + names.length) % names.length;
-  void show();
-}
-
-async function retry(b: HTMLButtonElement): Promise<void> {
-  b.disabled = true;
-  const r = await post<{ ok: boolean }>("retry", { path: names[index] });
-  toast(r.ok ? "This file will be tried again now" : "Nothing to retry", r.ok ? "good" : "info");
-  void refresh();
-  void show();
+/** The real size, once the picture or video has loaded: zoom limits and the shape follow it. */
+function fitTo(p: PhotoSwipe, index: number, width: number, height: number): void {
+  const data = p.options.dataSource as Slide[];
+  const d = data[index];
+  if (!d || !width || !height || (d.width === width && d.height === height)) return;
+  d.width = width;
+  d.height = height;
+  const slide = p.mainScroll.itemHolders.map((h) => h.slide).find((s) => s?.index === index);
+  if (!slide) return;
+  slide.width = slide.content.width = width;
+  slide.height = slide.content.height = height;
+  slide.calculateSize();
+  slide.zoomAndPanToInitial();
+  slide.applyCurrentZoomPan();
+  slide.updateContentSize(true);
 }
 
 function infoPanel(f: FileInfo): string {
@@ -135,68 +95,198 @@ function infoPanel(f: FileInfo): string {
     ${f.sha1 ? `<div class="mt-3 truncate font-mono text-[10px] text-ink-3" title="SHA-1">${f.sha1}</div>` : ""}`;
 }
 
-async function show(): Promise<void> {
-  const name = names[index]!;
-  const r = el();
-  $("#vw-name", r).textContent = fileName(name);
-  $("#vw-sub", r).textContent =
-    `${folderOf(name)}${names.length > 1 ? ` · ${index + 1} of ${names.length}` : ""}`;
-  const dl = $<HTMLAnchorElement>("#vw-dl", r);
-  dl.href = mediaUrl(name, true);
-  dl.download = fileName(name);
-  // iPhone home-screen apps have no back button: open the file in a sheet instead of in place.
-  const iosApp = (navigator as Navigator & { standalone?: boolean }).standalone === true;
-  if (iosApp) dl.target = "_blank";
-  else dl.removeAttribute("target");
-  const stage = $("#vw-stage", r);
-  const video = /\.(mp4|m4v|mov|webm)$/i.test(name);
-  stage.innerHTML = video
-    ? `<video class="max-h-full max-w-full" src="${mediaUrl(name)}" poster="${thumbUrl(name)}" controls playsinline preload="metadata"></video>`
-    : `<img class="max-h-full max-w-full object-contain opacity-0 transition-opacity duration-300" alt="" src="${previewUrl(name)}">
-       <img class="absolute max-h-full max-w-full scale-105 object-contain blur-xl" alt="" src="${thumbUrl(name)}" data-low>`;
-  const big = stage.querySelector<HTMLImageElement>("img:not([data-low])");
-  if (big) {
-    big.onload = () => {
-      big.classList.remove("opacity-0");
-      stage.querySelector("[data-low]")?.remove();
-    };
-    big.onerror = () => {
-      const low = stage.querySelector<HTMLImageElement>("[data-low]");
-      if (low) low.className = "max-h-full max-w-full object-contain";
-      big.remove();
-    };
-  }
-  // Warm up the neighbours so swiping feels instant.
-  for (const n of [names[index + 1], names[index - 1]]) {
-    if (n && !/\.(mp4|m4v|mov|webm|avi|mkv|3gp)$/i.test(n)) new Image().src = previewUrl(n);
-  }
-  const info = $("#vw-info", r);
-  info.innerHTML = `<div class="skeleton h-40"></div>`;
-  const f = await get<FileInfo>("file?path=" + encodeURIComponent(name));
-  if (names[index] !== name) return;
-  const g = $<HTMLAnchorElement>("#vw-google", r);
-  g.href = f.google_url || "#";
-  g.classList.toggle("hidden", !f.google_url);
-  info.innerHTML = infoPanel(f);
-  if (f.status === "failed" && !infoOpen) {
-    infoOpen = true;
-    info.classList.remove("hidden");
-  }
+function panel(p: PhotoSwipe): HTMLElement | null {
+  return p.element?.querySelector<HTMLElement>(".vw-info") ?? null;
 }
 
-/** Open the viewer at `start` within a list of file names (relative to the media folder). */
-export function openViewer(list: string[], start = 0, withInfo = false): void {
-  names = list.length ? list : [];
-  if (!names.length) return;
-  index = Math.max(0, Math.min(start, names.length - 1));
-  const r = el();
+function setInfo(p: PhotoSwipe, open: boolean): void {
+  infoOpen = open;
+  panel(p)?.classList.toggle("hidden", !open);
+  p.element?.querySelector(".vw-info-btn")?.setAttribute("aria-pressed", String(open));
+  p.updateSize(true); // the picture makes room for the panel on wider screens
+}
+
+/** The current file's name, links and Details. */
+async function showFile(p: PhotoSwipe): Promise<void> {
+  const d = p.currSlide?.data as Slide | undefined;
+  if (!d) return;
+  const total = p.getNumItems();
+  const title = p.element?.querySelector(".vw-title");
+  if (title)
+    title.innerHTML = `<div class="keep-line truncate text-sm font-medium">${esc(fileName(d.name))}</div><div class="keep-line truncate text-xs text-white/60">${esc(folderOf(d.name))}${total > 1 ? ` · ${p.currIndex + 1} of ${total}` : ""}</div>`;
+  const dl = p.element?.querySelector<HTMLAnchorElement>(".vw-dl");
+  if (dl) {
+    dl.href = mediaUrl(d.name, true);
+    dl.download = fileName(d.name);
+    // iPhone home-screen apps have no back button: open the file in a sheet instead of in place.
+    if ((navigator as Navigator & { standalone?: boolean }).standalone === true) dl.target = "_blank";
+  }
+  const g = p.element?.querySelector<HTMLAnchorElement>(".vw-google");
+  g?.classList.add("hidden");
+  const info = panel(p);
+  if (!info) return;
+  infoFor = d.name;
+  info.innerHTML = `<div class="skeleton h-40"></div>`;
+  const f = await get<FileInfo>("file?path=" + encodeURIComponent(d.name)).catch(() => null);
+  if (infoFor !== d.name || pswp !== p) return;
+  if (!f) {
+    info.innerHTML = `<div class="text-sm text-ink-3">Couldn't load the details</div>`;
+    return;
+  }
+  if (g && f.google_url) {
+    g.href = f.google_url;
+    g.classList.remove("hidden");
+  }
+  info.innerHTML = infoPanel(f);
+  if (f.status === "failed" && !infoOpen) setInfo(p, true);
+}
+
+async function retry(p: PhotoSwipe, b: HTMLButtonElement): Promise<void> {
+  b.disabled = true;
+  const name = (p.currSlide?.data as Slide | undefined)?.name;
+  if (!name) return;
+  const r = await post<{ ok: boolean }>("retry", { path: name });
+  toast(r.ok ? "This file will be tried again now" : "Nothing to retry", r.ok ? "good" : "info");
+  void refresh();
+  void showFile(p);
+}
+
+const barButton = (cls: string, label: string, ic: Parameters<typeof icon>[0]) => ({
+  isButton: true,
+  className: `vw-btn ${cls}`,
+  title: label,
+  ariaLabel: label,
+  html: icon(ic, "size-5"),
+});
+
+/** Open the viewer at `start` within a list of files (relative to the media folder). `els` are the
+ * thumbnails on the page, by index: the picture grows out of its own and shrinks back into it. */
+export async function openViewer(
+  list: string[],
+  start = 0,
+  withInfo = false,
+  els: Element[] = [],
+): Promise<void> {
+  if (!list.length) return;
+  const [{ default: PhotoSwipeClass }] = await Promise.all([
+    import("photoswipe"),
+    import("photoswipe/style.css"),
+  ]);
+  pswp?.destroy();
+  const dataSource: Slide[] = list.map((name, i) => {
+    const video = VIDEO.test(name);
+    const el = els[i];
+    return {
+      name,
+      video,
+      ...guessSize(el),
+      ...(video ? { type: "video" } : { src: previewUrl(name), msrc: thumbUrl(name) }),
+      element: el as HTMLElement | undefined,
+      thumbCropped: true,
+      alt: fileName(name),
+    };
+  });
   infoOpen = withInfo || window.innerWidth >= 1280;
-  $("#vw-info", r).classList.toggle("hidden", !infoOpen);
-  r.querySelectorAll<HTMLElement>("[data-v=prev], [data-v=next]").forEach((b) =>
-    b.classList.toggle("sm:inline-flex", names.length > 1),
-  );
-  r.classList.remove("hidden");
-  r.classList.add("flex");
-  document.body.style.overflow = "hidden";
-  void show();
+  const p = new PhotoSwipeClass({
+    dataSource,
+    index: Math.max(0, Math.min(start, list.length - 1)),
+    bgOpacity: 1,
+    counter: false, // the title says "3 of 40"
+    loop: list.length > 2,
+    showHideAnimationType: "zoom",
+    errorMsg: "This file can't be shown here. Download it to open it.",
+    paddingFn: (viewport) => ({
+      top: 56,
+      bottom: 16,
+      left: 0,
+      right: infoOpen && viewport.x >= 640 ? PANEL : 0,
+    }),
+  });
+  pswp = p;
+
+  // Videos: a player instead of a picture; dragging on it is left to its controls.
+  p.on("contentLoad", (e) => {
+    const { content } = e;
+    const d = content.data as Slide;
+    if (!d.video) return;
+    e.preventDefault();
+    const box = document.createElement("div");
+    box.className = "pswp__content vw-video";
+    const v = document.createElement("video");
+    v.src = mediaUrl(d.name);
+    v.poster = thumbUrl(d.name);
+    v.controls = true;
+    v.playsInline = true;
+    v.preload = "metadata";
+    v.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    v.addEventListener("loadedmetadata", () => fitTo(p, content.index, v.videoWidth, v.videoHeight));
+    box.append(v);
+    content.element = box;
+  });
+  p.on("loadComplete", ({ content }) => {
+    const img = content.element;
+    if (img instanceof HTMLImageElement && img.naturalWidth)
+      fitTo(p, content.index, img.naturalWidth, img.naturalHeight);
+  });
+  p.on("change", () => {
+    p.element?.querySelectorAll("video").forEach((v) => {
+      if (!p.currSlide?.container.contains(v)) v.pause();
+    });
+    void showFile(p);
+  });
+
+  p.on("uiRegister", () => {
+    p.ui?.registerElement({
+      name: "vw-title",
+      className: "vw-title",
+      appendTo: "bar",
+      order: 5,
+      html: "",
+    });
+    p.ui?.registerElement({
+      name: "vw-google",
+      order: 7,
+      tagName: "a",
+      ...barButton("vw-google hidden", "Open in Google Photos", "external"),
+      onInit: (el) => el.setAttribute("target", "_blank"),
+    });
+    p.ui?.registerElement({
+      name: "vw-dl",
+      order: 8,
+      tagName: "a",
+      ...barButton("vw-dl", "Download original", "download"),
+    });
+    p.ui?.registerElement({
+      name: "vw-info-btn",
+      order: 9,
+      ...barButton("vw-info-btn", "Details", "info"),
+      onClick: () => setInfo(p, !infoOpen),
+    });
+    p.ui?.registerElement({
+      name: "vw-info",
+      className: `vw-info scroll-thin ${infoOpen ? "" : "hidden"}`,
+      appendTo: "root",
+      onInit: (el) => {
+        el.addEventListener("click", (ev) => {
+          const b = (ev.target as HTMLElement).closest<HTMLButtonElement>("[data-v=retry]");
+          if (b) void retry(p, b);
+        });
+        // Scrolling the panel isn't a swipe or a zoom.
+        el.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+        el.addEventListener("wheel", (ev) => ev.stopPropagation());
+      },
+    });
+  });
+
+  const keys = (e: KeyboardEvent) => {
+    if (e.key === "i" && !(e.target as HTMLElement).closest("input, textarea")) setInfo(p, !infoOpen);
+  };
+  document.addEventListener("keydown", keys);
+  p.on("destroy", () => {
+    document.removeEventListener("keydown", keys);
+    if (pswp === p) pswp = null;
+  });
+  p.init();
+  p.element?.querySelector(".vw-info-btn")?.setAttribute("aria-pressed", String(infoOpen));
+  void showFile(p);
 }

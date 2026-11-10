@@ -205,7 +205,8 @@ def test_dashboard_is_built_and_served(server):
     with urllib.request.urlopen(server + "/") as r:
         html = r.read().decode()
         assert r.headers["Content-Type"].startswith("text/html")
-    asset = next(p for p in (sync.STATIC_DIR / "assets").iterdir() if p.suffix == ".js")
+    # The page's own script (others, like the photo viewer, load when they're needed).
+    asset = next(p for p in (sync.STATIC_DIR / "assets").iterdir() if p.suffix == ".js" and p.name.startswith("index-"))
     with urllib.request.urlopen(f"{server}/assets/{asset.name}") as r:
         assert "immutable" in r.headers["Cache-Control"]
         assert r.headers["Content-Type"].startswith("text/javascript")

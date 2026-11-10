@@ -2131,8 +2131,13 @@ svg:hover .donut-arc:not(:hover) {
 .work-list .bar > i {
   background: var(--step, var(--accent-fill));
 }
+/* Up and down in its own box, as on the Overview, never sideways. Waits share a row each, so the
+   list stays about as long as the work at hand. */
 .work-list {
-  @apply max-h-[22rem] divide-y divide-line overflow-y-auto overscroll-contain;
+  @apply max-h-[22rem] min-w-0 divide-y divide-line overflow-x-hidden overflow-y-auto overscroll-contain;
+}
+.work-list > li {
+  @apply min-w-0;
 }
 .work-row {
   @apply flex items-center gap-3 px-4 py-2.5;
@@ -2142,4 +2147,72 @@ a.work-row {
 }
 .work-ic {
   @apply grid size-8 shrink-0 place-items-center rounded-lg bg-panel-2 text-accent;
+}
+
+/* ---- Viewer (lib/viewer.ts, PhotoSwipe): the app's buttons and Details panel on its top bar.
+   PhotoSwipe's own stylesheet is unlayered, so a few rules here say !important to win. */
+.pswp {
+  --pswp-bg: #000;
+  --pswp-placeholder-bg: #111;
+}
+.pswp .hidden {
+  display: none !important;
+}
+.pswp__top-bar {
+  padding-top: env(safe-area-inset-top);
+  background: linear-gradient(to bottom, rgb(0 0 0 / 0.55), transparent);
+}
+.vw-title {
+  @apply mr-auto flex min-w-0 flex-1 flex-col justify-center self-stretch pl-4 text-white;
+  pointer-events: none;
+}
+.pswp__button.vw-btn {
+  display: grid !important;
+  place-items: center;
+  width: 44px;
+  color: #fff;
+}
+.pswp__button.vw-btn[aria-pressed="true"] {
+  color: var(--accent-2);
+}
+.vw-info {
+  @apply absolute inset-x-0 bottom-0 z-20 max-h-[60%] overflow-y-auto overscroll-contain rounded-t-3xl border-t border-line bg-bg p-4 text-ink;
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+}
+@media (min-width: 640px) {
+  .vw-info {
+    @apply top-[60px] right-0 left-auto max-h-none w-96 rounded-none border-t-0 border-l;
+  }
+}
+.vw-video {
+  @apply grid place-items-center;
+}
+.vw-video > video {
+  @apply size-full bg-black object-contain;
+}
+
+/* Photos in rows at their own proportions, like Google Photos (Free storage). Each tile grows in
+   step with its shape (--ar, width ÷ height), so a row's pictures share one height and fill the
+   width; the last row keeps its natural size instead of stretching. */
+.rows-grid {
+  --row: 150px;
+  @apply flex flex-wrap gap-3;
+}
+.rows-grid > * {
+  flex: var(--ar, 1) 1 calc(var(--ar, 1) * var(--row));
+  min-width: 0;
+}
+.rows-grid::after {
+  content: "";
+  flex-grow: 1000000;
+}
+@media (min-width: 640px) {
+  .rows-grid {
+    --row: 190px;
+  }
+}
+@media (min-width: 1280px) {
+  .rows-grid {
+    --row: 210px;
+  }
 }

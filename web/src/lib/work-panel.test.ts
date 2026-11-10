@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { average, groups, itemPct, segments, totals, workBox, workPanel } from "./work-panel";
+import { average, groups, itemPct, listRows, segments, totals, workBox, workPanel } from "./work-panel";
 
 const items = [
   { key: "a", name: "a.jpg", step: "uploading", done: 50, total: 100 },
@@ -50,6 +50,29 @@ describe("work panel", () => {
     expect(average(items)).toBe(35);
     expect(s.reduce((a, x) => a + ((x.fill ?? 0) * x.width) / 100, 0)).toBeCloseTo(35);
     expect(workBox(items)).toContain("35% on average");
+  });
+
+  it("puts items waiting the same way in one row, and keeps every item in the counts", () => {
+    const parked = Array.from({ length: 300 }, (_, n) => ({
+      key: `p${n}`,
+      name: `IMG_${n}.JPG`,
+      step: "downloaded",
+      pct: 100,
+      note: "Replacing in Google next",
+      waiting: true,
+    }));
+    const odd = { key: "x", name: "x.jpg", step: "in_google", note: "Trying again soon", waiting: true };
+    const all = [...items.slice(0, 2), ...parked, odd];
+    const rows = listRows(all);
+    expect(rows.map((r) => r.name)).toEqual(["a.jpg", "b.jpg", "300 items", "x.jpg"]);
+    expect(rows[2]!.pct).toBe(100);
+    expect(rows[2]!.title).toContain("IMG_0.JPG, IMG_1.JPG");
+    expect(rows[2]!.title).toContain("and 270 more");
+    expect(groups(all)).toEqual([
+      ["uploading", 2],
+      ["waiting", 301],
+    ]);
+    expect(workBox(all).match(/<li /g)).toHaveLength(4);
   });
 
   it("is empty when nothing runs", () => {

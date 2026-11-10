@@ -14,7 +14,7 @@ import { icon, type IconName } from "../lib/icons";
 import { host, setPageStatus, setPauseControl, setRefreshControl, status } from "../lib/store";
 import { accountMenu, wireAccountMenu } from "../lib/account-menu";
 import { confirmDialog } from "../lib/dialog";
-import { badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
+import { badge, cardHead, checkNote, sharp, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // Copy one Google account to another: what the second one lacks, original files, nothing deleted.
@@ -244,7 +244,7 @@ function pickerCard(): string {
               .map(
                 (i) =>
                   `<button class="overflow-hidden rounded-xl border text-left ${selected.has(i.key) ? "border-accent bg-accent/10" : "border-line"}" data-item="${esc(i.key)}" aria-pressed="${selected.has(i.key)}">
-          <div class="relative aspect-square overflow-hidden bg-panel-2"><img class="size-full object-cover" loading="lazy" alt="" data-kind="${i.kind === "video" ? "video" : "photo"}" src="api/storage/thumb?account=${encodeURIComponent(src)}&key=${encodeURIComponent(i.key)}"><span class="absolute right-2 top-2 rounded-full bg-panel-2 p-1">${icon(selected.has(i.key) ? "check" : i.kind === "video" ? "video" : "photo")}</span></div>
+          <div class="relative aspect-square overflow-hidden bg-panel-2"><img class="size-full object-cover" loading="lazy" alt="" data-kind="${i.kind === "video" ? "video" : "photo"}" src="api/storage/thumb?account=${encodeURIComponent(src)}&key=${encodeURIComponent(i.key)}"${sharp(`api/storage/thumb?account=${encodeURIComponent(src)}&key=${encodeURIComponent(i.key)}`)}><span class="absolute right-2 top-2 rounded-full bg-panel-2 p-1">${icon(selected.has(i.key) ? "check" : i.kind === "video" ? "video" : "photo")}</span></div>
           <span class="block truncate px-2 pt-2 text-sm">${esc(i.name)}</span><span class="flex justify-between gap-2 px-2 pb-2 text-xs text-ink-3"><span class="keep-line truncate">${i.taken ? date(i.taken, true) : "No date"}</span><span class="shrink-0 tabular-nums">${bytes(i.size)}</span></span></button>`,
               )
               .join("")}</div>`

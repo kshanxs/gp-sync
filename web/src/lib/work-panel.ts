@@ -26,6 +26,11 @@ export interface WorkItem {
   group?: string;
   ic?: IconName;
   href?: string;
+  /** Tooltip on the name, instead of the name itself. */
+  title?: string;
+  /** Parked between steps (not being worked on): such items with the same step and note share one
+   * row ("307 items"), so a long queue doesn't fill the card. */
+  waiting?: boolean;
 }
 
 const STEPS: Record<string, { label: string; group: string; ic: IconName; bytes: boolean }> = {
@@ -140,20 +145,55 @@ export function totals(items: WorkItem[]): { done: number; total: number } {
   return { done, total };
 }
 
+/** The list's rows: one per item at work, then one per kind of wait (items parked on the same step
+ * with the same note), with how many and their names in its tooltip. A wait of one keeps its row. */
+export function listRows(items: WorkItem[]): WorkItem[] {
+  const out: WorkItem[] = [];
+  const parked = new Map<string, WorkItem[]>();
+  for (const i of items) {
+    if (!i.waiting) out.push(i);
+    else {
+      const k = `${i.step}\u0000${i.label ?? ""}\u0000${i.note ?? ""}`;
+      parked.set(k, [...(parked.get(k) ?? []), i]);
+    }
+  }
+  for (const [k, list] of parked) {
+    const first = list[0]!;
+    if (list.length === 1) out.push(first);
+    else
+      out.push({
+        ...first,
+        key: `waiting:${k}`,
+        name: `${num(list.length)} items`,
+        title: list
+          .slice(0, 30)
+          .map((i) => i.name)
+          .join(", ")
+          .concat(list.length > 30 ? ` and ${num(list.length - 30)} more` : ""),
+        pct: list.every((i) => i.pct === first.pct) ? first.pct : undefined,
+        href: undefined,
+      });
+  }
+  return out;
+}
+
 function row(i: WorkItem): string {
   const s = stepOf(i);
   const p = itemPct(i);
   const ic = i.ic ?? s.ic;
   const spin = ic === "loader";
-  const right =
-    i.note ?? (s.bytes && i.total ? `${bytes(i.done ?? 0)} of ${bytes(i.total)}` : s.bytes ? "" : "");
+  const right = s.bytes && i.total ? `${bytes(i.done ?? 0)} of ${bytes(i.total)}` : "";
   const tag = i.href ? "a" : "div";
   return `<li data-key="${esc(i.key)}" style="--step:${colorOf(groupOf(i))}"><${tag} class="work-row"${i.href ? ` href="${esc(i.href)}"` : ""}>
     <span class="work-ic">${icon(ic, `size-4 ${spin ? "spin" : ""}`)}</span>
     <span class="min-w-0 flex-1">
-      <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium" title="${esc(i.name)}">${esc(i.name)}</span>${p != null && i.pct == null ? `<span class="ml-auto shrink-0 text-xs font-semibold tabular-nums">${Math.floor(p)}%</span>` : ""}</span>
+      <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium" title="${esc(i.title ?? i.name)}">${esc(i.name)}</span>${p != null && i.pct == null ? `<span class="ml-auto shrink-0 text-xs font-semibold tabular-nums">${Math.floor(p)}%</span>` : ""}</span>
       <span class="bar mt-1.5 block h-1.5 ${p == null ? "indeterminate" : "active"}"><i style="width:${p ?? 35}%"></i></span>
-      <span class="mt-1 flex justify-between gap-2 text-xs text-ink-3 tabular-nums"><span class="truncate">${esc(i.label ?? s.label)}</span>${right ? `<span class="shrink-0 truncate">${esc(right)}</span>` : ""}</span>
+      ${
+        i.note
+          ? `<span class="mt-1 block truncate text-xs text-ink-3" title="${esc(i.note)}">${esc(i.label ?? s.label)} · ${esc(i.note)}</span>`
+          : `<span class="mt-1 flex justify-between gap-2 text-xs text-ink-3 tabular-nums"><span class="min-w-0 truncate">${esc(i.label ?? s.label)}</span>${right ? `<span class="shrink-0">${esc(right)}</span>` : ""}</span>`
+      }
     </span>
   </${tag}></li>`;
 }
@@ -197,12 +237,22 @@ export function workBox(items: WorkItem[]): string {
       <div class="mt-3">${summaryBar(items)}</div>
       ${under ? `<div class="mt-1.5 flex justify-between gap-2 text-xs text-ink-3 tabular-nums">${under}</div>` : ""}
     </div>
-    <ul class="work-list scroll-thin">${items.map(row).join("")}</ul>
+    <ul class="work-list scroll-thin">${listRows(items).map(row).join("")}</ul>
   </div>`;
+}
+
+/** The count in a work card's title, the same on every page: "12 running", or "300 waiting" when
+ * all of it waits. */
+export function workCount(items: WorkItem[]): string {
+  const running = items.filter((i) => !i.waiting).length;
+  if (running) return `<span class="badge info">${num(running)} running</span>`;
+  return items.length
+    ? `<span class="badge">${num(items.length)} waiting</span>`
+    : `<span class="text-xs text-ink-3">Nothing running</span>`;
 }
 
 /** workBox in a card of its own, with a title (and buttons on the right). */
 export function workPanel(title: string, ic: IconName, items: WorkItem[], extra = ""): string {
   if (!items.length) return "";
-  return `<section class="card min-w-0 overflow-hidden">${cardHead(title, ic, `${extra}<span class="text-xs text-ink-3">${num(items.length)}</span>`)}${workBox(items)}</section>`;
+  return `<section class="card min-w-0 overflow-hidden">${cardHead(title, ic, `${extra}${workCount(items)}`)}${workBox(items)}</section>`;
 }

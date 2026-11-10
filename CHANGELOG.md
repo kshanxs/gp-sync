@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.7.0
+
+- **New photo viewer (PhotoSwipe):** a photo grows out of its thumbnail and shrinks back into it.
+  Pinch or double-tap to zoom, drag to pan, swipe between files, swipe down or Esc to close. The
+  name, Google Photos, download and Details (status, errors, retry) stay on its top bar; Details is
+  a side panel on wide screens and a sheet on phones. Videos play in it as before.
+- **Free storage in rows:** photos sit in rows at their own proportions, like Google Photos, instead
+  of square crops (each item's shape comes from Google's library list).
+- **Sharper thumbnails:** grid tiles come in two sizes (320 and 640 pixels) and the browser takes
+  the sharp one on phone screens and big tiles. The big size is made only when it is asked for.
+- **Videos get a thumbnail before they are uploaded:** a frame about a second in, turned upright the
+  way the phone recorded it (PyAV, with FFmpeg's decoders: iPhone HEVC too). Google's thumbnail is
+  still used when a video can't be read.
+- **Working now, shorter:** items waiting the same way share one row ("307 items · Downloaded ·
+  Replacing in Google next"), with their names in its tooltip; the chips and bar still count every
+  item. The list never scrolls sideways (a long note no longer widens it), and every work card has
+  the Overview's count badge ("12 running").
+- **Free storage:** items held while GP Sync's uploads counted against storage no longer keep
+  saying so once they don't: the note clears as soon as the check passes, not when each item's turn
+  comes.
+- Credits: PyAV and PhotoSwipe on the About page and in the README.
+
 ## 1.6.1
 
 - **Working now, easier to read:** each step has its own colour across the card: uploading blue,

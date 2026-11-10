@@ -436,7 +436,7 @@ VERSION         release version (backend and dashboard have their own); CHANGELO
 ```
 
 The sync engine and REST API are Python, in `backend/`. The dashboard is TypeScript in `web/`,
-styled with Tailwind CSS v4, with Lucide icons and hand-drawn SVG charts, and built with
+styled with Tailwind CSS v4, with Lucide icons, hand-drawn SVG charts and the PhotoSwipe viewer, and built with
 [Vite+](https://viteplus.dev) (`vp`: Vite, Rolldown, Oxlint, Oxfmt and Vitest in one tool). In `web/`:
 
 ```sh
@@ -487,5 +487,6 @@ uv run pytest              # tests (build the dashboard first), including checks
 GP Sync is made by [kshanxs](https://github.com/kshanxs) and released under the
 [MIT license](LICENSE). It builds on open-source work by others, credited on the app's About page:
 [gpmc](https://github.com/xob0t/google_photos_mobile_client) by xob0t (the Google Photos client),
-Turso, SQLite, Redis (optional), Pillow, pillow-heif, Python, uv, Ruff, Vite+, TypeScript, Tailwind CSS and
-Lucide, plus ReVanced and GmsCore for getting the sign-in.
+Turso, SQLite, Redis (optional), Pillow, pillow-heif, [PyAV](https://github.com/PyAV-Org/PyAV) (video
+thumbnails, with FFmpeg's decoders), Python, uv, Ruff, Vite+, TypeScript, Tailwind CSS, Lucide and
+[PhotoSwipe](https://photoswipe.com) (the photo viewer), plus ReVanced and GmsCore for getting the sign-in.

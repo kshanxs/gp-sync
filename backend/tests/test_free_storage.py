@@ -110,7 +110,7 @@ def library(tmp_path, monkeypatch, media):
     with Storage(db) as st:
         st.update(
             [
-                item("BIG", is_favorite=True, caption="Goa"),
+                item("BIG", is_favorite=True, caption="Goa", width=4032, height=3024),
                 item("SMALL", data=b"small"),
                 item("FREE", data=b"free", quota=0),
                 item("PARTNER", data=b"partner", origin="partner"),
@@ -136,6 +136,9 @@ def test_report_lists_what_counts_biggest_first(library):
     assert r["counted"] == 2 and r["counted_bytes"] == len(DATA) + 5 and r["total"] == 3
     assert r["ours"] == {"seen": 1, "counted": 0, "uploaded": 1}  # GP Sync's own upload doesn't count
     assert r["items"][0]["taken"] == 1_700_000_000
+    # Its shape, for rows at real proportions; unknown when Google's list has none.
+    assert (r["items"][0]["width"], r["items"][0]["height"]) == (4032, 3024)
+    assert r["items"][1]["width"] is None
 
 
 def test_whole_round_trip(library):
@@ -173,6 +176,22 @@ def test_nothing_is_deleted_where_our_own_uploads_count(library):
     # Nothing is even downloaded: it couldn't be replaced, so downloads would only pile up.
     assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0][0] == "queued"
     assert "own uploads count" in sync.reclaim_state[ACC]["error"]
+
+
+def test_the_hold_note_clears_once_our_uploads_no_longer_count(library):
+    """Items held while GP Sync's uploads counted keep no stale note once they don't: the check
+    passing clears it, before the item's turn comes."""
+    with Storage(library) as st:
+        st.update([item("OURS", data=b"ours")])
+    sha = hashlib.sha1(b"ours").hexdigest()
+    sync.q("INSERT INTO files (path, status, account, sha1) VALUES ('x', 'uploaded', ?, ?)", (ACC, sha))
+    sync.reclaim_queue(ACC, ["BIG"])
+    sync.q("UPDATE reclaim SET state='downloaded', error=? WHERE media_key='BIG'", (sync.OURS_COUNT,))
+    assert sync._own_uploads_count(ACC)
+    assert sync.q("SELECT error FROM reclaim WHERE media_key='BIG'")[0][0] == sync.OURS_COUNT
+    sync.q("UPDATE files SET status='exists' WHERE sha1=?", (sha,))  # it turns out not to be ours
+    assert not sync._own_uploads_count(ACC)
+    assert sync.q("SELECT state, error FROM reclaim WHERE media_key='BIG'")[0] == ("downloaded", "")
 
 
 def test_a_phone_backup_found_in_google_is_not_one_of_our_uploads(library):

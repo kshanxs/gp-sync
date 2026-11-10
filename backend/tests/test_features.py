@@ -236,6 +236,9 @@ def test_thumbnails(server, media):
         assert r.headers["Content-Type"] == "image/webp"
         thumb = Image.open(__import__("io").BytesIO(r.read()))
         assert max(thumb.size) == 320
+    # The sharp size, for dense screens and big tiles.
+    with urllib.request.urlopen(server + "/api/thumb?path=Photos/big.jpg&w=640") as r:
+        assert max(Image.open(__import__("io").BytesIO(r.read())).size) == 640
     for bad in ("../../etc/passwd", "Photos/missing.jpg", "Photos/trip/../../../x.jpg"):
         assert post(server + "/api/thumb?path=" + bad)[0] in (404, 501)  # POST not allowed
         try:
@@ -243,6 +246,27 @@ def test_thumbnails(server, media):
             raise AssertionError("should be 404")
         except urllib.error.HTTPError as e:
             assert e.code == 404
+
+
+def test_video_thumbnail_is_a_frame_of_the_video(media):
+    """A video gets a thumbnail from its own frames (PyAV), uploaded or not: no Google needed."""
+    import av
+    from PIL import Image
+
+    path = sync.MEDIA / "Videos" / "clip.mp4"
+    with av.open(str(path), "w") as out:
+        stream = out.add_stream("mpeg4", rate=10)
+        stream.width, stream.height, stream.pix_fmt = 160, 90, "yuv420p"
+        for _ in range(30):
+            frame = av.VideoFrame.from_image(Image.new("RGB", (160, 90), "red"))
+            for packet in stream.encode(frame):
+                out.mux(packet)
+        for packet in stream.encode():
+            out.mux(packet)
+    thumb = Image.open(sync.thumbnail("Videos/clip.mp4"))
+    assert thumb.size == (160, 90)  # small videos aren't blown up
+    r, g, b = thumb.convert("RGB").getpixel((80, 45))
+    assert r > 200 and g < 60 and b < 60
 
 
 def test_video_thumbnail_comes_from_google(media, monkeypatch):
