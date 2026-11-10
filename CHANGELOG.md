@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.5.10
+
+- Free storage, Working now: each item stays listed from download to Google's check ("Checking
+  with Google") and leaves once it is freed, so one file can be followed step by step, as in 1.5.6.
+  New items still start without waiting for the check, so freeing is as fast as before.
+- Numbers that agree: Overview's strip and Running now count the same work; Library says how many
+  files are still to back up, matching the count in the menu; Sync's ring is the share of files,
+  with the share of space beside it; Copy accounts says what the other account had at the last read
+  and how many GP Sync copied since; CPU is the share of the whole machine everywhere (0–100%).
+- Nothing cut off: process cards on Overview, Insights tiles on phones, the speed limit choices,
+  filters on Activity (they wrap instead), device names under Where your photos are, account chips
+  and tiles on Free storage, and dates and folders in the photo grids.
+- Rows that scroll sideways (Settings tabs on phones, heat maps) fade at the edge, and the heat maps
+  open on the newest weeks.
+- Sync: Today, Streak, Space and Last scan sit under Backup progress, beside Now, so no card is half
+  empty. Insights no longer shows the upload hours and weekdays twice.
+- Chart colours mean the same in both themes: blue for photos and this week, orange for videos and
+  last week.
+- Pause shows only when there is something to pause (Free storage, Copy accounts, Fix dates). Upload
+  hours say when they are off. Sources asks about app saves only once some are found. The header's
+  Add files button is hidden on the Upload page.
+- Fix dates picks the account with the same chips as Free storage.
+- Copy accounts shows a placeholder when a thumbnail can't load. Overview's Recent activity leaves
+  out housekeeping such as "Settings saved". History shows the total uploaded instead of "Already in
+  Google 0", and Activity's session total says "None yet" instead of "0 · 0 B".
+
 ## 1.5.9
 
 - Pause and Refresh moved from the header into each page: a control strip under the title says

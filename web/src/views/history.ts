@@ -33,6 +33,14 @@ async function load(): Promise<void> {
 
 let totals: Totals | null = null;
 
+/** The year heat map; phones scroll it, starting at today (the newest weeks are on the right). */
+function showYear(svg: string): void {
+  const year = $("#h-year");
+  const first = !year.dataset.html;
+  html(year, svg);
+  if (first) year.scrollLeft = year.scrollWidth;
+}
+
 function renderAll(): void {
   const generic = proc !== "uploads" && !!procs;
   // The photo and video legend belongs to uploads; other processes draw one colour (or one per process).
@@ -153,7 +161,7 @@ function renderGenericYear(): void {
     value: metric === "files" ? d.count : d.bytes,
     tip: `${d.date.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })}\n${d.count ? `${num(d.count)} ${genericLabel()}${d.bytes ? ` · ${bytes(d.bytes)}` : ""}` : "Nothing"}`,
   }));
-  html($("#h-year"), heatmap(days, { cell: 14, gap: 3 }));
+  showYear(heatmap(days, { cell: 14, gap: 3 }));
 }
 
 function renderGenericDaily(): void {
@@ -232,7 +240,7 @@ function renderYear(): void {
     value: val(row),
     tip: `${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })}\n${row && row.photos + row.videos ? `${row.photos} photos, ${row.videos} videos · ${bytes(row.photo_bytes + row.video_bytes)}` : "Nothing uploaded"}`,
   }));
-  html($("#h-year"), heatmap(days, { cell: 14, gap: 3 }));
+  showYear(heatmap(days, { cell: 14, gap: 3 }));
 }
 
 function renderDaily(): void {
@@ -299,12 +307,20 @@ function renderTotals(t: Totals): void {
   const tiles = [
     tile({ label: "Photos", value: num(t.photos), ic: "photo", sub: bytes(t.photo_bytes) }),
     tile({ label: "Videos", value: num(t.videos), ic: "video", sub: bytes(t.video_bytes) }),
-    tile({
-      label: "Already in Google",
-      value: num(t.existing),
-      ic: "verified",
-      sub: "Found, not uploaded again",
-    }),
+    // "Already in Google 0" says nothing: the total uploaded takes its place then.
+    t.existing
+      ? tile({
+          label: "Already in Google",
+          value: num(t.existing),
+          ic: "verified",
+          sub: "Found, not uploaded again",
+        })
+      : tile({
+          label: "Uploaded in total",
+          value: num(t.photos + t.videos),
+          ic: "cloudUp",
+          sub: bytes(t.photo_bytes + t.video_bytes),
+        }),
     tile({
       label: "Upload time",
       value: duration((t.photo_ms + t.video_ms) / 1000),
@@ -347,7 +363,7 @@ const historyView: View = {
     <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
       <section class="card xl:col-span-12">
         ${cardHead("Last 12 months", "calendar", `<span class="hidden text-xs text-ink-3 sm:inline" id="h-streak"></span><div class="seg ml-2" id="h-metric"><button data-m="files" aria-pressed="true">Files</button><button data-m="data" aria-pressed="false">Data</button></div>`)}
-        <div class="card-b"><div class="scroll-thin overflow-x-auto pb-1" id="h-year"><div class="skeleton h-32"></div></div><div class="mt-2 flex justify-end">${heatLegend()}</div></div>
+        <div class="card-b"><div class="scroll-thin fade-x overflow-x-auto pb-1" id="h-year"><div class="skeleton h-32"></div></div><div class="mt-2 flex justify-end">${heatLegend()}</div></div>
       </section>
       <section class="card xl:col-span-12">
         ${cardHead("Per day", "chart", `<span class="hidden items-center gap-3 sm:flex" id="h-legend"></span><div class="seg ml-2" id="h-span"><button data-d="30" aria-pressed="true">30 d</button><button data-d="90" aria-pressed="false">90 d</button></div>`)}

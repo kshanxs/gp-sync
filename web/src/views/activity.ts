@@ -61,7 +61,7 @@ function render(): void {
           const sub = l.name
             ? `${folderOf(l.name)}${l.kind === "failed" ? " · " + l.text.split(": ").slice(1).join(": ") : ""}`
             : "";
-          return `${head}<div class="row ${l.name ? "clickable" : ""}" ${l.name ? openAttrs(l.name, true) : ""}><span class="w-11 shrink-0 text-[11px] leading-tight text-ink-3 tabular-nums sm:w-16 sm:text-xs">${clock(l.time)}</span>${lead}
+          return `${head}<div class="row ${l.name ? "clickable" : ""}" ${l.name ? openAttrs(l.name, true) : ""}><span class="w-14 shrink-0 text-[11px] leading-tight whitespace-nowrap text-ink-3 tabular-nums sm:w-16 sm:text-xs">${clock(l.time)}</span>${lead}
           <div class="min-w-0 flex-1"><div class="truncate text-sm" title="${esc(l.text)}">${esc(title)}</div>${sub ? `<div class="truncate text-xs text-ink-3">${esc(sub)}</div>` : ""}</div>
           <span class="badge ${m.tone}" title="${esc(m.label)}">${icon(m.icon)}<span class="hidden sm:inline">${esc(m.label)}</span></span></div>`;
         })
@@ -132,7 +132,13 @@ const activity: View = {
       ["Uploaded", num(s.counts.uploaded), "cloudUp"],
       ["Already in Google", num(s.counts.exists), "verified"],
       ["Failed", num(s.counts.failed), "error"],
-      ["This session", `${num(s.session.uploaded_files)} · ${bytes(s.session.uploaded_bytes)}`, "timer"],
+      [
+        "Since the app started",
+        s.session.uploaded_files
+          ? `${num(s.session.uploaded_files)} · ${bytes(s.session.uploaded_bytes)}`
+          : "None yet",
+        "timer",
+      ],
     ];
     html(
       $("#act-totals"),

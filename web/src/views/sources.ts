@@ -127,11 +127,12 @@ function firstRun(r: SourcesReport): string {
         `<li><b>${esc(r.labels[s])}</b> (${num(r.counts[s])}): ${esc(actionSummary(r.settings, s))}</li>`,
     )
     .join("");
+  if (!lines) return ""; // nothing saved from apps found (yet): no question to answer
   return `<section class="card mb-4 border-accent p-4" role="region" aria-labelledby="so-ask-title">
     <div class="flex items-center gap-3"><span class="grid size-10 place-items-center rounded-xl bg-panel-2 text-ink-2">${icon("sparkles", "size-5")}</span>
       <h2 id="so-ask-title" class="text-lg font-semibold tracking-tight">Sort items saved from apps?</h2></div>
     <p class="mt-3 text-sm text-ink-2">App saves often have no date, so they pile up on the day they were copied here.</p>
-    <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-2">${lines || "<li>No items saved from apps found yet.</li>"}</ul>
+    <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-2">${lines}</ul>
     <p class="mt-2 text-xs text-ink-3">Albums group them, captions make them searchable, archive hides them from the timeline. Nothing changes in Google until you choose.</p>
     <div class="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
       <button class="btn" data-ask="label">Only label them here</button>
@@ -190,7 +191,9 @@ function render(): void {
                     .join("")}
                 </select>
                 <button class="btn sm" id="so-clear">${icon("x")}Clear picks</button>`
-              : `<button class="btn sm" id="so-pick-all" ${r.items.length ? "" : "disabled"}>${icon("check")}Pick all shown</button>`
+              : r.items.length
+                ? `<button class="btn sm" id="so-pick-all">${icon("check")}Pick all shown</button>`
+                : ""
           }
           ${withEstimate.length ? `<button class="btn sm primary" id="so-accept">${icon("calendar")}Accept estimated dates (${num(withEstimate.length)})</button>` : ""}
         </div>

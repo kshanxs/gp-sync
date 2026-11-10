@@ -1,5 +1,5 @@
-// Account picker used by pages that work on one Google account at a time (Fix dates, Free storage):
-// a button showing the current account, opening a menu of every connected account with its state.
+// Account pickers for pages that work on one Google account at a time (Fix dates, Free storage):
+// chips for every account when there are several, or a button with a menu.
 
 import { esc } from "./dom";
 import { icon } from "./icons";
@@ -119,4 +119,32 @@ export function freeingAccounts(): string[] {
 /** Accounts with a job of this kind running now (status.jobs). */
 export function busyAccounts(kind: string): string[] {
   return [...new Set((status()?.jobs ?? []).filter((j) => j.kind === kind).map((j) => j.account))];
+}
+
+/** What an account chip says under the address. */
+export interface ChipLine {
+  line: string;
+  /** Extra in grey after the line ("1.8 GB freed"). */
+  extra?: string;
+  tone?: string;
+  live?: boolean;
+}
+
+/** Every connected account as a row of chips, the current one ticked (Free storage, Fix dates): a
+ * list on phones, columns on wider screens. Clicks carry data-acc. "" with only one account. */
+export function accountChips(current: string, lineFor: (account: string) => ChipLine): string {
+  const accs = status()?.accounts ?? [];
+  if (accs.length < 2) return "";
+  return `<div class="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 ${accs.length > 2 ? "xl:grid-cols-3" : ""}" role="tablist" aria-label="Accounts">${accs
+    .map((a, n) => {
+      const { line, extra, tone = "text-ink-3", live } = lineFor(a);
+      const on = a === current;
+      return `<button type="button" role="tab" data-acc="${esc(a)}" aria-selected="${on}" class="acc-chip card flex min-w-0 items-center gap-3 px-3 py-2.5 text-left ${on ? "border-accent" : ""}">
+        ${avatar(a, "size-8")}
+        <span class="min-w-0 flex-1"><span class="flex min-w-0 items-center gap-1.5"><span class="truncate text-sm font-medium" title="${esc(a)}">${esc(a)}</span>${n === 0 ? '<span class="shrink-0 rounded-full bg-panel-2 px-1.5 text-[10px] font-medium text-ink-3">Main</span>' : ""}</span>
+        <span class="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs"><span class="flex min-w-0 items-center gap-1.5 ${tone}">${live ? '<span class="dot live shrink-0"></span>' : ""}<span class="truncate">${esc(line)}</span></span>${extra ? `<span class="text-ink-3">· ${esc(extra)}</span>` : ""}</span></span>
+        ${on ? icon("check", "size-4 shrink-0 text-accent") : ""}
+      </button>`;
+    })
+    .join("")}</div>`;
 }

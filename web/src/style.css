@@ -80,8 +80,8 @@
   --accent-fill: #f39a26;
   --accent-fill-2: #f8b04a;
   --on-accent: #2b1a03;
-  --s1: #ef961f;
-  --s2: #5b68e0;
+  --s1: #5b68e0; /* the same meaning in both themes: s1 blue (photos, this week), s2 orange */
+  --s2: #ef961f;
   --s3: #1c9f71;
   --s4: #c48a00;
   --s5: #d45a8f;
@@ -1526,6 +1526,7 @@ svg:hover .donut-arc:not(:hover) {
     -webkit-line-clamp: 2;
     line-clamp: 2;
   }
+  /* (see .seg[data-wrap="flex"] below for wider screens) */
   /* Segmented controls whose choices don't fit on one line become an even grid (lib/fit-segs.ts)
      instead of hiding choices off to the side. */
   .seg[data-wrap] {
@@ -1761,4 +1762,32 @@ svg:hover .donut-arc:not(:hover) {
 }
 .page-ctl-ic.tone-good {
   color: var(--good);
+}
+
+/* Wider screens: a segmented control too long for its row wraps onto a second line (lib/fit-segs.ts). */
+@media (min-width: 640px) {
+  .seg[data-wrap="flex"] {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+}
+
+/* Rows that scroll sideways fade at an edge with more beyond it, so it is clear they scroll. */
+.set-tabs,
+.fade-x {
+  --fade-l: 0px;
+  --fade-r: 0px;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade-l),
+    #000 calc(100% - var(--fade-r)),
+    transparent 100%
+  );
+}
+:is(.set-tabs, .fade-x)[data-fade-l="true"] {
+  --fade-l: 48px;
+}
+:is(.set-tabs, .fade-x)[data-fade-r="true"] {
+  --fade-r: 48px;
 }

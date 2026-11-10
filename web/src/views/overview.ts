@@ -10,7 +10,7 @@ import { bytes, clock, fileName, num, pct, speed } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
 import { NetChart, rangeButtons, type Range } from "../lib/netchart";
 import { jobLink, jobStep, jobTitle } from "../lib/jobs";
-import { badge, cardHead, eventMeta, openAttrs, spaceTone, thumb, tile } from "../lib/ui";
+import { badge, cardHead, eventMeta, openAttrs, spaceTone, thumb, tile, type Tone } from "../lib/ui";
 import { liveProcesses, PROCESS_HREF } from "../lib/live";
 import { PROCESS, PROCESS_KEYS } from "../lib/processes";
 import type { View } from "./view";
@@ -107,7 +107,8 @@ function controls(s: Status): void {
       : busy.length
         ? {
             tone: "run",
-            title: `${num(busy.length)} running`,
+            // The same count as the Running now card below: each upload batch and job.
+            title: `${num(runningItems(s).length)} running`,
             detail: busy.map((l) => PROCESS[l.key].label).join(", "),
           }
         : { tone: "good", title: "Nothing running right now", detail: "Work shows here as it starts" },
@@ -167,13 +168,16 @@ function renderProcs(s: Status): void {
       d.setDate(d.getDate() - 13 + i);
       return hist?.days.find((x) => x.day === d.toLocaleDateString("sv"))?.count ?? 0;
     });
+    // In a narrow card (four in a row) the badge keeps only its icon, so the name fits.
+    const stateBadge = (label: string, tone: Tone, ic: IconName) =>
+      `<span class="badge ${tone} shrink-0" title="${label}">${icon(ic)}<span class="hidden @[15rem]:inline">${label}</span></span>`;
     const state = l.paused
-      ? badge("Paused", "warn", "pause")
+      ? stateBadge("Paused", "warn", "pause")
       : l.running
-        ? badge("Running", "info", "loader")
+        ? stateBadge("Running", "info", "loader")
         : l.waiting
-          ? badge("Waiting", "", "hourglass")
-          : badge("Idle", "", "ok");
+          ? stateBadge("Waiting", "", "hourglass")
+          : stateBadge("Idle", "", "ok");
     const count = day?.count ?? 0;
     el.classList.toggle("is-running", l.running && !l.paused);
     html(
@@ -183,7 +187,7 @@ function renderProcs(s: Status): void {
       <div class="mt-3 flex items-end justify-between gap-3">
         <div class="min-w-0"><div class="num text-2xl">${procs ? num(count) : "–"}</div>
           <div class="text-xs text-ink-3">${esc(p.noun)} today${day?.bytes ? ` · ${bytes(day.bytes)}` : ""}</div></div>
-        <div class="h-8 w-24 shrink-0">${sparkline(last14, p.color)}</div>
+        <div class="h-8 w-16 shrink-0 @[15rem]:w-24">${sparkline(last14, p.color)}</div>
       </div>
       <div class="mt-3 truncate text-xs text-ink-2" title="${esc(l.detail)}">${esc(l.detail)}</div>
       <span class="bar mt-1.5 block h-1.5 ${l.running && l.pct !== null ? "" : "invisible"}"><i style="width:${l.pct ?? 0}%"></i></span>`,
@@ -331,7 +335,7 @@ const overview: View = {
       </section>
 
       <section class="grid grid-cols-1 gap-4 lg:col-span-12" data-card="ov-procs" id="ov-procs">
-        ${PROCESS_KEYS.map((k) => `<a href="${PROCESS_HREF[k]}" class="card proc-card block p-4 ${k === "uploads" ? "" : "is-idle"}" data-proc="${k}"><div class="skeleton h-28"></div></a>`).join("")}
+        ${PROCESS_KEYS.map((k) => `<a href="${PROCESS_HREF[k]}" class="card proc-card @container block p-4 ${k === "uploads" ? "" : "is-idle"}" data-proc="${k}"><div class="skeleton h-28"></div></a>`).join("")}
       </section>
 
       <section class="grid grid-cols-2 gap-4 lg:col-span-12 xl:grid-cols-4" data-card="ov-kpis">
@@ -393,8 +397,8 @@ const overview: View = {
     );
     setTile(
       "#k-cpu",
-      `${r.cpu_now.toFixed(1)}%`,
-      `of 1 core · ${r.cores} cores here`,
+      `${(r.cpu_now / Math.max(1, r.cores)).toFixed(1)}%`,
+      `of all ${r.cores} cores · ${r.cpu_now.toFixed(0)}% of one`,
       sparkline(r.cpu, "var(--s1)"),
     );
     setTile(
@@ -472,10 +476,12 @@ const overview: View = {
     html($("#ov-running-count"), runningCount(s));
     renderProcs(s);
 
-    $("#ov-recent-card").classList.toggle("is-idle", !s.log.length);
+    // Work done, not housekeeping ("Settings saved", scans): those stay in Activity › System.
+    const recent = s.log.filter((l) => l.kind !== "info" && l.kind !== "scan");
+    $("#ov-recent-card").classList.toggle("is-idle", !recent.length);
     html(
       $("#ov-recent"),
-      s.log
+      recent
         .slice(0, 6)
         .map((l) => {
           const m = eventMeta[l.kind] ?? eventMeta.info!;

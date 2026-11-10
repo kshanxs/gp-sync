@@ -11,7 +11,7 @@ import { $, esc, html, toast } from "../lib/dom";
 import { ago, bytes, date, duration, num, pct, remaining, speed } from "../lib/format";
 import { icon } from "../lib/icons";
 import { host, setPageStatus, setPauseControl, setRefreshControl, status } from "../lib/store";
-import { avatar, freeingAccounts, openingAccount, rememberAccount } from "../lib/account-menu";
+import { accountChips, freeingAccounts, openingAccount, rememberAccount } from "../lib/account-menu";
 import { columns } from "../lib/charts";
 import { confirmDialog } from "../lib/dialog";
 import { accountLine, badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
@@ -162,22 +162,11 @@ function gridTile(i: StorageItem, r: StorageReport, working: Map<string, Reclaim
 
 /** Every connected account at a glance: which one is freeing, paused or done. */
 function accountStrip(r: StorageReport): string {
-  const accs = status()?.accounts ?? [];
-  if (accs.length < 2) return "";
   const sum = r.summary ?? status()?.reclaim ?? {};
-  // A list on phones (one account per row, nothing cut off), columns on wider screens.
-  return `<div class="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3" role="tablist" aria-label="Accounts">${accs
-    .map((a, n) => {
-      const { line, freed, tone, live } = accountLine(sum[a]);
-      const on = a === account;
-      return `<button type="button" role="tab" data-acc="${esc(a)}" aria-selected="${on}" class="acc-chip card flex min-w-0 items-center gap-3 px-3 py-2.5 text-left ${on ? "border-accent" : ""}">
-        ${avatar(a, "size-8")}
-        <span class="min-w-0 flex-1"><span class="flex min-w-0 items-center gap-1.5"><span class="truncate text-sm font-medium" title="${esc(a)}">${esc(a)}</span>${n === 0 ? '<span class="shrink-0 rounded-full bg-panel-2 px-1.5 text-[10px] font-medium text-ink-3">Main</span>' : ""}</span>
-        <span class="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs"><span class="flex min-w-0 items-center gap-1.5 ${tone}">${live ? '<span class="dot live shrink-0"></span>' : ""}<span class="truncate">${esc(line)}</span></span>${freed ? `<span class="text-ink-3">· ${esc(freed)}</span>` : ""}</span></span>
-        ${on ? icon("check", "size-4 shrink-0 text-accent") : ""}
-      </button>`;
-    })
-    .join("")}</div>`;
+  return accountChips(account, (a) => {
+    const { line, freed, tone, live } = accountLine(sum[a]);
+    return { line, extra: freed, tone, live };
+  });
 }
 
 /** A progress bar that moves: the share done with a shimmer, or a sliding bar for a step that has
@@ -188,15 +177,41 @@ function progressBar(done: number, total: number, known = true): string {
     : `<span class="bar indeterminate mt-1.5 block" role="progressbar" aria-busy="true"><i></i></span>`;
 }
 
-/** Items being worked on right now, each with its step and a moving progress bar. */
+const WAITING_STEP: Record<string, { label: string; note: string; ic: Parameters<typeof icon>[0] }> = {
+  downloaded: { label: "Downloaded", note: "Replacing in Google next", ic: "hourglass" },
+  in_google: { label: "Replacing in Google", note: "Trying again soon", ic: "hourglass" },
+  checking: { label: "Checking with Google", note: "Google confirms it is free", ic: "loader" },
+};
+
+/** Items under way, from download to Google's check: the step each is on and a moving progress
+ * bar. An item stays here until it is freed, so it can be followed step by step. New items don't
+ * wait for the check, so there can be more rows than items at once. */
 function workingCard(r: StorageReport): string {
-  const w = r.working ?? [];
-  if (!w.length) return "";
-  const pausing = r.paused;
+  const w = new Map((r.working ?? []).map((c) => [c.key, c]));
+  // Biggest first, as the server lists them, so a row keeps its place as its item moves on.
+  const rows: (ReclaimProgress | StorageItem)[] = r.items.filter(
+    (i) => w.has(i.key) || i.state in WAITING_STEP,
+  );
+  for (const c of w.values()) if (!rows.some((x) => x.key === c.key)) rows.push(c);
+  if (!rows.length) return "";
+  const pausing = r.paused && w.size > 0;
   return `<section class="card mt-4 min-w-0 overflow-hidden">
-    ${cardHead(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", pausing ? `${num(w.length)} finishing their step` : `${num(w.length)} at once`)}
-    <ul class="divide-y divide-line">${w
-      .map((c) => {
+    ${cardHead(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", pausing ? `${num(w.size)} finishing their step` : [w.size ? `${num(w.size)} moving` : "", rows.length > w.size ? `${num(rows.length - w.size)} waiting for Google` : ""].filter(Boolean).join(" · "))}
+    <ul class="divide-y divide-line">${rows
+      .map((x) => {
+        const c = w.get(x.key);
+        if (!c) {
+          const i = x as StorageItem;
+          const st = WAITING_STEP[i.state]!;
+          return `<li data-key="${esc(i.key)}" class="flex items-center gap-3 px-4 py-3">
+        <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2 text-accent">${icon(st.ic, `size-4 ${st.ic === "loader" ? "spin" : ""}`)}</span>
+        <span class="min-w-0 flex-1">
+          <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium" title="${esc(i.name)}">${esc(i.name)}</span></span>
+          ${i.state === "downloaded" ? '<span class="bar mt-1.5 block"><i style="width:100%"></i></span>' : progressBar(0, 0, false)}
+          <span class="mt-1 flex justify-between gap-2 text-xs text-ink-3"><span>${st.label}</span><span class="hidden truncate sm:inline" title="${esc(i.error ?? "")}">${esc(i.state === "in_google" && i.error ? i.error : st.note)}</span></span>
+        </span>
+      </li>`;
+        }
         const step = c.step === "local" ? { ...STEP.local, label: `Copying from ${host()}` } : STEP[c.step];
         const known = c.step !== "deleting";
         const share = Math.floor(pct(c.done, c.total));
@@ -268,7 +283,7 @@ function renderList(r: StorageReport): void {
     ${checkNote(r.check)}
     ${oursCount ? `<section class="card mb-4 flex items-start gap-3 p-4 text-sm">${icon("warn", "size-5 shrink-0 text-warn")}<div><div class="font-medium">GP Sync's uploads count against storage in this account</div><div class="mt-0.5 text-ink-3">Re-uploading wouldn't free anything, so nothing is deleted here.</div></div></section>` : ""}
     <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
-      ${tile({ label: "Counts against storage", value: bytes(r.counted_bytes), ic: "cloud", sub: r.refreshing ? "Reading your library…" : `${num(r.counted)} of ${num(r.total)} items${r.refreshed ? ` · read ${ago(r.refreshed)}` : ""}` })}
+      ${tile({ label: "Using storage", value: bytes(r.counted_bytes), ic: "cloud", sub: r.refreshing ? "Reading your library…" : `${num(r.counted)} of ${num(r.total)} items${r.refreshed ? ` · read ${ago(r.refreshed)}` : ""}` })}
       ${tile({ label: "Freed by GP Sync", value: bytes(r.freed.bytes), ic: "sparkles", sub: r.freed.count ? `${num(r.freed.count)} item${r.freed.count === 1 ? "" : "s"} · see details` : "Nothing freed yet", tone: r.freed.count ? "good" : "", href: `#/storage/${encodeURIComponent(account)}/freed` })}
       ${tile({
         label: "Moving now",
@@ -543,18 +558,23 @@ function render(): void {
               ? { tone: "idle", title: `${num(left)} waiting to be freed`, detail: account }
               : { tone: "good", title: "Nothing being freed", detail: account },
     );
-    setPauseControl({
-      paused,
-      working: !!r.working?.length,
-      label: paused ? `Resume freeing storage in ${account}` : `Pause freeing storage in ${account}`,
-      toggle: async () => {
-        await post("storage/pause", { account, paused: !paused });
-        void load();
-        return paused
-          ? "Freeing storage resumed"
-          : "Freeing storage paused: downloads stop now, uploads under way finish first";
-      },
-    });
+    // Pause only when there is something to pause.
+    setPauseControl(
+      !(paused || moving || left)
+        ? null
+        : {
+            paused,
+            working: !!r.working?.length,
+            label: paused ? `Resume freeing storage in ${account}` : `Pause freeing storage in ${account}`,
+            toggle: async () => {
+              await post("storage/pause", { account, paused: !paused });
+              void load();
+              return paused
+                ? "Freeing storage resumed"
+                : "Freeing storage paused: downloads stop now, uploads under way finish first";
+            },
+          },
+    );
   }
   if (!r || !r.account) {
     html(

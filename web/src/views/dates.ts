@@ -11,6 +11,7 @@ import { icon } from "../lib/icons";
 import { setPageStatus, setPauseControl, setRefreshControl, status } from "../lib/store";
 import { confirmDialog } from "../lib/dialog";
 import {
+  accountChips,
   accountMenu,
   busyAccounts,
   openingAccount,
@@ -176,11 +177,24 @@ function render(): void {
   // Redrawn only when it changes: a redraw would close the menu while it is open.
   const accKey = [account, ...accs, ...(status()?.login_failed ?? [])].join("|");
   const accBox = $("#dt-acc");
+  // With several accounts the chips above pick the account (as on Free storage): no menu up here.
+  accBox.classList.toggle("hidden", accs.length > 1);
   if (accBox.dataset.key !== accKey) {
     accBox.dataset.key = accKey;
     html(accBox, accountMenu("dt-account", account));
     wireAccountMenu("dt-account", pickAccount);
   }
+  const fixingIn = new Set((status()?.jobs ?? []).filter((j) => j.kind === "dates").map((j) => j.account));
+  html(
+    $("#dt-chips"),
+    accountChips(account, (a) =>
+      fixingIn.has(a)
+        ? { line: "Fixing a date", tone: "text-accent", live: true }
+        : a === account && r?.waiting
+          ? { line: `${num(r.waiting)} waiting for Google` }
+          : { line: a === account && r?.account ? "Nothing being fixed" : "Not running" },
+    ),
+  );
   if (!r || !r.account) {
     html(
       $("#dt-body"),
@@ -206,16 +220,21 @@ function render(): void {
             ? { tone: "idle", title: `${num(r.waiting)} waiting for Google`, detail: account }
             : { tone: "good", title: "No date fixes running", detail: account },
   );
-  setPauseControl({
-    paused,
-    working: (status()?.jobs ?? []).some((j) => j.kind === "dates" && j.account === account),
-    label: paused ? `Resume fixing dates in ${account}` : `Pause fixing dates in ${account}`,
-    toggle: async () => {
-      await post("dates/pause", { account, paused: !paused });
-      void load();
-      return paused ? "Fixing dates resumed" : "Fixing dates paused";
-    },
-  });
+  // Pause only when there is something to pause.
+  setPauseControl(
+    !(paused || fixing || r.waiting)
+      ? null
+      : {
+          paused,
+          working: fixing,
+          label: paused ? `Resume fixing dates in ${account}` : `Pause fixing dates in ${account}`,
+          toggle: async () => {
+            await post("dates/pause", { account, paused: !paused });
+            void load();
+            return paused ? "Fixing dates resumed" : "Fixing dates paused";
+          },
+        },
+  );
   const available = new Set(r.items.filter((i) => waiting(i) || fixable(i)).map((i) => i.name));
   for (const name of picked) if (!available.has(name)) picked.delete(name);
   setRefreshControl({
@@ -339,6 +358,10 @@ function onClick(e: Event): void {
   const t = e.target as HTMLElement;
   const b = t.closest<HTMLElement>("button");
   if (!b) return;
+  if (b.dataset.acc) {
+    if (b.dataset.acc !== account) pickAccount(b.dataset.acc);
+    return;
+  }
   if (b.dataset.show) {
     if (b.dataset.show === show) return;
     show = b.dataset.show as DateFilter;
@@ -416,6 +439,7 @@ const dates: View = {
     shown = 60;
     editing = "";
     el.innerHTML = `
+    <div id="dt-chips"></div>
     <section class="page-bar card mb-4 p-3">
       <span id="dt-acc" class="page-bar-main"></span>
       <span class="page-bar-when" id="dt-when"></span>

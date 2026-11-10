@@ -58,8 +58,8 @@ function tileHtml(f: FileItem): string {
       <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100"></div>${link}
       <div class="on-media absolute bottom-2 left-2 flex gap-1">${badge(label, tone)}${f.undated ? badge("No date", "warn", "calendar", "No date inside the file: see Fix dates") : ""}${f.kind === "video" ? `<span class="badge">${icon("video")}</span>` : ""}</div></div>
     <figcaption class="p-2.5"><div class="truncate text-sm font-medium" title="${esc(f.name)}">${esc(fileName(f.name))}</div>
-      <div class="truncate text-xs text-ink-3">${bytes(f.size)} · ${esc(folderOf(f.name))}</div>
-      ${f.status === "failed" ? `<div class="mt-1 truncate text-xs text-bad" title="${esc(f.error)}">${esc(f.error)}</div>` : `<div class="text-xs text-ink-3">${ago(f.updated)}</div>`}
+      <div class="truncate text-xs text-ink-3" title="${esc(folderOf(f.name))}">${esc(folderOf(f.name))}</div>
+      ${f.status === "failed" ? `<div class="mt-1 truncate text-xs text-bad" title="${esc(f.error)}">${esc(f.error)}</div>` : `<div class="text-xs text-ink-3">${bytes(f.size)} · ${ago(f.updated)}</div>`}
     </figcaption></figure>`;
 }
 
@@ -71,10 +71,21 @@ function moreHtml(): string {
       : "";
 }
 
+/** "47 files", plus what is on disk but not backed up yet (it shows here once it is), so the
+ * number matches the count in the menu. */
+function countLine(): string {
+  const lib = status()?.library;
+  const waiting = lib ? Math.max(0, lib.files - lib.synced_files) : 0;
+  const line = `${num(total)} file${total === 1 ? "" : "s"}`;
+  return st === "all" && !q && !folder && waiting
+    ? `${line} · <a class="text-accent" href="#/sync">${num(waiting)} still to back up</a>`
+    : line;
+}
+
 function renderFiles(): void {
   const body = document.getElementById("lib-body");
   if (!body) return;
-  html($("#lib-count"), `${num(total)} file${total === 1 ? "" : "s"}`);
+  html($("#lib-count"), countLine());
   html(
     body,
     items.length
@@ -91,7 +102,7 @@ function appendFiles(more: FileItem[]): void {
   if (!grid) return renderFiles();
   grid.insertAdjacentHTML("beforeend", more.map(tileHtml).join(""));
   touched($("#lib-body"));
-  html($("#lib-count"), `${num(total)} file${total === 1 ? "" : "s"}`);
+  html($("#lib-count"), countLine());
   const end = document.getElementById("lib-sentinel");
   if (end) end.innerHTML = moreHtml();
 }

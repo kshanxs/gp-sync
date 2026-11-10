@@ -193,14 +193,17 @@ const health: View = {
   },
   update(s: Status) {
     const r = s.resources;
+    const cores = Math.max(1, r.cores);
     const times = r.cpu.map((_, i) => s.now - (r.cpu.length - 1 - i));
     const tf = (t: number) =>
       new Date(t * 1000).toLocaleTimeString([], { minute: "2-digit", second: "2-digit" });
     areaChart($("#hl-cpu"), {
-      series: [{ name: "CPU", color: "var(--s1)", values: r.cpu }],
+      // Share of the whole machine (every core), as on Overview: 0–100%.
+      series: [{ name: "CPU", color: "var(--s1)", values: r.cpu.map((v) => v / cores) }],
       times,
       timeFormat: tf,
       format: (v) => `${v.toFixed(0)}%`,
+      yMax: 100,
       height: 160,
     });
     areaChart($("#hl-mem"), {
@@ -220,7 +223,7 @@ const health: View = {
       format: (v) => `${bytes(v, 0)}/s`,
       height: 160,
     });
-    $("#hl-cpu-now").textContent = `${r.cpu_now.toFixed(1)}%`;
+    $("#hl-cpu-now").textContent = `${(r.cpu_now / cores).toFixed(1)}%`;
     $("#hl-mem-now").textContent = bytes(r.mem_now);
     html(
       $("#hl-io-now"),
@@ -265,7 +268,7 @@ const health: View = {
         "App",
         badge(`v${s.version}`, "info", "package") +
           badge(`Up ${duration(h?.uptime ?? 0).replace(/ \d+ (s|min)$/, "")}`, "", "clock"),
-        `${bytes(r.mem_now)} memory · ${r.cpu_now.toFixed(1)}% CPU`,
+        `${bytes(r.mem_now)} memory · ${(r.cpu_now / cores).toFixed(1)}% CPU`,
         "server",
       ),
     );

@@ -29,7 +29,6 @@ function uploadRows(rows: UploadRow[], key: "bytes" | "ms"): string {
 }
 
 function render(i: Insights): void {
-  const nowHour = new Date().getHours();
   html(
     $("#in-tiles"),
     [
@@ -70,28 +69,6 @@ function render(i: Insights): void {
         sub: "Average while uploading",
       }),
     ].join(""),
-  );
-  html(
-    $("#in-hours"),
-    columns(
-      i.by_hour,
-      i.by_hour.map((_, h) => String(h).padStart(2, "0")),
-      {
-        tip: (v, h) =>
-          `${String(h).padStart(2, "0")}:00–${String((h + 1) % 24).padStart(2, "0")}:00\n${num(v)} uploads`,
-        every: 3,
-        height: 180,
-        highlight: nowHour,
-      },
-    ),
-  );
-  html(
-    $("#in-week"),
-    columns(i.by_weekday, WEEKDAYS, {
-      tip: (v, d) => `${WEEKDAYS[d]}\n${num(v)} uploads`,
-      height: 180,
-      highlight: (new Date().getDay() + 6) % 7,
-    }),
   );
   const totalBytes = i.types.reduce((a, t) => a + t.bytes, 0);
   html(
@@ -227,8 +204,8 @@ function renderProcs(): void {
     const change = b ? Math.round(((a - b) / b) * 100) : a ? 100 : 0;
     return `<button class="flex min-w-0 items-center gap-3 rounded-xl border p-3 text-left transition ${k === proc ? "border-accent bg-accent/10" : "border-line hover:bg-panel-2"}" data-proc="${k}" aria-pressed="${k === proc}">
       <span class="grid size-9 shrink-0 place-items-center rounded-lg text-white" style="background:${PROCESS[k].color}">${icon(PROCESS[k].icon, "size-4")}</span>
-      <span class="min-w-0 flex-1"><span class="block truncate text-xs text-ink-3">${PROCESS[k].label}</span><span class="num block text-lg">${num(a)}</span></span>
-      <span class="shrink-0 text-xs ${change > 0 ? "text-good" : change < 0 ? "text-bad" : "text-ink-3"}">${b ? `${change > 0 ? "+" : ""}${change}%` : a ? "New" : ""}</span>
+      <span class="min-w-0 flex-1"><span class="keep-line block truncate text-xs text-ink-3">${PROCESS[k].label}</span>
+        <span class="flex items-baseline justify-between gap-2"><span class="num text-lg">${num(a)}</span><span class="shrink-0 text-xs ${change > 0 ? "text-good" : change < 0 ? "text-bad" : "text-ink-3"}">${b ? `${change > 0 ? "+" : ""}${change}%` : a ? "New" : ""}</span></span></span>
     </button>`;
   }).join("");
   html(
@@ -274,8 +251,6 @@ const insights: View = {
     <div class="grid grid-cols-2 gap-4 md:grid-cols-3 2xl:grid-cols-6" id="in-tiles">${'<div class="card skeleton h-28"></div>'.repeat(6)}</div>
     <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
       <section class="card lg:col-span-12">${cardHead("This week vs last week", "trend", '<span class="flex items-center gap-3"><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s1"></i>This week</span><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s2"></i>Last week</span></span>')}<div class="card-b" id="in-weeks"><div class="skeleton h-44"></div></div></section>
-      <section class="card lg:col-span-8">${cardHead("Uploads by hour of day", "clock", "Your time zone · current hour in aqua")}<div class="card-b" id="in-hours"><div class="skeleton h-44"></div></div></section>
-      <section class="card lg:col-span-4">${cardHead("By weekday", "calendar")}<div class="card-b" id="in-week"><div class="skeleton h-44"></div></div></section>
       <section class="card lg:col-span-4">${cardHead("Photos vs videos", "layers", "Library size")}<div class="card-b" id="in-split"></div></section>
       <section class="card lg:col-span-8">${cardHead("File types", "package", "By space used")}<div class="card-b grid grid-cols-1 gap-x-6 md:grid-cols-2 [&>*]:border-b [&>*]:border-line" id="in-types"></div></section>
       <section class="card lg:col-span-6">${cardHead("Largest uploads", "disk")}<div id="in-largest" data-gallery></div></section>

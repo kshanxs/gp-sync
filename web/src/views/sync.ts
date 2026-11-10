@@ -121,7 +121,8 @@ function renderShare(): void {
     `<div><div class="num text-xl">${shareMetric === "files" ? num(v) : bytes(v)}</div><div class="text-[11px] text-ink-3">${sub}</div></div>`;
   html(
     el,
-    `<div class="grid gap-6 md:grid-cols-2">
+    // Side by side only on very wide screens: otherwise the device names get cut to a letter.
+    `<div class="grid gap-6 2xl:grid-cols-2">
       <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
         ${donut(slices, center(total, shareBy === "devices" ? "on devices" : "in folders"))}
         <div class="w-full min-w-0 flex-1"><div class="label mb-1">${shareBy === "devices" ? "By device" : "By folder"}</div>
@@ -436,43 +437,45 @@ const sync: View = {
   mount(el) {
     el.innerHTML = `
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-12">
-      <section class="card overview-hero relative overflow-hidden p-5 lg:col-span-5" id="sy-hero">
+      <!-- Phones: progress, Now, then the tiles. Wider: progress with the tiles under it, beside Now. -->
+      <div class="contents lg:col-span-5 lg:flex lg:flex-col lg:gap-4">
+      <section class="card overview-hero relative order-1 overflow-hidden p-5 lg:order-none" id="sy-hero">
         <div class="flex items-center justify-between gap-2"><div><span class="label">Your library</span><h2 class="mt-1 text-lg font-semibold tracking-tight">Backup progress</h2></div><span id="sy-rate" class="text-xs text-ink-3 tabular-nums"></span></div>
         <div class="mt-4 flex items-center gap-4 sm:gap-5">
-          <div class="ring-box relative shrink-0">${ring(0, 148, 12)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-3xl" id="sy-pct">–</div><div class="text-[11px] text-ink-3">of library</div></div></div></div>
+          <div class="ring-box relative shrink-0">${ring(0, 148, 12)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-3xl" id="sy-pct">–</div><div class="text-[11px] text-ink-3">of files</div></div></div></div>
           <div class="min-w-0 space-y-1.5" id="sy-hero-text"></div>
         </div>
         <div class="mt-4 flex flex-wrap gap-1.5" id="sy-badges"></div>
       </section>
-      <section class="card lg:col-span-7">
-        ${cardHead("Now", "cloudUp", '<a href="#/upload" class="hover:text-ink">Upload from phone ›</a>')}
-        <div class="card-b" id="sy-now"><div class="skeleton h-24"></div></div>
-      </section>
-
-      <section class="grid grid-cols-2 gap-4 lg:col-span-12 xl:grid-cols-4">
+      <section class="order-3 grid grid-cols-2 gap-4 lg:order-none">
         ${tile({ id: "sy-today", label: "Today", value: "–", ic: "calendar", chart: "", href: "#/activity/uploaded" })}
         ${tile({ id: "sy-streak", label: "Streak", value: "–", ic: "flame", chart: "", href: "#/history" })}
         ${tile({ id: "sy-space", label: "Space here", value: "–", ic: "disk", chart: "" })}
         ${tile({ id: "sy-scan", label: "Last scan", value: "–", ic: "search" })}
       </section>
+      </div>
+      <section class="card order-2 lg:order-none lg:col-span-7">
+        ${cardHead("Now", "cloudUp", '<a href="#/upload" class="hover:text-ink">Upload from phone ›</a>')}
+        <div class="card-b" id="sy-now"><div class="skeleton h-24"></div></div>
+      </section>
 
-      <section class="card lg:col-span-7">
+      <section class="card order-4 self-start lg:order-none lg:col-span-7">
         ${cardHead("Folders", "folder", '<a href="#/folders" class="hover:text-ink">All folders ›</a>')}
         <div id="sy-folders"><div class="card-b"><div class="skeleton h-24"></div></div></div>
       </section>
-      <section class="card lg:col-span-5">
+      <section class="card order-4 self-start lg:order-none lg:col-span-5">
         ${cardHead("Upload times and sizes", "timer", '<a href="#/insights" class="hover:text-ink">Insights ›</a>')}
         <div class="card-b" id="sy-times"><div class="skeleton h-40"></div></div>
       </section>
 
-      <section class="card lg:col-span-12">
+      <section class="card order-5 lg:order-none lg:col-span-12">
         ${cardHead("Where your photos are", "chart", `<div class="seg" id="sy-share-by"><button data-by="devices">Devices</button><button data-by="folders">Folders</button></div><div class="seg ml-2" id="sy-share-metric"><button data-m="files">Files</button><button data-m="bytes">Size</button></div>`)}
         <div class="card-b" id="sy-share-body" aria-live="polite"><div class="skeleton h-44"></div></div>
       </section>
 
-      <section class="card lg:col-span-12">
+      <section class="card order-6 lg:order-none lg:col-span-12">
         ${cardHead("Uploads per day", "calendar", `<span id="sy-year-sub"></span>`)}
-        <div class="card-b"><div class="scroll-thin overflow-x-auto pb-1" id="sy-year"><div class="skeleton h-28"></div></div><div class="mt-2 flex justify-end">${heatLegend()}</div></div>
+        <div class="card-b"><div class="scroll-thin fade-x overflow-x-auto pb-1" id="sy-year"><div class="skeleton h-28"></div></div><div class="mt-2 flex justify-end">${heatLegend()}</div></div>
       </section>
     </div>`;
     $("#sy-share-by").addEventListener("click", (e) => {
@@ -518,7 +521,7 @@ const sync: View = {
     html(
       $("#sy-hero-text"),
       `<div class="num text-xl">${num(lib.synced_files)} <span class="text-sm font-normal text-ink-3">of ${num(lib.files)} files</span></div>
-       <div class="text-sm text-ink-2">${bytes(lib.synced_bytes)} of ${bytes(lib.bytes)}</div>
+       <div class="text-sm text-ink-2">${bytes(lib.synced_bytes)} of ${bytes(lib.bytes)} <span class="text-ink-3">(${pctText(lib.synced_bytes, lib.bytes)} of the space)</span></div>
        <div class="text-xs text-ink-3">${left ? `${bytes(lib.bytes - lib.synced_bytes)} still to back up` : "Every file is in Google Photos"}</div>`,
     );
     html($("#sy-badges"), heroBadges(s));

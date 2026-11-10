@@ -242,8 +242,8 @@ function pickerCard(): string {
               .map(
                 (i) =>
                   `<button class="overflow-hidden rounded-xl border text-left ${selected.has(i.key) ? "border-accent bg-accent/10" : "border-line"}" data-item="${esc(i.key)}" aria-pressed="${selected.has(i.key)}">
-          <div class="relative aspect-square overflow-hidden bg-panel-2"><img class="size-full object-cover" loading="lazy" alt="" src="api/storage/thumb?account=${encodeURIComponent(src)}&key=${encodeURIComponent(i.key)}"><span class="absolute right-2 top-2 rounded-full bg-panel-2 p-1">${icon(selected.has(i.key) ? "check" : i.kind === "video" ? "video" : "photo")}</span></div>
-          <span class="block truncate px-2 pt-2 text-sm">${esc(i.name)}</span><span class="block truncate px-2 pb-2 text-xs text-ink-3">${i.taken ? date(i.taken, true) : "No date"} · ${bytes(i.size)}</span></button>`,
+          <div class="relative aspect-square overflow-hidden bg-panel-2"><img class="size-full object-cover" loading="lazy" alt="" data-kind="${i.kind === "video" ? "video" : "photo"}" src="api/storage/thumb?account=${encodeURIComponent(src)}&key=${encodeURIComponent(i.key)}"><span class="absolute right-2 top-2 rounded-full bg-panel-2 p-1">${icon(selected.has(i.key) ? "check" : i.kind === "video" ? "video" : "photo")}</span></div>
+          <span class="block truncate px-2 pt-2 text-sm">${esc(i.name)}</span><span class="flex justify-between gap-2 px-2 pb-2 text-xs text-ink-3"><span class="keep-line truncate">${i.taken ? date(i.taken, true) : "No date"}</span><span class="shrink-0 tabular-nums">${bytes(i.size)}</span></span></button>`,
               )
               .join("")}</div>`
           : `<div class="empty">No items match</div>`
@@ -336,7 +336,13 @@ function render(): void {
       ? `${num(r!.src_total)} items in the library · ${num((r!.todo.photo.count ?? 0) + (r!.todo.video.count ?? 0))} not in the other`
       : "Library not read yet",
   );
-  html($("#cp-dst-stat"), listed ? `Already has ${num(r!.in_dst)} of them` : "Library not read yet");
+  // From the last library read: copies made since then show in the Copied count until the next read.
+  html(
+    $("#cp-dst-stat"),
+    listed
+      ? `Had ${num(r!.in_dst)} of them at the last read${r!.jobs.copied ? ` · ${num(r!.jobs.copied)} copied by GP Sync` : ""}`
+      : "Library not read yet",
+  );
   html(
     $("#cp-foot"),
     `<span>${num(accs.length)} of ${num(max)} accounts connected${accs.length < max ? ` · <a class="link-btn" href="#/settings/accounts">Add an account</a>` : ""}</span>
@@ -375,16 +381,22 @@ function render(): void {
               ? { tone: "idle", title: `${num(waiting)} waiting to copy`, detail: `${src} → ${dst}` }
               : { tone: "good", title: "Nothing being copied", detail: `${src} → ${dst}` },
     );
-    setPauseControl({
-      paused,
-      working: !!(r.working?.length || r.current),
-      label: paused ? "Resume copying between accounts" : "Pause copying between accounts",
-      toggle: async () => {
-        await post("copy/pause", { src, dst, paused: !paused });
-        void load();
-        return paused ? "Copying resumed" : "Copying paused: items under way finish first";
-      },
-    });
+    // Pause only when there is something to pause: copies waiting or moving, or Keep in sync on.
+    const pausable = paused || moving || waiting || (r.mirror?.mode ?? "off") !== "off";
+    setPauseControl(
+      !pausable
+        ? null
+        : {
+            paused,
+            working: !!(r.working?.length || r.current),
+            label: paused ? "Resume copying between accounts" : "Pause copying between accounts",
+            toggle: async () => {
+              await post("copy/pause", { src, dst, paused: !paused });
+              void load();
+              return paused ? "Copying resumed" : "Copying paused: items under way finish first";
+            },
+          },
+    );
   }
   if (!r || r.ready === false) {
     html($("#cp-body"), `<div class="card empty">${icon("warn")}Couldn't load</div>`);

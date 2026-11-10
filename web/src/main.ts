@@ -122,7 +122,7 @@ function shell(): string {
         <span class="hidden" id="offline">${'<span class="badge bad">' + icon("cloudOff") + "Offline</span>"}</span>
         <button class="btn icon hidden" id="btn-install" title="Install app" aria-label="Install app">${icon("download")}</button>
         ${glassToggle("sm")}
-        <a class="btn primary hidden sm:inline-flex" href="#/upload" aria-label="Add photos and videos from this device" title="Add photos and videos from this device">${icon("upload")}<span>Add files</span></a>
+        <a class="btn primary hidden sm:inline-flex" id="btn-add" href="#/upload" aria-label="Add photos and videos from this device" title="Add photos and videos from this device">${icon("upload")}<span>Add files</span></a>
       </header>
       <div id="ptr" aria-hidden="true" style="top:calc(4rem + env(safe-area-inset-top))"><svg viewBox="0 0 40 40"><circle class="ptr-track" cx="20" cy="20" r="11"/><circle class="ptr-arc" cx="20" cy="20" r="11" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" transform="rotate(-90 20 20)"/></svg></div>
       <div id="page-ctl" class="page-ctl hidden" role="region" aria-label="Controls for this page"></div>
@@ -167,6 +167,8 @@ let unsubscribe: (() => void) | null = null;
 function route(): void {
   const [id = "overview", ...rest] = location.hash.replace(/^#\/?/, "").split("/");
   const r = ROUTES.find((x) => x.id === id) ?? ROUTES[0]!;
+  // On the Upload page itself the header's Add files button would only lead back here.
+  $("#btn-add").classList.toggle("sm:inline-flex", r.id !== "upload");
   $("#sheet").classList.add("hidden");
   $$("[data-nav]").forEach((a) => {
     const on = a.dataset.nav === r.id;
