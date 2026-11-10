@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { groups, itemPct, totals, workBox, workPanel } from "./work-panel";
+import { average, groups, itemPct, segments, totals, workBox, workPanel } from "./work-panel";
 
 const items = [
   { key: "a", name: "a.jpg", step: "uploading", done: 50, total: 100 },
@@ -35,6 +35,21 @@ describe("work panel", () => {
     for (const i of items) expect(html).toContain(`data-key="${i.key}"`);
     expect(html).toContain("work-list");
     expect(html).toContain("75 B of 500 B");
+  });
+
+  it("splits the summary bar by step, filled to the average of all items", () => {
+    const s = segments(items);
+    expect(s.map((x) => [x.group, x.width])).toEqual([
+      ["uploading", 40],
+      ["downloading", 20],
+      ["checking", 20],
+      ["waiting", 20],
+    ]);
+    expect(s.find((x) => x.group === "checking")!.fill).toBeNull(); // no share yet: it slides
+    // a 50, b 0, c 25, d unknown (0), e 100: 175 / 5
+    expect(average(items)).toBe(35);
+    expect(s.reduce((a, x) => a + ((x.fill ?? 0) * x.width) / 100, 0)).toBeCloseTo(35);
+    expect(workBox(items)).toContain("35% on average");
   });
 
   it("is empty when nothing runs", () => {

@@ -15,7 +15,7 @@ import { accountChips, freeingAccounts, openingAccount, rememberAccount } from "
 import { columns } from "../lib/charts";
 import { confirmDialog } from "../lib/dialog";
 import { atOnceText } from "../lib/pace";
-import { openMoveOptions, paceButton } from "../lib/pace-sheet";
+import { openMoveOptions } from "../lib/pace-sheet";
 import { workPanel, type WorkItem } from "../lib/work-panel";
 import { accountLine, badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
@@ -185,7 +185,8 @@ const WAITING_NOTE: Record<string, string> = {
   checking: "Google confirms it is free",
 };
 
-/** Items under way, from download to Google's check, in the shared work panel. An item stays until
+/** Items under way, from download to Google's check, in the shared work panel. No "at once" button
+ * here: the Moving now tile above opens that sheet. An item stays until
  * it is freed, so it can be followed step by step; new items don't wait for the check, so there can
  * be more rows than items at once. */
 function workingCard(r: StorageReport): string {
@@ -218,7 +219,7 @@ function workingCard(r: StorageReport): string {
       items.push({ key: c.key, name: c.name ?? c.key, step: c.step, done: c.done, total: c.total });
   const pausing = r.paused && w.size > 0;
   return items.length
-    ? `<div class="mt-4">${workPanel(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", items, paceButton("move", r.prefs?.workers ?? 0, r.pace))}</div>`
+    ? `<div class="mt-4">${workPanel(pausing ? "Pausing" : "Working now", pausing ? "pause" : "loader", items)}</div>`
     : "";
 }
 

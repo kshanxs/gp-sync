@@ -903,10 +903,12 @@ body::before {
 @media (prefers-reduced-motion: reduce) {
   .spin,
   .animate-pulse,
-  .bar.indeterminate > i {
+  .bar.indeterminate > i,
+  .work-bar > span > i.slide {
     animation: none;
   }
-  .bar.indeterminate > i {
+  .bar.indeterminate > i,
+  .work-bar > span > i.slide {
     width: 100%;
     opacity: 0.45;
   }
@@ -2038,12 +2040,96 @@ svg:hover .donut-arc:not(:hover) {
   @apply text-accent;
 }
 
+/* A row of counts (chips or badges) that stays even when it wraps: two equal columns, and with an
+ * odd count the first one takes the whole top line (1 + 2, 1 + 2 + 2), never 3 + 1. When the card
+ * is wide enough for all of them (its own width, not the screen's), they share one line equally. */
+:has(> .even) {
+  container-type: inline-size;
+}
+.even {
+  @apply grid grid-cols-2 gap-1.5;
+}
+.even > *,
+.even > a > .badge {
+  @apply w-full min-w-0 justify-center overflow-hidden;
+}
+.even > a {
+  @apply flex min-w-0;
+}
+.even > :first-child:nth-last-child(odd) {
+  @apply col-span-2;
+}
+@container (min-width: 24rem) {
+  .even:not(:has(> :nth-child(4))) {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+  .even:not(:has(> :nth-child(4))) > :first-child {
+    grid-column: auto;
+  }
+}
+@container (min-width: 32rem) {
+  .even:not(:has(> :nth-child(5))) {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+  .even:not(:has(> :nth-child(5))) > :first-child {
+    grid-column: auto;
+  }
+}
+@container (min-width: 44rem) {
+  .even:not(:has(> :nth-child(7))) {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+  .even:not(:has(> :nth-child(7))) > :first-child {
+    grid-column: auto;
+  }
+}
+
 /* ---- Work under way (lib/work-panel.ts): a summary, then a list that scrolls in its own box. */
 .work-sum {
   @apply border-b border-line px-4 py-3;
 }
 .work-chip > svg {
-  @apply text-accent;
+  color: var(--step, var(--accent));
+}
+/* A step's chip in its colour, matching its part of the bar and its rows. */
+.work-chip[style*="--step"] {
+  border-color: color-mix(in oklab, var(--step) 40%, transparent);
+  background: color-mix(in oklab, var(--step) 13%, transparent);
+}
+.work-chip[style*="--step"] > b {
+  color: var(--step);
+}
+/* The summary bar: a part per step in its colour, each filled as far as its items are. */
+.work-bar {
+  @apply flex h-2 w-full gap-0.5 overflow-hidden rounded-full;
+}
+.work-bar > span {
+  @apply relative block h-full min-w-1.5 overflow-hidden first:rounded-l-full last:rounded-r-full;
+  background: color-mix(in oklab, var(--step) 22%, transparent);
+  transition: width 0.6s ease;
+}
+.work-bar > span > i {
+  @apply block h-full;
+  background: var(--step);
+  transition: width 1.2s linear;
+}
+.work-bar > span > i.slide {
+  width: 40%;
+  animation: bar-slide 1.3s ease-in-out infinite;
+}
+/* Each row's icon and bar in its step's colour. */
+.work-list .work-ic {
+  color: var(--step, var(--accent));
+  background: color-mix(in oklab, var(--step, var(--accent)) 14%, transparent);
+}
+.work-list .bar > i {
+  background: var(--step, var(--accent-fill));
 }
 .work-list {
   @apply max-h-[22rem] divide-y divide-line overflow-y-auto overscroll-contain;

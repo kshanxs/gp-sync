@@ -238,7 +238,7 @@ function render(): void {
   html(
     $("#up-summary"),
     items.length
-      ? `<div class="flex flex-wrap items-center gap-1.5">${badge(`${num(items.length)} files · ${bytes(total)}`, "", "layers")}${count("saved") ? badge(`${count("saved")} saved`, "good", "ok") : ""}${count("duplicate") ? badge(`${count("duplicate")} already there`, "warn", "copy") : ""}${count("retrying") ? badge(`${count("retrying")} reconnecting`, "warn", "wifi") : ""}${count("failed") ? badge(`${count("failed")} failed`, "bad", "error") : ""}${active.length && rate ? badge(speed(rate), "info", "up") : ""}${active.length && left > 2 ? badge(`~${duration(left)} left`, "", "clock") : ""}</div>
+      ? `<div class="even">${badge(`${num(items.length)} files · ${bytes(total)}`, "", "layers")}${count("saved") ? badge(`${count("saved")} saved`, "good", "ok") : ""}${count("duplicate") ? badge(`${count("duplicate")} already there`, "warn", "copy") : ""}${count("retrying") ? badge(`${count("retrying")} reconnecting`, "warn", "wifi") : ""}${count("failed") ? badge(`${count("failed")} failed`, "bad", "error") : ""}${active.length && rate ? badge(speed(rate), "info", "up") : ""}${active.length && left > 2 ? badge(`~${duration(left)} left`, "", "clock") : ""}</div>
          <div class="bar mt-3 ${active.length ? "active" : ""}"><i style="width:${pct(sent, total)}%"></i></div>
          <div class="mt-1.5 flex justify-between text-xs text-ink-3 tabular-nums"><span>${bytes(sent)} of ${bytes(total)}</span><span>${pct(sent, total).toFixed(0)}%</span></div>`
       : `<div class="text-sm text-ink-3">Files appear here with a preview while they upload.</div>`,

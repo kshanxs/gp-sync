@@ -64,6 +64,20 @@ const GROUP_IC: Record<string, IconName> = {
   working: "loader",
 };
 
+/** One colour per group, used by its chip, its part of the summary bar and its rows. Upload and
+ * download keep the network chart's colours. */
+const GROUP_COLOR: Record<string, string> = {
+  uploading: "var(--s1)",
+  downloading: "var(--s2)",
+  copying: "var(--s3)",
+  checking: "var(--s5)",
+  replacing: "var(--s4)",
+  reading: "var(--s3)",
+  working: "var(--accent-fill)",
+  waiting: "var(--ink-3)",
+};
+const colorOf = (g: string) => GROUP_COLOR[g] ?? "var(--accent-fill)";
+
 function stepOf(i: WorkItem) {
   return STEPS[i.step] ?? { label: i.step, group: i.step, ic: "loader" as IconName, bytes: !!i.total };
 }
@@ -79,11 +93,39 @@ export function itemPct(i: WorkItem): number | null {
 export function groups(items: WorkItem[]): [string, number][] {
   const n = new Map<string, number>();
   for (const i of items) {
-    const g = i.group ?? stepOf(i).group;
+    const g = groupOf(i);
     n.set(g, (n.get(g) ?? 0) + 1);
   }
   const rank = (g: string) => (GROUP_ORDER.includes(g) ? GROUP_ORDER.indexOf(g) : -1);
   return [...n].sort((a, b) => rank(a[0]) - rank(b[0]));
+}
+
+const groupOf = (i: WorkItem) => i.group ?? stepOf(i).group;
+
+/** The summary bar's parts, one per group in the chips' order: its share of the items (width), and
+ * how far its items are on average (fill, 0–100 of its part; ones without a share count as 0), or
+ * null when none has a share. So the bar's filled length is the average over every item. */
+export function segments(
+  items: WorkItem[],
+): { group: string; n: number; width: number; fill: number | null }[] {
+  return groups(items).map(([group, n]) => {
+    const known = items
+      .filter((i) => groupOf(i) === group)
+      .map(itemPct)
+      .filter((p) => p != null);
+    return {
+      group,
+      n,
+      width: (n / items.length) * 100,
+      fill: known.length ? known.reduce((a, p) => a + p, 0) / n : null,
+    };
+  });
+}
+
+/** Average share done over all items (those without a share count as 0), or null if none has one. */
+export function average(items: WorkItem[]): number | null {
+  const known = items.map(itemPct).filter((p) => p != null);
+  return known.length ? known.reduce((a, p) => a + p, 0) / items.length : null;
 }
 
 /** Bytes done and in all, over the items that count bytes now. */
@@ -106,7 +148,7 @@ function row(i: WorkItem): string {
   const right =
     i.note ?? (s.bytes && i.total ? `${bytes(i.done ?? 0)} of ${bytes(i.total)}` : s.bytes ? "" : "");
   const tag = i.href ? "a" : "div";
-  return `<li data-key="${esc(i.key)}"><${tag} class="work-row"${i.href ? ` href="${esc(i.href)}"` : ""}>
+  return `<li data-key="${esc(i.key)}" style="--step:${colorOf(groupOf(i))}"><${tag} class="work-row"${i.href ? ` href="${esc(i.href)}"` : ""}>
     <span class="work-ic">${icon(ic, `size-4 ${spin ? "spin" : ""}`)}</span>
     <span class="min-w-0 flex-1">
       <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium" title="${esc(i.name)}">${esc(i.name)}</span>${p != null && i.pct == null ? `<span class="ml-auto shrink-0 text-xs font-semibold tabular-nums">${Math.floor(p)}%</span>` : ""}</span>
@@ -116,24 +158,44 @@ function row(i: WorkItem): string {
   </${tag}></li>`;
 }
 
+/** One bar for the whole card: a part per group in its colour, as wide as its share of the items
+ * and filled as far as they are on average. A group with no share to show slides (or rests, when
+ * waiting). */
+function summaryBar(items: WorkItem[]): string {
+  return `<span class="work-bar">${segments(items)
+    .map((sg) => {
+      const tip = `${num(sg.n)} ${sg.group}${sg.fill != null ? ` · ${Math.floor(sg.fill)}% on average` : ""}`;
+      const fill =
+        sg.fill != null
+          ? `<i style="width:${sg.fill}%"></i>`
+          : sg.group === "waiting"
+            ? ""
+            : '<i class="slide"></i>';
+      return `<span style="--step:${colorOf(sg.group)};width:${sg.width}%" title="${esc(tip)}">${fill}</span>`;
+    })
+    .join("")}</span>`;
+}
+
 /** The summary and the scrolling list, to put inside a card. "" when nothing is under way. */
 export function workBox(items: WorkItem[]): string {
   if (!items.length) return "";
   const g = groups(items);
   const t = totals(items);
+  const avg = average(items);
+  const under = [
+    avg != null ? `<span>${Math.floor(avg)}% on average</span>` : "",
+    t.total ? `<span>${bytes(t.done)} of ${bytes(t.total)}</span>` : "",
+  ].join("");
   return `<div class="work-box">
     <div class="work-sum">
-      <div class="flex flex-wrap items-center gap-1.5">${g
+      <div class="even">${g
         .map(
           ([name, n]) =>
-            `<span class="work-chip">${icon(GROUP_IC[name] ?? "loader", "size-3.5")}<b class="tabular-nums">${num(n)}</b> ${esc(name)}</span>`,
+            `<span class="work-chip" style="--step:${colorOf(name)}">${icon(GROUP_IC[name] ?? "loader", "size-3.5 shrink-0")}<b class="tabular-nums">${num(n)}</b><span class="truncate">${esc(name)}</span></span>`,
         )
         .join("")}</div>
-      ${
-        t.total
-          ? `<div class="mt-2 flex items-center gap-3"><span class="bar block h-1.5 flex-1"><i style="width:${pct(t.done, t.total)}%"></i></span><span class="shrink-0 text-xs text-ink-3 tabular-nums">${bytes(t.done)} of ${bytes(t.total)}</span></div>`
-          : ""
-      }
+      <div class="mt-3">${summaryBar(items)}</div>
+      ${under ? `<div class="mt-1.5 flex justify-between gap-2 text-xs text-ink-3 tabular-nums">${under}</div>` : ""}
     </div>
     <ul class="work-list scroll-thin">${items.map(row).join("")}</ul>
   </div>`;

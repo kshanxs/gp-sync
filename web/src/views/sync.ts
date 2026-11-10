@@ -452,7 +452,7 @@ const sync: View = {
           <div class="ring-box relative shrink-0">${ring(0, 148, 12)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-3xl" id="sy-pct">–</div><div class="text-[11px] text-ink-3">of files</div></div></div></div>
           <div class="min-w-0 space-y-1.5" id="sy-hero-text"></div>
         </div>
-        <div class="mt-4 flex flex-wrap gap-1.5" id="sy-badges"></div>
+        <div class="even mt-4" id="sy-badges"></div>
       </section>
       <section class="order-3 grid grid-cols-2 gap-4 lg:order-none">
         ${tile({ id: "sy-today", label: "Today", value: "–", ic: "calendar", chart: "", href: "#/activity/uploaded" })}

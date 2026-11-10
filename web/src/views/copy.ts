@@ -271,7 +271,7 @@ function progressCard(r: CopyReport): string {
     <div class="card-b space-y-3">
       <div class="flex items-center justify-between text-sm"><span>${num(done)} of ${num(total)} done</span><span class="text-ink-3 tabular-nums">${Math.floor(pct(done, total))}%</span></div>
       <div class="bar"><i style="width:${pct(done, total)}%"></i></div>
-      <div class="flex flex-wrap gap-1.5">${badge(`${num(j.copied)} copied · ${bytes(j.copied_bytes)}`, "good", "check")}${j.exists ? badge(`${num(j.exists)} already there`, "info", "verified") : ""}${j.failed ? badge(`${num(j.failed)} didn't work`, "bad", "error") : ""}${j.queued ? badge(`${num(j.queued)} waiting · ${bytes(j.queued_bytes)}`, "", "hourglass") : ""}</div>
+      <div class="even">${badge(`${num(j.copied)} copied · ${bytes(j.copied_bytes)}`, "good", "check")}${j.exists ? badge(`${num(j.exists)} already there`, "info", "verified") : ""}${j.failed ? badge(`${num(j.failed)} didn't work`, "bad", "error") : ""}${j.queued ? badge(`${num(j.queued)} waiting · ${bytes(j.queued_bytes)}`, "", "hourglass") : ""}</div>
       ${
         j.timed
           ? `<div class="grid grid-cols-3 gap-2 text-center">

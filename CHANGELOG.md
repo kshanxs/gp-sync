@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.1
+
+- **Working now, easier to read:** each step has its own colour across the card: uploading blue,
+  downloading orange (as on the network chart), checking pink, replacing in Google amber, copying
+  green, waiting grey. The chips, the rows' icons and bars use it.
+- **One bar for the whole card:** the bar on top is split by step, each part as wide as its share of
+  the items and filled as far as they are, so its length is the average over everything listed
+  ("41% on average"), with the bytes under it.
+- **Even on a phone:** count chips and badges (Working now, Copy accounts, Upload, Sync) sit in
+  equal columns: 2 + 2, or 1 + 2 with an odd count, never 3 + 1. When the card is wide enough they
+  share one line.
+- Free storage's Working now no longer repeats the "at once" button: tap Moving now to change it.
+
 ## 1.6.0
 
 - **Auto free storage:** a switch at the top of Free storage (also in Moving settings). On, what
