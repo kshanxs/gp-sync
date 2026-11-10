@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.13
+
+- Snapchat: one Start button instead of four. A card above the lists says what Start will do, in
+  numbers (added to the album, replaced, uploaded, extra copies deleted from Google, left out), and
+  shows the progress once it runs. The group cards only sum up and pick the list below.
+
 ## 1.5.12
 
 - Snapchat: comparing with Google's thumbnails no longer makes Google answer "too many requests"

@@ -167,11 +167,51 @@ function searchCard(r: SnapchatReport): string {
   </section>`;
 }
 
+/** What Start will do, in numbers, and the one Start button. */
+function plan(r: SnapchatReport): { label: string; n: number }[] {
+  const left = (a: SnapAction) => r.counts[a].total - r.counts[a].done - r.counts[a].queued;
+  return [
+    { label: `already in Google: added to the album ${r.album}`, n: left("album") },
+    { label: "replace copies Google has with a later date", n: left("replace") },
+    { label: "uploaded with Snapchat's date and place", n: left("upload") },
+    {
+      label: "extra copies in Google: kept on this server, then deleted from Google",
+      n: r.duplicates.total - r.duplicates.deleted,
+    },
+  ];
+}
+
+function reviewCard(r: SnapchatReport): string {
+  const steps = plan(r);
+  const todo = steps[0].n + steps[1].n + steps[2].n;
+  const busy = Object.values(r.counts).reduce((n, c) => n + c.queued, 0);
+  const done = Object.values(r.counts).reduce((n, c) => n + (c === r.counts.skip ? 0 : c.done), 0);
+  const total = Object.values(r.counts).reduce((n, c) => n + (c === r.counts.skip ? 0 : c.total), 0);
+  if (!todo && !busy) {
+    return total
+      ? `<section class="card mb-4 flex items-center gap-3 p-4 text-sm">${icon("ok", "size-5 text-good")}<span>All ${num(done)} memories are in Google Photos, in the album ${esc(r.album)}.${r.counts.skip.total ? ` ${num(r.counts.skip.total)} left out.` : ""}</span></section>`
+      : "";
+  }
+  return `<section class="card mb-4 p-4">
+    <h2 class="font-semibold">${busy ? `Sending · ${num(done)} of ${num(total)} done` : "Ready when you are"}</h2>
+    <ul class="mt-2 space-y-1 text-sm text-ink-2">${steps
+      .filter((x) => x.n)
+      .map((x) => `<li><b class="tabular-nums">${num(x.n)}</b> ${esc(x.label)}</li>`)
+      .join(
+        "",
+      )}${r.counts.skip.total ? `<li class="text-ink-3"><b class="tabular-nums">${num(r.counts.skip.total)}</b> left out</li>` : ""}</ul>
+    ${busy ? `<div class="bar mt-3"><i style="width:${pct(done, total)}%"></i></div>` : ""}
+    ${
+      todo
+        ? `<div class="mt-3 flex flex-wrap items-center justify-end gap-3"><span class="text-xs text-ink-3">Check the lists below first: change any memory's action, or leave it out.</span><button class="btn primary" data-start="all">${icon("play")}Start (${num(todo)})</button></div>`
+        : ""
+    }
+  </section>`;
+}
+
 function groupCards(r: SnapchatReport): string {
   return `<div class="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">${SNAP_GROUPS.map((g) => {
     const c = r.counts[g.id];
-    const left = c.total - c.done - c.queued;
-    const startable = g.id !== "skip" && left > 0 && !r.searching;
     return `<section class="card flex flex-col p-4 ${show === g.id ? "border-accent" : ""}">
       <button class="flex items-center gap-2 text-left" data-show="${g.id}">${icon(g.ic, "size-4 text-ink-3")}<span class="font-semibold">${g.title}</span></button>
       <div class="mt-1 text-2xl font-semibold tabular-nums">${num(c.total)}</div>
@@ -181,7 +221,6 @@ function groupCards(r: SnapchatReport): string {
           ? `<div class="mt-2 text-xs text-ink-3">${num(c.done)} done${c.queued ? ` · ${num(c.queued)} queued` : ""}${c.failed ? ` · <span class="text-bad">${num(c.failed)} didn't work</span>` : ""}</div><div class="bar mt-1"><i style="width:${pct(c.done, c.total)}%"></i></div>`
           : ""
       }
-      ${startable ? `<button class="btn sm mt-3" data-start="${g.id}">${icon("play")}Start (${num(left)})</button>` : ""}
     </section>`;
   }).join("")}</div>`;
 }
@@ -265,19 +304,13 @@ function render(): void {
       return "Reading your library from Google";
     },
   });
-  const left = (["album", "replace", "upload"] as const).reduce(
-    (n, a) => n + r.counts[a].total - r.counts[a].done - r.counts[a].queued,
-    0,
-  );
   const group = SNAP_GROUPS.find((g) => g.id === show) ?? SNAP_GROUPS[0];
   html(
     $("#sc-body"),
     `${exportCard(r)}
     ${r.error && !r.slow_until ? `<section class="card mb-4 p-4 text-sm text-bad" role="alert">${esc(r.error)}</section>` : ""}
-    ${r.searching ? searchCard(r) : ""}
+    ${r.searching ? searchCard(r) : reviewCard(r)}
     ${groupCards(r)}
-    ${r.duplicates.total ? `<section class="card mb-4 flex flex-wrap items-center gap-3 p-4 text-sm"><span class="grid size-10 place-items-center rounded-xl bg-panel-2 text-ink-2">${icon("copy", "size-5")}</span><div class="min-w-0 flex-1"><b>${num(r.duplicates.total)} extra ${r.duplicates.total === 1 ? "copy" : "copies"} in Google</b><p class="text-xs text-ink-3">Each is kept on this server (Downloads, unless the same file is here) and then deleted from Google, so every memory is in Google once.</p></div><span class="text-xs text-ink-3">${num(r.duplicates.deleted)} deleted</span></section>` : ""}
-    ${!r.searching && left ? `<div class="mb-4 flex justify-end"><button class="btn primary" data-start="all">${icon("play")}Start all (${num(left)})</button></div>` : ""}
     <section class="card min-w-0 overflow-hidden">
       <div class="flex flex-wrap items-center gap-3 border-b border-line p-4">
         <div class="min-w-0 flex-1 basis-64"><h2 class="font-semibold">${group.title}</h2>
@@ -296,35 +329,27 @@ function render(): void {
   );
 }
 
-async function start(which: SnapAction | "all"): Promise<void> {
+async function start(): Promise<void> {
   const r = report;
   if (!r) return;
-  const actions = which === "all" ? (["album", "replace", "upload"] as SnapAction[]) : [which];
-  const replace = actions.includes("replace") ? r.counts.replace.total - r.counts.replace.done : 0;
+  const steps = plan(r).filter((x) => x.n);
   const ok = await confirmDialog({
-    title:
-      which === "all"
-        ? "Send all Snapchat memories?"
-        : `${SNAP_GROUPS.find((g) => g.id === which)?.title}: start?`,
+    title: "Send your Snapchat memories?",
     icon: "sparkles",
     body: [
-      `In ${r.account}: memories Google has with the right date go into the album ${r.album}; the others are uploaded with Snapchat's date and place, and added to it too.`,
-      ...(r.duplicates.total - r.duplicates.deleted
-        ? [
-            `In all, ${num(r.duplicates.total - r.duplicates.deleted)} copies in Google are kept on this server, then deleted from Google, so no memory is there twice.`,
-          ]
-        : []),
-      ...(replace
-        ? [
-            `${num(replace)} memories take the place of copies Google has with a later date: those copies are kept on this server, deleted from Google, and the memory is uploaded. Albums you made yourself don't carry over. Favourite, archive and your caption come back; shared links and comments don't.`,
-          ]
+      `In ${r.account}: ${steps.map((x) => `${num(x.n)} ${x.label}`).join("; ")}.`,
+      ...(plan(r)[1].n
+        ? ["Replaced copies leave albums you made yourself; favourite, archive and your caption come back."]
         : []),
     ],
     confirm: "Start",
   });
   if (!ok) return;
   try {
-    const res = await post<{ queued: number }>("snapchat/start", { account: r.account, actions });
+    const res = await post<{ queued: number }>("snapchat/start", {
+      account: r.account,
+      actions: ["album", "replace", "upload"],
+    });
     toast(
       res.queued ? `Started ${num(res.queued)} memories` : "Nothing to start",
       res.queued ? "good" : "info",
@@ -360,7 +385,7 @@ function onClick(e: Event): void {
   const b = (e.target as HTMLElement).closest<HTMLElement>("button");
   if (!b) return;
   if (b.dataset.acc) void pickAccount(b.dataset.acc);
-  else if (b.dataset.start) void start(b.dataset.start as SnapAction | "all");
+  else if (b.dataset.start) void start();
   else if (b.dataset.show) {
     if (b.dataset.show === show) return;
     show = b.dataset.show as SnapAction;
