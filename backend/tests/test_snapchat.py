@@ -364,6 +364,12 @@ def test_memories_are_found_matched_and_sent(snaps, server, monkeypatch):
     with pytest.raises(ValueError):
         sync.snapchat_start(ACC)
     run(sync.snapchat_match_step, client)
+    # The thumbnails fetched to compare pictures are kept: the page shows them without asking Google.
+    assert sync._small_thumb_path(ACC, "KB").exists()
+    from unittest import mock
+
+    with mock.patch.object(sync, "accounts", lambda: [(ACC, "auth")]):
+        assert sync.google_thumb_small(f"{ACC}\nKB") == sync._small_thumb_path(ACC, "KB")
     assert client.api.calls == [] and client.api.sent == []
     r = sync.snapchat_report(ACC)
     assert r["account"] == ACC and r["checked"] == 5 and not r["searching"]

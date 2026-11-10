@@ -2464,6 +2464,28 @@ def google_thumb(name):
     return media.save_bytes(Api(auth).get_thumbnail(key, width=media.THUMB_SIZE), target)
 
 
+def _small_thumb_path(account, key):
+    return THUMBS / "google-small" / f"{hashlib.sha1(f'{account}\n{key}'.encode()).hexdigest()}.webp"
+
+
+def google_thumb_small(name):
+    """A small thumbnail of an item in Google (Snapchat page rows): the one the Snapchat search
+    already fetched to compare pictures, else a small one from Google (quicker than the full size)."""
+    account, _, key = name.partition("\n")
+    auth = dict(accounts()).get(account)
+    if not auth or not re.fullmatch(r"[\w-]+", key):
+        return None
+    target = _small_thumb_path(account, key)
+    if target.exists():
+        return target
+    big = THUMBS / "google" / f"{hashlib.sha1(name.encode()).hexdigest()}.webp"
+    if big.exists():
+        return big
+    from gpmc.api import Api
+
+    return media.save_bytes(Api(auth).get_thumbnail(key, width=SNAP_THUMB_WIDTH), target)
+
+
 PREVIEW_SIZE = 1600
 MEDIA_TYPES = {
     "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp",
@@ -5108,7 +5130,10 @@ def snapchat_match_step(account, make_client=None):
 
         def one(key):
             try:
-                return key, snapchat.dhash_bytes(client.api.get_thumbnail(key, width=SNAP_THUMB_WIDTH)), None
+                data = client.api.get_thumbnail(key, width=SNAP_THUMB_WIDTH)
+                with contextlib.suppress(Exception):  # kept: the Snapchat page shows it without asking Google
+                    media.save_bytes(data, _small_thumb_path(account, key))
+                return key, snapchat.dhash_bytes(data), None
             except Exception as e:
                 if outage_kind(e):
                     return key, None, e
@@ -6798,7 +6823,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.json({"error": str(e)}, 400)
         elif path == "/api/storage/thumb":
             account, key = arg("account", ""), arg("key", "")
-            self.image("gthumb", f"{account}\n{key}", google_thumb)
+            if arg("small", "") == "1":
+                self.image("gthumb-small", f"{account}\n{key}", google_thumb_small)
+            else:
+                self.image("gthumb", f"{account}\n{key}", google_thumb)
         elif path == "/api/folders/files":
             folder = clean_folder(arg("path", ""))
             if folder is None:

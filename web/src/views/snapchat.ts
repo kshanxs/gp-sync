@@ -16,7 +16,8 @@ import type { View } from "./view";
 
 let report: SnapchatReport | null = null;
 let show: SnapAction = "replace";
-let limit = 120;
+let limit = 60;
+let listHtml = ""; // the list as last drawn: redrawn only when it changes (images keep loading)
 let timer = 0;
 let ticks = 0;
 let request = 0;
@@ -42,7 +43,7 @@ function when(unix: number | null | undefined): string {
 }
 
 function googleThumb(account: string, key: string, kind: string): string {
-  return `<img class="thumb" loading="lazy" decoding="async" alt="" data-kind="${kind}" src="api/storage/thumb?account=${encodeURIComponent(account)}&key=${encodeURIComponent(key)}">`;
+  return `<img class="thumb" loading="lazy" decoding="async" alt="" data-kind="${kind}" src="api/storage/thumb?small=1&account=${encodeURIComponent(account)}&key=${encodeURIComponent(key)}">`;
 }
 
 const ROLE: Record<SnapCopy["role"], [string, Tone]> = {
@@ -84,7 +85,6 @@ function stateBadge(i: SnapItem, r: SnapchatReport): string {
 
 function row(i: SnapItem, r: SnapchatReport): string {
   const [label, tone, tip] = matchBadge(i);
-  const cur = r.current?.key === i.name ? r.current : null;
   const open = i.url || i.google?.url;
   const editable = !i.state || i.state === "failed";
   const select = editable
@@ -108,7 +108,6 @@ function row(i: SnapItem, r: SnapchatReport): string {
       </div>
       ${i.copies.length ? `<div class="mt-2 flex flex-wrap gap-2">${i.copies.map((c) => copyTile(c, i, r)).join("")}</div>` : ""}
       ${i.local ? `<div class="mt-1 truncate text-xs text-ink-3">Copy here: ${esc(i.local)}</div>` : ""}
-      ${cur ? `<div class="bar mt-2"><i style="width:${pct(cur.done, cur.total)}%"></i></div>` : ""}
       ${i.error ? `<div class="mt-1 text-xs ${i.state === "failed" ? "text-bad" : "text-ink-3"}">${esc(i.error)}</div>` : ""}
     </div>
     <div class="row-actions flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 sm:w-auto">${select}${
@@ -336,13 +335,11 @@ function render(): void {
     },
   });
   const group = SNAP_GROUPS.find((g) => g.id === show) ?? SNAP_GROUPS[0];
-  html(
-    $("#sc-body"),
-    `${exportCard(r)}
+  const top = `${exportCard(r)}
     ${r.error && !r.slow_until ? `<section class="card mb-4 p-4 text-sm text-bad" role="alert">${esc(r.error)}</section>` : ""}
     ${r.searching ? searchCard(r) : reviewCard(r)}
-    ${groupCards(r)}
-    <section class="card min-w-0 overflow-hidden">
+    ${groupCards(r)}`;
+  const list = `<section class="card min-w-0 overflow-hidden">
       <div class="flex flex-wrap items-center gap-3 border-b border-line p-4">
         <div class="min-w-0 flex-1 basis-64"><h2 class="font-semibold">${group.title}</h2>
           <p class="mt-1 text-xs text-ink-3">${group.hint} Pick another action per memory if a match looks wrong.</p></div>
@@ -356,8 +353,22 @@ function render(): void {
             }`
           : `<div class="empty">${icon("shield")}${r.searching ? "Still looking…" : "None here"}</div>`
       }</div>
-    </section>`,
-  );
+    </section>`;
+  let topEl = document.getElementById("sc-top");
+  let listEl = document.getElementById("sc-listbox");
+  if (!topEl || !listEl) {
+    html($("#sc-body"), '<div id="sc-top"></div><div id="sc-listbox"></div>');
+    topEl = $("#sc-top");
+    listEl = $("#sc-listbox");
+    listHtml = "";
+  }
+  html(topEl, top);
+  // The list is redrawn only when it changes: a redraw every few seconds would restart the
+  // thumbnails still loading.
+  if (list !== listHtml) {
+    html(listEl, list);
+    listHtml = list;
+  }
 }
 
 async function start(action: Exclude<SnapAction, "skip">): Promise<void> {
@@ -426,10 +437,10 @@ function onClick(e: Event): void {
   else if (b.dataset.show) {
     if (b.dataset.show === show) return;
     show = b.dataset.show as SnapAction;
-    limit = 120;
+    limit = 60;
     void load().then(() => animateChange(document.getElementById("sc-list")));
   } else if (b.id === "sc-more") {
-    limit += 120;
+    limit += 60;
     void load();
   }
 }
@@ -450,7 +461,8 @@ const snapchat: View = {
   subtitle: "Snapchat Memories with their real date, without duplicates",
   mount(el) {
     show = "replace";
-    limit = 120;
+    limit = 60;
+    listHtml = "";
     el.innerHTML = `
     <div id="sc-chips"></div>
     <details class="mb-4 px-1 text-sm text-ink-3">

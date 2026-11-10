@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.17
+
+- Snapchat page loads fast. Google's thumbnails of the copies in the lists are the small ones the
+  search already fetched to compare pictures (kept from now on), else a small one from Google
+  instead of the full size. The list is redrawn only when it changes, not every few seconds while
+  work runs (that restarted thumbnails still loading), and shows 60 memories at a time.
+
 ## 1.5.16
 
 - Snapchat: no download when the memory on this server is already the same picture. An extra copy
