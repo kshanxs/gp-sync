@@ -469,7 +469,8 @@ const snapchat: View = {
       <summary class="cursor-pointer font-medium text-ink-2">How it works</summary>
       <div class="mt-2 space-y-2 leading-relaxed">
         <p>Each memory is looked for in Google Photos: the same file, a photo or video taken in the same second (a snap saved to the camera roll), or one that looks the same (compared with Google's thumbnail).</p>
-        <p>Snapchat's date wins. Copies Google has with another date are replaced by the memory; copies on this server aren't uploaded as well. Every memory goes into the album.</p>
+        <p>Snapchat's date wins over copies Google dated later: the memory replaces them, and albums you made yourself don't carry over. An original Google has (older, or from a camera) keeps its own date.</p>
+        <p>Extra copies are deleted from Google. The memory here is the same picture; only a less certain match is downloaded first (Downloads). Copies on this server aren't uploaded as well, and every memory goes into the album.</p>
       </div>
     </details>
     <div id="sc-body"><div class="card skeleton h-72"></div></div>`;

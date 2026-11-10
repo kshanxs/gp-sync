@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.18
+
+- Snapchat: shorter group cards. "Already in Google" and "In Google, wrong date" now say what
+  happens in one line each; the details (originals keep their date, which copies are downloaded
+  first, albums you made yourself) are under How it works and in each button's confirmation.
+
 ## 1.5.17
 
 - Snapchat page loads fast. Google's thumbnails of the copies in the lists are the small ones the
