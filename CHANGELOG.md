@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.14
+
+- Snapchat: each job has its own, named button again, in one card: "Add to album" (already in
+  Google with the right date: nothing is uploaded), "Replace" (Google's later-dated copies give way
+  to the memory) and "Upload" (not in Google). Start them in any order; each confirms what it will
+  do. The single Start of 1.5.13 and the old Start all are gone.
+
 ## 1.5.13
 
 - Snapchat: one Start button instead of four. A card above the lists says what Start will do, in

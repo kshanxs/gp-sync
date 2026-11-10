@@ -167,45 +167,66 @@ function searchCard(r: SnapchatReport): string {
   </section>`;
 }
 
-/** What Start will do, in numbers, and the one Start button. */
-function plan(r: SnapchatReport): { label: string; n: number }[] {
-  const left = (a: SnapAction) => r.counts[a].total - r.counts[a].done - r.counts[a].queued;
-  return [
-    { label: `already in Google: added to the album ${r.album}`, n: left("album") },
-    { label: "replace copies Google has with a later date", n: left("replace") },
-    { label: "uploaded with Snapchat's date and place", n: left("upload") },
-    {
-      label: "extra copies in Google: kept on this server, then deleted from Google",
-      n: r.duplicates.total - r.duplicates.deleted,
-    },
-  ];
+/** The three jobs, each started on its own: adding to the album is safe (nothing is uploaded),
+ * replacing deletes Google's later-dated copies, uploading adds what Google doesn't have. */
+const JOBS: {
+  id: Exclude<SnapAction, "skip">;
+  button: string;
+  what: (r: SnapchatReport) => string;
+  ic: Parameters<typeof icon>[0];
+}[] = [
+  {
+    id: "album",
+    button: "Add to album",
+    what: (r) => `already in Google with the right date: added to the album ${r.album}, nothing uploaded`,
+    ic: "library",
+  },
+  {
+    id: "replace",
+    button: "Replace",
+    what: () => "in Google with a later date: replaced by the memory with Snapchat's date",
+    ic: "calendar",
+  },
+  {
+    id: "upload",
+    button: "Upload",
+    what: () => "not in Google: uploaded with Snapchat's date and place",
+    ic: "cloudUp",
+  },
+];
+
+function left(r: SnapchatReport, a: SnapAction): number {
+  return r.counts[a].total - r.counts[a].done - r.counts[a].queued;
 }
 
 function reviewCard(r: SnapchatReport): string {
-  const steps = plan(r);
-  const todo = steps[0].n + steps[1].n + steps[2].n;
   const busy = Object.values(r.counts).reduce((n, c) => n + c.queued, 0);
-  const done = Object.values(r.counts).reduce((n, c) => n + (c === r.counts.skip ? 0 : c.done), 0);
-  const total = Object.values(r.counts).reduce((n, c) => n + (c === r.counts.skip ? 0 : c.total), 0);
+  const done = JOBS.reduce((n, j) => n + r.counts[j.id].done, 0);
+  const total = JOBS.reduce((n, j) => n + r.counts[j.id].total, 0);
+  const todo = JOBS.reduce((n, j) => n + left(r, j.id), 0);
   if (!todo && !busy) {
     return total
       ? `<section class="card mb-4 flex items-center gap-3 p-4 text-sm">${icon("ok", "size-5 text-good")}<span>All ${num(done)} memories are in Google Photos, in the album ${esc(r.album)}.${r.counts.skip.total ? ` ${num(r.counts.skip.total)} left out.` : ""}</span></section>`
       : "";
   }
+  const dupes = r.duplicates.total - r.duplicates.deleted;
   return `<section class="card mb-4 p-4">
-    <h2 class="font-semibold">${busy ? `Sending · ${num(done)} of ${num(total)} done` : "Ready when you are"}</h2>
-    <ul class="mt-2 space-y-1 text-sm text-ink-2">${steps
-      .filter((x) => x.n)
-      .map((x) => `<li><b class="tabular-nums">${num(x.n)}</b> ${esc(x.label)}</li>`)
-      .join(
-        "",
-      )}${r.counts.skip.total ? `<li class="text-ink-3"><b class="tabular-nums">${num(r.counts.skip.total)}</b> left out</li>` : ""}</ul>
+    <h2 class="font-semibold">${busy ? `Sending · ${num(done)} of ${num(total)} done` : "What to do with your memories"}</h2>
+    <p class="mt-1 text-xs text-ink-3">Each job starts on its own, in any order. Check the lists below first: change any memory's action, or leave it out.</p>
     ${busy ? `<div class="bar mt-3"><i style="width:${pct(done, total)}%"></i></div>` : ""}
-    ${
-      todo
-        ? `<div class="mt-3 flex flex-wrap items-center justify-end gap-3"><span class="text-xs text-ink-3">Check the lists below first: change any memory's action, or leave it out.</span><button class="btn primary" data-start="all">${icon("play")}Start (${num(todo)})</button></div>`
-        : ""
-    }
+    <div class="mt-3 divide-y divide-line">${JOBS.filter((j) => r.counts[j.id].total)
+      .map((j) => {
+        const n = left(r, j.id);
+        const c = r.counts[j.id];
+        const state = c.queued ? `${num(c.queued)} in progress` : n ? "" : "Done";
+        return `<div class="flex flex-wrap items-center gap-3 py-2.5">
+          ${icon(j.ic, "size-4 shrink-0 text-ink-3")}
+          <div class="min-w-0 flex-1 basis-56 text-sm"><b class="tabular-nums">${num(c.total)}</b> ${esc(j.what(r))}${state ? ` <span class="text-xs text-ink-3">· ${state}</span>` : ""}</div>
+          ${n ? `<button class="btn sm ${j.id === "album" ? "primary" : ""}" data-start="${j.id}">${icon("play", "size-3.5")}${j.button} (${num(n)})</button>` : ""}
+        </div>`;
+      })
+      .join("")}</div>
+    ${dupes ? `<p class="mt-2 text-xs text-ink-3">${icon("copy", "inline size-3.5 -mt-0.5")} ${num(dupes)} extra ${dupes === 1 ? "copy" : "copies"} in Google go as their memory is done: kept on this server first, then deleted from Google.</p>` : ""}
   </section>`;
 }
 
@@ -329,29 +350,33 @@ function render(): void {
   );
 }
 
-async function start(): Promise<void> {
+async function start(action: Exclude<SnapAction, "skip">): Promise<void> {
   const r = report;
   if (!r) return;
-  const steps = plan(r).filter((x) => x.n);
+  const job = JOBS.find((j) => j.id === action);
+  if (!job) return;
+  const n = left(r, action);
   const ok = await confirmDialog({
-    title: "Send your Snapchat memories?",
-    icon: "sparkles",
+    title: `${job.button}: ${num(n)} ${n === 1 ? "memory" : "memories"}?`,
+    icon: job.ic,
     body: [
-      `In ${r.account}: ${steps.map((x) => `${num(x.n)} ${x.label}`).join("; ")}.`,
-      ...(plan(r)[1].n
-        ? ["Replaced copies leave albums you made yourself; favourite, archive and your caption come back."]
+      `In ${r.account}: ${num(n)} ${job.what(r)}. Each goes into the album ${r.album}.`,
+      ...(action === "replace"
+        ? [
+            "Google's later-dated copies are kept on this server, then deleted from Google. They leave albums you made yourself; favourite, archive and your caption come back.",
+          ]
+        : []),
+      ...(action !== "upload" && r.duplicates.total - r.duplicates.deleted
+        ? ["Extra copies of these memories in Google are kept on this server, then deleted from Google."]
         : []),
     ],
-    confirm: "Start",
+    confirm: job.button,
   });
   if (!ok) return;
   try {
-    const res = await post<{ queued: number }>("snapchat/start", {
-      account: r.account,
-      actions: ["album", "replace", "upload"],
-    });
+    const res = await post<{ queued: number }>("snapchat/start", { account: r.account, actions: [action] });
     toast(
-      res.queued ? `Started ${num(res.queued)} memories` : "Nothing to start",
+      res.queued ? `Started: ${num(res.queued)} memories` : "Nothing to start",
       res.queued ? "good" : "info",
     );
   } catch (e) {
@@ -385,7 +410,7 @@ function onClick(e: Event): void {
   const b = (e.target as HTMLElement).closest<HTMLElement>("button");
   if (!b) return;
   if (b.dataset.acc) void pickAccount(b.dataset.acc);
-  else if (b.dataset.start) void start();
+  else if (b.dataset.start) void start(b.dataset.start as Exclude<SnapAction, "skip">);
   else if (b.dataset.show) {
     if (b.dataset.show === show) return;
     show = b.dataset.show as SnapAction;
