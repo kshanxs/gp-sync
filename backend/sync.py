@@ -34,6 +34,7 @@ import cache
 import media
 import notify
 import provenance
+import snapchat
 
 HERE = Path(__file__).resolve().parent
 # VERSION sits next to sync.py in the image, one level up (repo root) when run from backend/.
@@ -242,6 +243,32 @@ def db():
         """CREATE TABLE IF NOT EXISTS downloads (
             id INTEGER PRIMARY KEY, account TEXT NOT NULL, name TEXT, kind TEXT, size INTEGER, taken REAL,
             path TEXT NOT NULL, media_key TEXT, added REAL)"""
+    )
+    # Snapchat memories (see "Snapchat memories"): one row per memory file, and fingerprints of
+    # Google's thumbnails and of files here, so each is only made once.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS snap_items (
+            path TEXT PRIMARY KEY, manifest TEXT, mid TEXT, kind TEXT, taken REAL, lat REAL, lon REAL,
+            sha1 TEXT, orig_sha1 TEXT, width INTEGER, height INTEGER, poster TEXT, dhash TEXT,
+            size INTEGER, mtime REAL, account TEXT, match TEXT, google_key TEXT, google_dedup TEXT,
+            google_taken REAL, distance INTEGER, local TEXT, action TEXT, decided INTEGER DEFAULT 0,
+            state TEXT, error TEXT, new_key TEXT, favorite INTEGER, archived INTEGER, caption TEXT,
+            kept INTEGER DEFAULT 0, in_album INTEGER DEFAULT 0, original INTEGER DEFAULT 0, updated REAL)"""
+    )
+    # Every copy of a memory Google has (one is kept, or none; the others are deleted there).
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS snap_copies (
+            path TEXT NOT NULL, media_key TEXT NOT NULL, dedup TEXT, taken REAL, how TEXT, distance INTEGER,
+            original INTEGER DEFAULT 0, favorite INTEGER DEFAULT 0, local TEXT, state TEXT, error TEXT,
+            PRIMARY KEY (path, media_key))"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS snap_prints (
+            account TEXT NOT NULL, media_key TEXT NOT NULL, dhash TEXT, PRIMARY KEY (account, media_key))"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS snap_local (
+            path TEXT PRIMARY KEY, size INTEGER, mtime REAL, sha1 TEXT, dhash TEXT)"""
     )
     conn.execute("PRAGMA journal_mode=WAL")
     conn.commit()
@@ -1448,9 +1475,23 @@ def scan(st=None):
         }
         for t, a in fmap.items()
     }
+    # Snapchat memories, and files here they stand in for, are never backed up as they are: the
+    # Snapchat page first looks for each one in Google (see "Snapchat memories").
+    # Everything below a Snapchat export folder (one with the list, or the export script's marker)
+    # waits for the list, wherever the folder is: a file the script just wrote isn't listed yet.
+    snap_paths, snap_skip = set(_snap["paths"]), set(_snap["skip"])
+    manifests, snap_roots, held, exporting = [], [], 0, []
     for top, account in fmap.items():
         for root, dirs, names in os.walk(MEDIA / top):
             dirs[:] = sorted(d for d in dirs if not skipped(d))
+            if snapchat.MANIFEST in names or snapchat.RUNNING in names:  # seen before the folders below it
+                snap_roots.append(os.path.join(root, ""))
+                if snapchat.RUNNING in names:
+                    exporting.append(rel(root))
+                if snapchat.MANIFEST in names:
+                    manifests.append(os.path.join(root, snapchat.MANIFEST))
+                    snap_paths |= snapchat_load(manifests[-1])
+            in_export = any(os.path.join(root, "").startswith(r) for r in snap_roots)
             for name in sorted(names):
                 if ext(name) not in EXTS or skipped(name):
                     continue
@@ -1491,6 +1532,13 @@ def scan(st=None):
                 t = lib["types"].setdefault(e, [0, 0])
                 t[0] += 1
                 t[1] += fst.st_size
+                if path in snap_paths or path in snap_skip or in_export:
+                    held += in_export and path not in snap_paths
+                    if row and row[2] in DONE:
+                        for d in (lib, f):
+                            d["synced_files"] += 1
+                            d["synced_bytes"] += fst.st_size
+                    continue
                 settled = now - fst.st_mtime >= SETTLE
                 for extra in tmap[top][1:]:
                     c = known_copies.get((path, extra))
@@ -1521,6 +1569,8 @@ def scan(st=None):
     if prio:  # folders picked to go first; the rest keeps its usual order
         todo.sort(key=lambda i: priority_rank(rel(i[0]), prio))
         copies_todo.sort(key=lambda i: priority_rank(rel(i[0]), prio))
+    snapchat_forget(manifests)
+    state["snap_held"], state["snap_exporting"] = held, exporting
     state["library"] = lib
     state["folders"] = folders
     state["index"] = index
@@ -2386,6 +2436,9 @@ def thumbnail(name):
         return target
     if ext(p.name) in THUMB_EXTS:
         return media.make_thumbnail(p, target)
+    poster = q("SELECT poster FROM snap_items WHERE path=? AND poster IS NOT NULL", (str(p),))
+    if poster and os.path.isfile(poster[0][0]):  # a Snapchat memory's first frame
+        return media.make_thumbnail(poster[0][0], target)
     # Videos: ask Google for its thumbnail of the uploaded copy.
     row = q("SELECT media_key, account FROM files WHERE path=? AND media_key IS NOT NULL", (str(MEDIA / name),))
     accs = dict(accounts())
@@ -3926,6 +3979,10 @@ def _account_step(account):
         busy = caption_repair_step(account) or busy
     except Exception as e:
         print(f"Captions ({account}): {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    try:
+        busy = snapchat_work(account) or busy
+    except Exception as e:
+        print(f"Snapchat ({account}): {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     return datefix_step(only=account) or busy
 
 
@@ -4006,6 +4063,8 @@ def dates_some(limit=300):
         if backed is not None and name.split("/", 1)[0] not in backed:
             continue
         path = str(MEDIA / name)
+        if path in _snap["paths"]:
+            continue  # Snapchat memories have their date inside and are handled on the Snapchat page
         dated, sourced = known.get(path) == (size, mtime), known_src.get(path) == (size, mtime)
         if dated and sourced:
             continue
@@ -4064,7 +4123,8 @@ def same_content(path, size, sha1hex, fingerprint=True):
 
 def best_date(path, size, mtime, sha1hex, fingerprint=True):
     """(date to give Google, where it comes from) for a file with no date of its own: a date the
-    user picked ("manual"), a date in the file name ("filename", e.g. WhatsApp's IMG-20240504-WA0001),
+    user picked ("manual"), the moment of the Snapchat memory it is a copy of ("snapchat"), a date
+    in the file name ("filename", e.g. WhatsApp's IMG-20240504-WA0001),
     the estimated save date of a Snapchat item ("estimated"), the earliest identical copy here
     ("copy"), or the file's own time ("file")."""
     if sha1hex:
@@ -4075,6 +4135,8 @@ def best_date(path, size, mtime, sha1hex, fingerprint=True):
         picked = sq("SELECT manual FROM media_dates WHERE path=? AND manual IS NOT NULL", (path,))
     if picked and picked[0][0]:
         return float(picked[0][0]), "manual"
+    if (snap := snapchat_time(path, sha1hex)) is not None:
+        return snap, "snapchat"
     st = get_settings()
     named = provenance.name_date(path, st["tz_offset_min"])
     if named is not None and named <= time.time() + 86400:
@@ -4318,6 +4380,8 @@ def dates_fix(names):
         if not sha1:
             sha1 = media.sha1_file(path).hex()
             remember_sha1(path, sha1)
+        if _snap_replaces(sha1):
+            continue  # the Snapchat page puts the memory in its place, with Snapchat's date
         # Favourite, archive and caption are read now: they are gone once Google's copy is deleted.
         found = _google_dates(_main_account(account), [_b64_hash(bytes.fromhex(sha1))]).get(
             _b64_hash(bytes.fromhex(sha1))
@@ -4776,6 +4840,743 @@ def sources_accept_dates(names):
             accepted.append(rel(path))
     fixing = dates_fix(accepted)["queued"] if accepted else 0
     return {"accepted": len(accepted), "queued": fixing}
+
+
+# ---------------------------------------------------------------- Snapchat memories
+# scripts/snapchat_export.py turns Snapchat's Memories export into a folder (Photos/Snapchat) with
+# the exact date, time and place written into every file, and a list of them
+# (snapchat-memories.json). Those files are never backed up blindly: each memory is first looked
+# for in the account's library (the same file, a camera-roll copy taken at the same moment, or one
+# that looks the same). Memories Google has with the right date only go into the Snapchat album;
+# ones it has with a wrong date are uploaded with Snapchat's date and Google's copy deleted (kept
+# in Downloads unless the same file is on this server); the rest are uploaded. Nothing changes in
+# Google until the user starts it on the Snapchat page. A copy of a memory here (a snap saved to
+# the camera roll and backed up from the phone) gets the memory's date, and isn't uploaded as well
+# when the memory takes its place.
+
+SNAP_THUMB_WIDTH = 128
+SNAP_PRINTS_PER_STEP = 120  # Google thumbnails fingerprinted per step (4 at a time)
+SNAP_UPLOADS_PER_STEP = 4
+SNAP_LOCAL_BYTES_PER_STEP = 512 * 1024**2  # files here read per step to find copies of memories
+SNAP_ACTIONS = ("album", "replace", "upload", "skip")
+SNAP_DIR = DATA / "snapchat"
+snapchat_state = collections.defaultdict(lambda: {"current": None, "error": "", "wanted": 0, "prints": 0})
+_snap = {"paths": frozenset(), "skip": frozenset()}  # memory files, and files here they stand in for
+_snap_tried = {}  # path -> when a replace last found Google still had the old copy
+_snap_dirty = set()  # accounts whose matches must be worked out again
+
+
+def _snap_album():
+    return get_settings()["sources"]["snapchat"]["album_name"] or "Snapchat"
+
+
+def snapchat_load(manifest):
+    """Bring snap_items in line with one snapchat-memories.json (read again when it changes).
+    Returns the paths of its memories."""
+    manifest = str(manifest)
+    known = {p for (p,) in q("SELECT path FROM snap_items WHERE manifest=?", (manifest,))}
+    try:
+        stamp = str(os.stat(manifest).st_mtime)
+    except OSError:
+        return known
+    if meta_get(f"snap_manifest:{manifest}") == stamp:
+        return known
+    try:
+        data = snapchat.read_manifest(manifest)
+    except snapchat.BadManifest as e:
+        log(str(e), "error")
+        return known
+    rows = []
+    for it in data["items"]:
+        try:
+            fst = os.stat(it["file"])
+        except OSError:
+            continue  # listed but not here (yet)
+        rows.append(
+            (str(it["file"]), manifest, it["id"], it["kind"], it["taken"], it["lat"], it["lon"], it["sha1"],
+             it["orig_sha1"], it["width"], it["height"], str(it["poster"]) if it["poster"] else None,
+             fst.st_size, fst.st_mtime, time.time())
+        )  # fmt: skip
+    with db_lock:
+        # A file that changed gets its fingerprint and match worked out again.
+        CONN.executemany(
+            """INSERT INTO snap_items (path, manifest, mid, kind, taken, lat, lon, sha1, orig_sha1, width,
+                   height, poster, size, mtime, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(path) DO UPDATE SET manifest=excluded.manifest, mid=excluded.mid, kind=excluded.kind,
+               taken=excluded.taken, lat=excluded.lat, lon=excluded.lon, sha1=excluded.sha1,
+               orig_sha1=excluded.orig_sha1, width=excluded.width, height=excluded.height, poster=excluded.poster,
+               dhash=CASE WHEN snap_items.size=excluded.size AND snap_items.mtime=excluded.mtime
+                     THEN snap_items.dhash END,
+               match=CASE WHEN snap_items.size=excluded.size AND snap_items.mtime=excluded.mtime
+                     THEN snap_items.match END,
+               size=excluded.size, mtime=excluded.mtime, updated=excluded.updated""",
+            rows,
+        )
+        CONN.commit()
+    cache.bump()
+    meta_set(f"snap_manifest:{manifest}", stamp)
+    meta_set(f"snap_export:{manifest}", json.dumps(data["export"]))
+    log(f"Snapchat memories: {len(rows)} in {rel(Path(manifest).parent)}", "info")
+    _snap_dirty.add("*")
+    reclaim_wake.set()
+    return known | {r[0] for r in rows}
+
+
+def snapchat_forget(manifests):
+    """After a scan: rows of memory files gone from this server go (unless Google has them from
+    GP Sync), and the lists the scan uses are made again."""
+    gone = [p for p, state_ in q("SELECT path, state FROM snap_items") if state_ != "done" and not os.path.exists(p)]
+    for i in range(0, len(gone), 500):
+        part = gone[i : i + 500]
+        q(f"DELETE FROM snap_items WHERE path IN ({','.join('?' * len(part))})", part)
+    if gone:
+        _snap_dirty.add("*")
+    _snap_sets()
+
+
+def _snap_sets():
+    paths = frozenset(p for (p,) in q("SELECT path FROM snap_items"))
+    # Files here that a memory stands in for: a copy not in Google (the memory is uploaded instead),
+    # and the files of Google's copies (kept, or deleted as duplicates): never uploaded themselves.
+    skip = {p for (p,) in q("SELECT local FROM snap_items WHERE local IS NOT NULL AND action='upload'")}
+    skip |= {
+        p
+        for (p,) in q(
+            """SELECT c.local FROM snap_copies c JOIN snap_items i ON i.path = c.path
+               WHERE c.local IS NOT NULL AND i.action IN ('album','replace')"""
+        )
+    }
+    _snap.update(paths=paths, skip=frozenset(skip))
+
+
+def snapchat_time(path, sha1hex=None):
+    """The moment of the Snapchat memory this file is a later copy of, or None. (A file Google keeps
+    as the original of a memory keeps its own date.)"""
+    if not _snap["paths"]:
+        return None
+    rows = q("SELECT MIN(taken) FROM snap_items WHERE local=? AND action='upload'", (path,))
+    if rows and rows[0][0]:
+        return float(rows[0][0])
+    dedup = _b64_hash(bytes.fromhex(sha1hex)) if sha1hex else ""
+    rows = q(
+        """SELECT MIN(i.taken) FROM snap_copies c JOIN snap_items i ON i.path = c.path
+           WHERE (c.local=? OR c.dedup=?) AND i.action='replace'""",
+        (path, dedup),
+    )
+    return float(rows[0][0]) if rows and rows[0][0] else None
+
+
+def _snap_replaces(sha1hex):
+    """Google's copy of this file belongs to a Snapchat memory (kept with the right date, replaced by
+    the memory, or deleted as a duplicate): the Snapchat page takes care of it."""
+    return bool(
+        sha1hex
+        and q(
+            """SELECT 1 FROM snap_copies c JOIN snap_items i ON i.path = c.path
+               WHERE c.dedup=? AND i.action IN ('album','replace') LIMIT 1""",
+            (_b64_hash(bytes.fromhex(sha1hex)),),
+        )
+    )
+
+
+def snapchat_account(st=None):
+    """The account memories go to: the one picked on the Snapchat page, else the main account of
+    the folder they are in."""
+    accs = [a for a, _ in accounts()]
+    picked = meta_get("snap_account") or ""
+    if picked in accs:
+        return picked
+    row = q("SELECT path FROM snap_items LIMIT 1")
+    if row:
+        found = folder_map(st).get(top_folder(row[0][0]))
+        if found in accs:
+            return found
+    return accs[0] if accs else ""
+
+
+def snapchat_paused(account):
+    return meta_get(f"snap_paused:{account}") == "1"
+
+
+def _snap_local_step():
+    """Fingerprint files here that may be copies of memories (labelled Snapchat or saved from an
+    app): their SHA-1 finds Google's copy, and photos also get a picture fingerprint. Returns True
+    if there is more to do."""
+    cands = sq(f"SELECT path, size, mtime FROM provenance WHERE {_EFFECTIVE} IN ('snapchat','app_export')")
+    known = {p: (s, m) for p, s, m in q("SELECT path, size, mtime FROM snap_local")}
+    read = 0
+    for path, size, mtime in cands:
+        if known.get(path) == (size, mtime) or path in _snap["paths"]:
+            continue
+        if read >= SNAP_LOCAL_BYTES_PER_STEP:
+            return True
+        try:
+            sha1 = media.sha1_file(path).hex()
+        except OSError:
+            sha1 = ""
+        fp = ""
+        if sha1 and ext(path) in THUMB_EXTS:
+            with contextlib.suppress(Exception):
+                fp = snapchat.dhash_file(path)
+        q("INSERT OR REPLACE INTO snap_local VALUES (?,?,?,?,?)", (path, size, mtime, sha1, fp))
+        _snap_dirty.add("*")  # a new copy here: match again
+        read += size or 0
+    return False
+
+
+def _snap_memories():
+    return [
+        {
+            "path": p,
+            "kind": k,
+            "taken": t,
+            "dedups": [_b64_hash(bytes.fromhex(h)) for h in (s, o) if h and re.fullmatch(r"[0-9a-f]{40}", h)],
+            "dhash": d or "",
+            "width": w,
+            "height": h_,
+        }
+        for p, k, t, s, o, d, w, h_ in q(
+            "SELECT path, kind, taken, sha1, orig_sha1, dhash, width, height FROM snap_items ORDER BY taken"
+        )
+    ]
+
+
+def snapchat_match_step(account, make_client=None):
+    """Find each memory in the account's library, a little at a time. Returns True if it did work
+    (it is called again soon) and False once everything is matched."""
+    rows = q("SELECT path, kind, poster, dhash, match FROM snap_items")
+    if not rows:
+        return False
+    track = snapchat_state[account]
+    refreshed = float(meta_get(f"library_refreshed:{account}") or 0)
+    if not refreshed:
+        if account not in _refresh_requests:
+            _refresh_requests.append(account)  # the library is read first
+        return False
+    # Fingerprints of the memories: the photo, or a video's first frame (saved by the script).
+    done = 0
+    for path, kind, poster, dh, _match in rows:
+        if dh is not None:
+            continue
+        source = poster if kind == "video" else path
+        fp = ""
+        if source and os.path.isfile(source):
+            with contextlib.suppress(Exception):
+                fp = snapchat.dhash_file(source)
+        q("UPDATE snap_items SET dhash=? WHERE path=?", (fp, path))
+        done += 1
+        if done >= 200:
+            return True
+    if _snap_local_step():
+        return True
+    matched = float(meta_get(f"snap_matched:{account}") or 0)
+    if all(r[4] is not None for r in rows) and matched >= refreshed and not (_snap_dirty & {"*", account}):
+        return False
+    listed = (
+        _library_rows(
+            account,
+            f"SELECT media_key, dedup_key, type, utc_timestamp, width, height, make FROM remote_media WHERE {_OWNED}",
+        )
+        or []
+    )
+    library = [(k, d, t, _seconds(ts), w, h) for k, d, t, ts, w, h, _make in listed]
+    cameras = {r[0] for r in listed if r[6]}  # taken by a camera: an original, never replaced
+    memories = _snap_memories()
+    # Google's thumbnails of the items that could be copies, fingerprinted once and kept.
+    first = snapchat.match(memories, library, {})
+    wanted = snapchat.thumbs_wanted(memories, library, first)
+    prints = dict(q("SELECT media_key, dhash FROM snap_prints WHERE account=?", (account,)))
+    missing = [k for k in wanted if k not in prints]
+    track.update(wanted=len(wanted), prints=len(wanted) - len(missing))
+    if missing:
+        client = (make_client or _reclaim_client)(account)
+
+        def one(key):
+            try:
+                return key, snapchat.dhash_bytes(client.api.get_thumbnail(key, width=SNAP_THUMB_WIDTH))
+            except Exception as e:
+                if outage_kind(e):
+                    raise
+                return key, ""  # not a picture Google can show: never a match
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(4) as pool:
+            got = list(pool.map(one, missing[:SNAP_PRINTS_PER_STEP]))
+        with db_lock:
+            CONN.executemany("INSERT OR REPLACE INTO snap_prints VALUES (?,?,?)", [(account, k, f) for k, f in got])
+            CONN.commit()
+        track["prints"] += len(got)
+        notify_change()
+        return True
+    owned = {r[0] for r in library}
+    prints = {k: f for k, f in prints.items() if k in owned}
+    local_rows = q("SELECT path, sha1, dhash FROM snap_local WHERE sha1 != ''")
+    in_google = {r[1] for r in library}
+    here = {_b64_hash(bytes.fromhex(h)): p for p, h, _f in local_rows}  # Google's copy -> the file here
+    local = {p: f for p, h, f in local_rows if f and _b64_hash(bytes.fromhex(h)) not in in_google}
+    found = snapchat.match(memories, library, prints, local)
+    _snap_save(account, found, here, cameras)
+    meta_set(f"snap_matched:{account}", str(time.time()))
+    _snap_dirty.discard("*")
+    _snap_dirty.discard(account)
+    _snap_sets()
+    counts = collections.Counter(f["match"] for f in found.values())
+    log(
+        f"Snapchat memories in {account}: {counts['same_file'] + counts['same_moment'] + counts['looks_same']} "
+        f"already in Google Photos, {counts['local'] + counts['none']} not yet",
+        "info",
+    )
+    return True
+
+
+def _snap_save(account, found, here, cameras=frozenset()):
+    rows = q("SELECT path, taken, decided, action FROM snap_items WHERE COALESCE(state,'') NOT IN ('done','queued')")
+    updates, copy_rows, paths = [], [], []
+    for path, taken, decided, action in rows:
+        f = found.get(path)
+        if not f:
+            continue
+        auto = snapchat.action_for(f, taken, DATE_SLACK, cameras)
+        copies = f["copies"]
+        if decided and (action in ("album", "replace")) != bool(copies):
+            decided, action = 0, auto  # what the user chose no longer fits what Google has
+        best = min(copies, key=lambda c: snapchat.HOW_ORDER.index(c["how"])) if copies else None
+        updates.append(
+            (account, f["match"], best["key"] if best else None, best["dedup"] if best else None,
+             best["taken"] if best else None, best["distance"] if best else None, f["local"],
+             action if decided else auto, decided, int(any(c["key"] in cameras for c in copies)), time.time(), path)
+        )  # fmt: skip
+        paths.append(path)
+        copy_rows += [
+            (path, c["key"], c["dedup"], c["taken"], c["how"], c["distance"], int(c["key"] in cameras),
+             here.get(c["dedup"]))
+            for c in copies
+        ]  # fmt: skip
+    with db_lock:
+        CONN.executemany(
+            """UPDATE snap_items SET account=?, match=?, google_key=?, google_dedup=?, google_taken=?, distance=?,
+               local=?, action=?, decided=?, original=?, updated=? WHERE path=?""",
+            updates,
+        )
+        CONN.executemany("DELETE FROM snap_copies WHERE path=?", [(p,) for p in paths])
+        CONN.executemany(
+            """INSERT OR REPLACE INTO snap_copies (path, media_key, dedup, taken, how, distance, original, local)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            copy_rows,
+        )
+        CONN.commit()
+    cache.bump()
+    notify_change()
+
+
+def _snap_copies(path):
+    return [
+        {"key": k, "dedup": d, "taken": t, "original": bool(o), "favorite": bool(f), "state": st or "", "how": h}
+        for k, d, t, o, f, st, h in q(
+            "SELECT media_key, dedup, taken, original, favorite, state, how FROM snap_copies WHERE path=?", (path,)
+        )
+    ]
+
+
+def _snap_upload(client, account, path, taken, size, track):
+    """Upload one memory with its own moment as the date. Returns (media key, SHA-1, status)."""
+    from rich.progress import Progress
+
+    name = rel(path)
+    track["current"] = {"key": name, "step": "hashing", "done": 0, "total": size}
+    digest = media.sha1_file(path)
+    phases = []
+
+    def progress(ev):
+        phases.append(ev.get("phase"))
+        if ev.get("phase") == "uploading":
+            track["current"] = {"key": name, "step": "uploading", "done": ev.get("bytes_completed") or 0,
+                                "total": size}  # fmt: skip
+
+    with Progress(disable=True) as bar, upload_date(client, taken):
+        result = client._upload_file(
+            Path(path), digest, bar, force_upload=False, use_quota=False, saver=False, progress_callback=progress
+        )
+    key = next(iter(result.values()), "")
+    if not key:
+        raise RuntimeError("Google returned no media key")
+    return key, digest, "exists" if "skipped" in phases else "uploaded"
+
+
+def _snap_keep_google_copy(client, account, key, dedup, track):
+    """Before Google's copy of a memory is deleted: keep it in Downloads, unless the same file is
+    on this server already."""
+    if _local_copies(dedup) or q("SELECT 1 FROM snap_local WHERE sha1=?", (_digest(dedup).hex(),)):
+        return
+    row = _library_rows(
+        account, "SELECT file_name, size_bytes, utc_timestamp FROM remote_media WHERE media_key=?", (key,)
+    )
+    name, size, taken = (row or [("", 0, 0)])[0]
+    taken = _seconds(taken)
+    got, _ = _download(client, account, key, dedup, name or f"{key}.bin", size, taken, SNAP_DIR / account, track)
+    _keep_download(account, got, key, size, taken)
+
+
+def snapchat_step(account, make_client=None):
+    """Do what the user started on the Snapchat page, memory by memory: duplicates in Google are kept
+    on this server and deleted there, then the memory stays (album) or is uploaded with its date
+    (replace, upload). Every one goes into the album. Returns True if anything was done."""
+    if snapchat_paused(account):
+        return False
+    rows = q(
+        """SELECT path, action, kind, taken, size, mtime, favorite, archived, caption, local
+           FROM snap_items WHERE state='queued' AND account=? ORDER BY taken LIMIT 300""",
+        (account,),
+    )
+    later = q(
+        "SELECT 1 FROM snap_items WHERE account=? AND state='done' AND in_album=0 AND new_key IS NOT NULL LIMIT 1",
+        (account,),
+    )
+    if not rows and not later:
+        return False
+    track = snapchat_state[account]
+    client = (make_client or _reclaim_client)(account)
+    album = _snap_album()
+    did, heavy, now = False, 0, time.time()
+    try:
+        for path, action, kind, taken, size, mtime, fav, arch, cap, local in rows:
+            if heavy >= SNAP_UPLOADS_PER_STEP:
+                break
+            if now - _snap_tried.get(path, 0) < 100:
+                continue
+            name = rel(path)
+            copies = _snap_copies(path)
+            keep, drop = snapchat.plan(action, copies, taken, DATE_SLACK)
+            started = time.monotonic()
+            try:
+                waiting = False
+                for c in drop:
+                    if c["state"] == "deleted":
+                        continue
+                    heavy += 1
+                    if not _snap_drop_copy(client, account, path, c, track):
+                        waiting = True
+                        break
+                if waiting:
+                    _snap_tried[path] = time.time()
+                    q("UPDATE snap_items SET error=? WHERE path=?",
+                      ("Google hasn't deleted a copy yet: trying again soon", path))  # fmt: skip
+                    continue
+                if action == "album":
+                    if keep is None:
+                        raise RuntimeError("Google's copy is gone: look for the memories again")
+                    if any(c["favorite"] for c in drop) and not keep["favorite"]:
+                        with contextlib.suppress(Exception):  # a duplicate was a favourite: the copy kept is
+                            client.api.set_favorite(keep["dedup"], True)
+                    _snap_finish(path, account, keep["key"], "exists", "")
+                    did = True
+                    continue
+                heavy += 1
+                key, digest, status = _snap_upload(client, account, path, taken, size, track)
+                if action == "replace":
+                    _restore_details(client, _b64_hash(digest), fav, arch, cap)
+                _snap_finish(path, account, key, status, digest.hex(), size, mtime, local)
+                ms = int((time.monotonic() - started) * 1000)
+                save_upload(name, kind, size, ms, status, account)
+                if status == "uploaded":
+                    add_stats(**({"videos": 1, "video_bytes": size, "video_ms": ms} if kind == "video"
+                                 else {"photos": 1, "photo_bytes": size, "photo_ms": ms}))  # fmt: skip
+                when = time.strftime("%Y-%m-%d %H:%M", time.gmtime(taken))
+                log(f"Snapchat memory {name}: uploaded dated {when} UTC ({account})", "uploaded", name)
+                did = True
+            except Exception as e:
+                if outage_kind(e):
+                    raise
+                msg = f"{type(e).__name__}: {e}"[:300]
+                print(f"Snapchat: {name}: {msg}", file=sys.stderr, flush=True)
+                q("UPDATE snap_items SET state='failed', error=? WHERE path=?", (msg, path))
+            finally:
+                track["current"] = None
+        # Into the album, a batch at a time (and any an earlier album call missed).
+        later = q(
+            """SELECT path, new_key FROM snap_items WHERE account=? AND state='done' AND in_album=0
+               AND new_key IS NOT NULL LIMIT ?""",
+            (account, SOURCE_BATCH),
+        )
+        if later:
+            added, left_out, ok = album_add(client, account, album, later)
+            _snap_in_album(added)
+            for path in left_out:  # Google can't find it now: leave it out instead of trying forever
+                q("UPDATE snap_items SET in_album=-1 WHERE path=?", (path,))
+            if not ok:
+                track["error"] = f"Could not add to the album {album}"
+                return did
+            did = did or bool(added)
+        track["error"] = ""
+    except Exception as e:
+        track["error"] = outage_kind(e) or f"{type(e).__name__}: {e}"[:300]
+        print(f"Snapchat ({account}): {track['error']}", file=sys.stderr, flush=True)
+    finally:
+        if did:
+            _snap_sets()
+            notify_change()
+    return did
+
+
+def _snap_drop_copy(client, account, path, c, track):
+    """Delete one of a memory's copies from Google, after keeping it on this server. True once Google
+    no longer has it."""
+    name = rel(path)
+    if client.api.find_remote_media_by_hash(_digest(c["dedup"])):
+        track["current"] = {"key": name, "step": "keeping", "done": 0, "total": 0}
+        _snap_keep_google_copy(client, account, c["key"], c["dedup"], track)
+        track["current"] = {"key": name, "step": "deleting", "done": 0, "total": 0}
+        if not _delete_in_google(client, c["dedup"]):
+            return False
+        log(f"Deleted a copy of the Snapchat memory {name} from Google Photos ({account}); kept on this server",
+            "deleted", name)  # fmt: skip
+    q("UPDATE snap_copies SET state='deleted', error='' WHERE path=? AND media_key=?", (path, c["key"]))
+    return True
+
+
+def _snap_in_album(paths):
+    for i in range(0, len(paths), 500):
+        part = paths[i : i + 500]
+        q(f"UPDATE snap_items SET in_album=1 WHERE path IN ({','.join('?' * len(part))})", part)
+
+
+def _snap_finish(path, account, key, status, sha1hex, size=None, mtime=None, local=None):
+    """Google has the memory now: remember it, and count the file (and the copies here it stands in
+    for) as backed up."""
+    if size is None:
+        size, mtime = q("SELECT size, mtime FROM snap_items WHERE path=?", (path,))[0]
+    now = time.time()
+    q("UPDATE snap_items SET state='done', error='', new_key=?, updated=? WHERE path=?", (key, now, path))
+    # sha1 "" when Google's item is a different file (a camera-roll copy): never fingerprinted later.
+    q(
+        """INSERT OR REPLACE INTO files (path, size, mtime, status, media_key, error, attempts, updated, account, sha1)
+           VALUES (?,?,?,?,?,'',0,?,?,?)""",
+        (path, size, mtime, status, key, now, account, sha1hex),
+    )
+    locals_ = {local} | {p for (p,) in q("SELECT local FROM snap_copies WHERE path=? AND local IS NOT NULL", (path,))}
+    for lp in locals_:
+        try:
+            fst = os.stat(lp) if lp else None
+        except OSError:
+            continue
+        if fst is None:
+            continue
+        q(
+            """INSERT INTO files (path, size, mtime, status, media_key, error, attempts, updated, account, sha1)
+               VALUES (?,?,?,'exists',?,'',0,?,?,NULL)
+               ON CONFLICT(path) DO UPDATE SET media_key=excluded.media_key, status='exists',
+               updated=excluded.updated""",
+            (lp, fst.st_size, fst.st_mtime, key, now, account),
+        )
+
+
+def snapchat_work(account, make_client=None):
+    """The Snapchat part of an account's Google work."""
+    if not _snap["paths"] or account != snapchat_account():
+        return False
+    try:
+        busy = snapchat_match_step(account, make_client)
+    except Exception as e:
+        snapchat_state[account]["error"] = outage_kind(e) or f"{type(e).__name__}: {e}"[:300]
+        raise
+    return snapchat_step(account, make_client) or busy
+
+
+def snapchat_start(account, actions=None, names=None):
+    """Start the work for memories: every one with these actions, or these files."""
+    if account not in dict(accounts()):
+        raise ValueError("unknown account")
+    if not meta_get(f"snap_matched:{account}"):
+        raise ValueError("Still looking for these memories in Google Photos")
+    rows = q(
+        """SELECT path, action FROM snap_items WHERE account=? AND match IS NOT NULL
+           AND COALESCE(state,'') IN ('', 'failed') AND action != 'skip'""",
+        (account,),
+    )
+    if actions is not None:
+        rows = [r for r in rows if r[1] in actions]
+    if names is not None:
+        wanted = {str(MEDIA / n) for n in names if clean_folder(n)}
+        rows = [r for r in rows if r[0] in wanted]
+    # Favourite, archive and caption of Google's copies are read now: they are gone once deleted.
+    keys = [k for (k,) in q("SELECT media_key FROM snap_copies WHERE path IN (SELECT value FROM json_each(?))",
+                            (json.dumps([r[0] for r in rows]),))]  # fmt: skip
+    details = _library_rows(
+        account,
+        "SELECT media_key, is_favorite, is_archived, caption FROM remote_media WHERE media_key IN "
+        "(SELECT value FROM json_each(?))",
+        (json.dumps(keys),),
+    )
+    info = {k: (f, a, c) for k, f, a, c in details or []}
+    for path, _action in rows:
+        got = [info[k] for (k,) in q("SELECT media_key FROM snap_copies WHERE path=?", (path,)) if k in info]
+        for (k,) in q("SELECT media_key FROM snap_copies WHERE path=?", (path,)):
+            if k in info:
+                q("UPDATE snap_copies SET favorite=? WHERE path=? AND media_key=?", (int(bool(info[k][0])), path, k))
+        fav = any(f for f, _a, _c in got)
+        arch = bool(got) and all(a for _f, a, _c in got)
+        cap = next((c for _f, _a, c in got if c and not _junk_caption(c)), "")
+        q(
+            """UPDATE snap_items SET state='queued', error='', favorite=?, archived=?, caption=?, updated=?
+               WHERE path=?""",
+            (int(fav), int(arch), cap, time.time(), path),
+        )
+    reclaim_wake.set()
+    notify_change()
+    return {"queued": len(rows)}
+
+
+def snapchat_set_action(names, action):
+    """Choose what happens to these memories: album or replace (Google has copies), upload (it has
+    none), skip, or auto (the automatic choice)."""
+    if action not in (*SNAP_ACTIONS, "auto"):
+        raise ValueError("unknown action")
+    n = 0
+    for path in [str(MEDIA / x) for x in names if clean_folder(x)]:
+        row = q("SELECT taken FROM snap_items WHERE path=? AND COALESCE(state,'') NOT IN ('done','queued')", (path,))
+        if not row:
+            continue
+        (taken,) = row[0]
+        copies = _snap_copies(path)
+        if action in ("album", "replace") and not copies:
+            continue  # Google has no copy of it
+        if action == "upload" and copies:
+            continue  # it would be a duplicate: replace takes Google's copies' place
+        if action == "auto":
+            cams = {c["key"] for c in copies if c["original"]}
+            auto = snapchat.action_for({"copies": copies}, taken, DATE_SLACK, cams)
+            q("UPDATE snap_items SET action=?, decided=0, state=NULL WHERE path=?", (auto, path))
+        else:
+            q("UPDATE snap_items SET action=?, decided=1, state=NULL WHERE path=?", (action, path))
+        n += 1
+    _snap_sets()
+    return {"updated": n}
+
+
+def snapchat_report(account="", action="", limit=120, offset=0):
+    """What the Snapchat page shows: the export, how far the search in Google is, what will happen
+    to each memory and how it's going."""
+    account = account or snapchat_account()
+    manifests = []
+    for (manifest,) in q("SELECT DISTINCT manifest FROM snap_items"):
+        try:
+            export = json.loads(meta_get(f"snap_export:{manifest}") or "{}")
+        except ValueError:
+            export = {}
+        manifests.append({"folder": rel(Path(manifest).parent), "export": export})
+    rows = q(
+        """SELECT path, kind, taken, lat, lon, match, distance, google_key, google_taken, local, action, decided,
+                  state, error, new_key, account, dhash FROM snap_items ORDER BY taken DESC"""
+    )
+    counts = collections.defaultdict(lambda: {"total": 0, "done": 0, "queued": 0, "failed": 0, "photos": 0})
+    matches = collections.Counter()
+    for r in rows:
+        if r[5] is None:
+            continue
+        c = counts[r[10] or "upload"]
+        c["total"] += 1
+        c["photos"] += r[1] == "photo"
+        if r[12] in ("done", "queued", "failed"):
+            c[r[12]] += 1
+        matches[r[5]] += 1
+    picked = [r for r in rows if r[5] is not None and (not action or r[10] == action)]
+    all_copies = collections.defaultdict(list)
+    for path, key, dedup, taken, how, dist, orig, fav, st in q(
+        "SELECT path, media_key, dedup, taken, how, distance, original, favorite, state FROM snap_copies"
+    ):
+        all_copies[path].append({"key": key, "dedup": dedup, "taken": taken, "how": how, "distance": dist,
+                                 "original": bool(orig), "favorite": bool(fav), "state": st or ""})  # fmt: skip
+    # Duplicates: copies in Google that go (kept on this server first), and how many are gone already.
+    dupes = {"total": 0, "deleted": 0}
+    roles = {}
+    for r in rows:
+        if r[5] is None:
+            continue
+        keep, drop = snapchat.plan(r[10], all_copies.get(r[0], []), r[2], DATE_SLACK)
+        roles[r[0]] = (keep, drop)
+        dupes["total"] += len(drop)
+        dupes["deleted"] += sum(c["state"] == "deleted" for c in drop)
+
+    def url(key):
+        return f"https://photos.google.com/photo/{urllib.parse.quote(key, safe='')}" if key else ""
+
+    def copies_of(path):
+        keep, drop = roles.get(path, (None, []))
+        gone = {c["key"] for c in drop}
+        return [
+            {
+                "key": c["key"],
+                "taken": c["taken"],
+                "how": c["how"],
+                "distance": c["distance"],
+                "camera": c["original"],
+                "role": "keep" if keep is c else "delete" if c["key"] in gone else "leave",
+                "state": c["state"],
+                "url": url(c["key"]) if c["state"] != "deleted" else "",
+            }
+            for c in all_copies.get(path, [])
+        ]
+
+    items = [
+        {
+            "name": rel(r[0]),
+            "kind": r[1],
+            "taken": r[2],
+            "place": [r[3], r[4]] if r[3] is not None else None,
+            "match": r[5],
+            "distance": r[6],
+            "google": {"key": r[7], "taken": r[8], "url": url(r[7])} if r[7] else None,
+            "copies": copies_of(r[0]),
+            "local": rel(r[9]) if r[9] else "",
+            "action": r[10],
+            "decided": bool(r[11]),
+            "state": r[12] or "",
+            "error": r[13] or "",
+            "url": url(r[14]),
+        }
+        for r in picked[offset : offset + limit]
+    ]
+    track = snapchat_state[account]
+    refreshed = meta_get(f"library_refreshed:{account}")
+    matched = meta_get(f"snap_matched:{account}")
+    return {
+        "account": account,
+        "picked": meta_get("snap_account") or "",
+        "album": _snap_album(),
+        "manifests": manifests,
+        "memories": len(rows),
+        "fingerprinted": sum(1 for r in rows if r[16] is not None),
+        "checked": sum(1 for r in rows if r[5] is not None),
+        "thumbs": {"done": track["prints"], "total": track["wanted"]},
+        "refreshed": float(refreshed) if refreshed else None,
+        "matched": float(matched) if matched else None,
+        "searching": bool(rows) and (not matched or any(r[5] is None for r in rows) or bool(_snap_dirty)),
+        "counts": {a: counts[a] for a in SNAP_ACTIONS},
+        "duplicates": dupes,
+        "matches": dict(matches),
+        "action": action,
+        "items": items,
+        "more": max(0, len(picked) - offset - limit),
+        "paused": snapchat_paused(account),
+        "held": state.get("snap_held", 0),
+        "exporting": state.get("snap_exporting", []),
+        "current": track["current"],
+        "error": track["error"],
+    }
+
+
+def snapchat_pick_account(account):
+    if account and account not in dict(accounts()):
+        raise ValueError("unknown account")
+    meta_set("snap_account", account)
+    # Memories not done yet are looked for again in the account now picked.
+    q("UPDATE snap_items SET match=NULL, action=NULL, decided=0, state=NULL, error='' "
+      "WHERE COALESCE(state,'') != 'done'")  # fmt: skip
+    _snap_dirty.add("*")
+    _snap_sets()
+    reclaim_wake.set()
+    return {"ok": True, "account": snapchat_account()}
 
 
 # ---------------------------------------------------------------- copy between Google accounts
@@ -5947,6 +6748,16 @@ class Handler(BaseHTTPRequestHandler):
             self.json(dates_report(arg("account", "")))
         elif path == "/api/sources":
             self.json(sources_report(arg("source", ""), arg("limit", 600, 1, 5000)))
+        elif path == "/api/snapchat":
+            action = arg("action", "")
+            self.json(
+                snapchat_report(
+                    arg("account", ""),
+                    action if action in SNAP_ACTIONS else "",
+                    arg("limit", 120, 1, 1000),
+                    arg("offset", 0, 0, 10**9),
+                )
+            )
         elif path == "/api/duplicates":
             self.cached("duplicates", 300, duplicates)
         elif path == "/api/activity":
@@ -6239,6 +7050,42 @@ class Handler(BaseHTTPRequestHandler):
                     if account not in dict(accounts()):
                         raise ValueError("unknown account")
                     _refresh_requests.append(account)
+                    reclaim_wake.set()
+                    self.json({"ok": True})
+                else:
+                    self.send(404, "{}")
+            except (ValueError, TypeError) as e:
+                self.json({"error": str(e)}, 400)
+        elif path.startswith("/api/snapchat/"):
+            try:
+                req = json.loads(body or "{}")
+                names = [str(n) for n in req.get("paths") or []][:5000]
+                account = str(req.get("account", "")) or snapchat_account()
+            except (ValueError, AttributeError, TypeError):
+                self.json({"error": "bad request"}, 400)
+                return
+            try:
+                if path == "/api/snapchat/start":
+                    actions = req.get("actions")
+                    actions = [a for a in actions if a in SNAP_ACTIONS] if isinstance(actions, list) else None
+                    self.json(snapchat_start(account, actions, names if req.get("paths") else None))
+                elif path == "/api/snapchat/action":
+                    self.json(snapchat_set_action(names, str(req.get("action", ""))))
+                elif path == "/api/snapchat/account":
+                    self.json(snapchat_pick_account(str(req.get("account", ""))))
+                elif path == "/api/snapchat/pause":
+                    if account not in dict(accounts()):
+                        raise ValueError("unknown account")
+                    meta_set(f"snap_paused:{account}", "1" if req.get("paused") else "0")
+                    reclaim_wake.set()
+                    notify_change()
+                    self.json({"ok": True, "paused": snapchat_paused(account)})
+                elif path == "/api/snapchat/recheck":
+                    if account not in dict(accounts()):
+                        raise ValueError("unknown account")
+                    q("UPDATE snap_items SET state=NULL, error='' WHERE state='failed'")
+                    _snap_dirty.add(account)
+                    _refresh_requests.append(account)  # read the library, then look again
                     reclaim_wake.set()
                     self.json({"ok": True})
                 else:

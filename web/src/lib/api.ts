@@ -409,6 +409,84 @@ export interface DatesReport {
   current: { key: string; step?: "deleting" | "uploading"; done: number; total: number } | null;
   error: string;
 }
+/** What happens to a Snapchat memory: only the album (Google has it with the right date), replace
+ * Google's wrongly dated copy, upload it (Google doesn't have it), or leave it. */
+export type SnapAction = "album" | "replace" | "upload" | "skip";
+export type SnapMatch = "same_file" | "same_moment" | "looks_same" | "local" | "none";
+export interface SnapItem {
+  name: string;
+  kind: "photo" | "video";
+  /** The memory's moment (unix seconds), from Snapchat. */
+  taken: number;
+  place: [number, number] | null;
+  match: SnapMatch;
+  /** How different the picture looks from Google's copy (0 to 256; up to 40 counts as the same). */
+  distance: number | null;
+  google: { key: string; taken: number | null; url: string } | null;
+  /** Every copy Google has: one stays ("keep"), the others are kept on this server and deleted
+   * from Google ("delete"); photos from a camera are never deleted ("leave"). */
+  copies: SnapCopy[];
+  /** The copy of it on this server (a camera-roll save), if one was found. */
+  local: string;
+  action: SnapAction;
+  /** The user chose the action. */
+  decided: boolean;
+  state: "" | "queued" | "done" | "failed";
+  error: string;
+  /** The memory in Google Photos, once GP Sync uploaded it or added it to the album. */
+  url: string;
+}
+export interface SnapCopy {
+  key: string;
+  taken: number | null;
+  how: "same_file" | "same_moment" | "looks_same";
+  distance: number | null;
+  camera: boolean;
+  role: "keep" | "delete" | "leave";
+  state: "" | "deleted";
+  url: string;
+}
+export interface SnapCounts {
+  total: number;
+  done: number;
+  queued: number;
+  failed: number;
+  photos: number;
+}
+export interface SnapExport {
+  memories?: number;
+  found?: number;
+  missing?: number;
+  missing_months?: Record<string, number>;
+}
+export interface SnapchatReport {
+  account: string;
+  /** The account picked on the page ("" = the folder's account). */
+  picked: string;
+  album: string;
+  manifests: { folder: string; export: SnapExport }[];
+  memories: number;
+  fingerprinted: number;
+  checked: number;
+  thumbs: { done: number; total: number };
+  refreshed: number | null;
+  matched: number | null;
+  searching: boolean;
+  counts: Record<SnapAction, SnapCounts>;
+  /** Copies in Google that go (kept on this server first), and how many are gone already. */
+  duplicates: { total: number; deleted: number };
+  matches: Partial<Record<SnapMatch, number>>;
+  action: SnapAction | "";
+  items: SnapItem[];
+  more: number;
+  paused: boolean;
+  /** Files in an export folder that aren't in its list (held back, never backed up as they are). */
+  held: number;
+  /** Folders the export script is still writing to. */
+  exporting: string[];
+  current: { key: string; step: string; done: number; total: number } | null;
+  error: string;
+}
 export interface FileItem {
   name: string;
   size: number;

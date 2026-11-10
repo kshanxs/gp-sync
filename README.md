@@ -165,6 +165,23 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   WhatsApp, Telegram, screenshot or "saved from an app"), with the evidence. Items saved from apps
   can go into an album per app, get a searchable caption, or be archived. Snapchat saves get an
   estimated date worked out from your own camera photos.
+- **Snapchat Memories:** bring in Snapchat's "Download My Data" export with its real dates.
+  `scripts/snapchat_export.py` turns the zips into a folder (for example `Photos/Snapchat`) and
+  writes Snapchat's exact date, time and place into every photo and video, with the text and
+  stickers layer burned in. The **Snapchat** page then looks for each memory in Google Photos
+  before anything is uploaded: the same file, a camera-roll copy taken in the same second, or one
+  that looks the same, and every further copy. No memory ends up in Google twice: one copy stays
+  (the original, or one with the right date) and goes into the Snapchat album; when Google only has
+  later-dated copies, the memory is uploaded with Snapchat's date, time and place in their place
+  (albums you made yourself in Google Photos can't be read, so they don't carry over). Every copy that
+  goes is kept on this server first (Downloads page) and then deleted from Google; photos from a
+  camera are never deleted. Copies on this server aren't uploaded as well, and files in the export
+  folder that aren't in its list are held back. Nothing changes in Google until you press Start.
+
+  ```bash
+  # on the server, with exiftool and ffmpeg: every zip from Snapchat in ~/Downloads
+  python3 scripts/snapchat_export.py ~/Downloads ~/Photos/Snapchat
+  ```
 - **Settings in one place:** Backup (sync, folders, Google accounts), Google Photos (albums,
   dates, sources, duplicates, tools) and App. **Google accounts → Manage** checks logins, reads
   libraries or checks dates for several accounts at once.
@@ -233,6 +250,9 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/storage/freed?account=` | What Free storage freed: totals, time taken, per day, and each item |
 | `POST /api/storage/pause` | Pause or resume Free storage in an account: `{"account", "paused": true}` |
 | `GET /api/downloads?account=` | Copies kept after freeing storage, per account |
+| `GET /api/snapchat?action=replace&limit=120` | Snapchat memories: the export, the search in Google, what happens to each one |
+| `POST /api/snapchat/start` | Start memories: `{"account", "actions": ["album", "replace", "upload"]}` or `{"account", "paths": [...]}` |
+| `POST /api/snapchat/action` | Choose for memories: `{"paths": [...], "action": "album"\|"replace"\|"upload"\|"skip"\|"auto"}` |
 | `GET /api/diagnostics?hours=24` | Everything needed to look into a problem, as one JSON file (no logins) |
 | `GET /api/duplicates` | Groups of identical files |
 | `GET /api/health` | Version, storage, logins |
@@ -391,6 +411,7 @@ backend/        Python: sync engine and REST API
   sync.py         web server, scanning, uploads and Google work
   cli.py          the gpsync command
   provenance.py   where a file came from (Sources) and Snapchat date estimates
+  snapchat.py     Snapchat Memories: the export list and finding memories in Google
   media.py        fingerprints and thumbnails
   notify.py       ntfy and Telegram alerts
   cache.py        Redis cache with a memory fallback
@@ -399,7 +420,7 @@ backend/        Python: sync engine and REST API
 web/            TypeScript dashboard (Vite+, Tailwind CSS)
   src/views/      one file per page
   src/lib/        shared code (API, charts, icons, …)
-scripts/        dependency updater used by the release workflow
+scripts/        dependency updater used by the release workflow, and snapchat_export.py
 docs/           README screenshots, PROMPTS.md (AI assistant prompts)
 Dockerfile      builds web/, then the Python image
 VERSION         release version (backend and dashboard have their own); CHANGELOG.md lists changes

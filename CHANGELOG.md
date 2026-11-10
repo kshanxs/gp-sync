@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.5.11
+
+- Snapchat Memories, with their real dates. `scripts/snapchat_export.py` turns Snapchat's "Download
+  My Data" zips into a folder (for example Photos/Snapchat): every photo and video gets Snapchat's
+  exact date, time and place written inside, the text and stickers layer burned in, and a name with
+  its local time. Run it again with more zips and only new memories are added; it says which
+  months are missing from the zips.
+- A new Snapchat page looks for each memory in Google Photos before anything is uploaded: the same
+  file, a camera-roll copy taken in the same second, or one that looks the same (its fingerprint
+  against Google's thumbnail; videos by their first frame), and every further copy of it. No
+  memory stays in Google twice: one copy stays (the original, or one with the right date) and goes
+  into the Snapchat album; when Google only has later-dated copies, the memory is uploaded with its
+  date, time and place in their place (albums you made yourself don't carry over) (favourite, archive and your caption come back). Every copy that goes is kept
+  on this server first (Downloads) and then deleted from Google; photos from a camera are never
+  deleted. Pick another action for any memory, pick the account, pause, or look again. Nothing
+  changes in Google until Start.
+- Phones: pull to refresh comes out below the page's control strip, not over its Pause and Refresh
+  buttons.
+- Nothing in a Snapchat export folder is backed up until it is in the folder's list: the script
+  marks the folder while it writes, and files other apps leave there are held back.
+- Memory files are never backed up as they are, and camera-roll copies on this server that a memory
+  takes the place of aren't uploaded as well. A copy that is uploaded (or fixed in Fix dates) gets
+  the memory's date.
+
 ## 1.5.10
 
 - Free storage, Working now: each item stays listed from download to Google's check ("Checking

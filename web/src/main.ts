@@ -39,6 +39,7 @@ import { tabLive } from "./lib/live";
 import settings from "./views/settings";
 import dates from "./views/dates";
 import sources from "./views/sources";
+import snapchat from "./views/snapchat";
 import { askUndated } from "./lib/undated";
 import { watchSegs } from "./lib/fit-segs";
 import storage from "./views/storage";
@@ -64,6 +65,7 @@ const ROUTES: Route[] = [
   { id: "copy", title: "Copy accounts", ic: "users", view: copyView, group: "Backup" },
   { id: "dates", title: "Fix dates", ic: "clock", view: dates, group: "Backup" },
   { id: "sources", title: "Sources", ic: "layers", view: sources, group: "Backup" },
+  { id: "snapchat", title: "Snapchat", ic: "sparkles", view: snapchat, group: "Backup" },
   { id: "folders", title: "Folders", ic: "folder", view: folders, group: "Insights" },
   { id: "history", title: "History", ic: "calendar", view: historyView, group: "Insights" },
   { id: "insights", title: "Insights", ic: "chart", view: insights, group: "Insights" },
@@ -252,6 +254,8 @@ function pullToRefresh(): void {
       startX = e.touches[0]!.clientX;
       startY = e.touches[0]!.clientY;
       pull = 0;
+      // Start at the top of the page itself: below the header and, when shown, the control strip.
+      ind.style.top = `${main.getBoundingClientRect().top}px`;
     },
     { passive: true },
   );

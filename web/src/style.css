@@ -1075,8 +1075,10 @@ html.theme-reveal::view-transition-old(gt-live) {
 }
 
 /* Pull to refresh (phones): a small round chip under the header with a drawing circle. */
+/* Pull to refresh: comes out from under the header and the page's control strip (both above it),
+   at the top of the page itself, never over their buttons. */
 #ptr {
-  @apply pointer-events-none fixed left-1/2 z-40 grid size-10 place-items-center rounded-full border border-line;
+  @apply pointer-events-none fixed left-1/2 z-20 grid size-10 place-items-center rounded-full border border-line;
   background: var(--surface);
   box-shadow: var(--shadow);
   opacity: 0;
@@ -1745,7 +1747,7 @@ svg:hover .donut-arc:not(:hover) {
 
 /* The page's control strip under the header: status, Pause/Resume and Refresh in one place. */
 .page-ctl {
-  @apply flex shrink-0 items-center gap-3 border-b border-line px-4 py-2 lg:px-6;
+  @apply relative z-30 flex shrink-0 items-center gap-3 border-b border-line px-4 py-2 lg:px-6;
   background: color-mix(in oklab, var(--panel) 70%, transparent);
 }
 .page-ctl.hidden {

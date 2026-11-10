@@ -142,3 +142,15 @@ def test_concurrent_thumbnails_stay_valid(tmp_path):
     with Image.open(target) as im:
         im.verify()
     assert not list(target.parent.glob("*.tmp"))
+
+
+def test_the_image_has_every_backend_module():
+    """The Dockerfile copies backend files by name: a new module left out breaks the app on start."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    copied = " ".join(
+        line for line in (root / "Dockerfile").read_text().splitlines() if line.startswith("COPY backend/")
+    )
+    modules = [p.name for p in (root / "backend").glob("*.py")]
+    assert modules and all(f"backend/{m}" in copied for m in modules), modules
