@@ -35,6 +35,17 @@ def picture(seed, size=(90, 160), quality=90):
     return buf.getvalue()
 
 
+def marked(data, box):
+    """The same picture with a white block drawn on (a sticker): it looks less alike."""
+    from PIL import Image, ImageDraw
+
+    im = Image.open(io.BytesIO(data)).convert("RGB")
+    ImageDraw.Draw(im).rectangle(box, fill=(255, 255, 255))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=80)
+    return buf.getvalue()
+
+
 def put(name, data, mtime=T):
     p = sync.MEDIA / name
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -322,7 +333,7 @@ def test_memories_are_found_matched_and_sent(snaps, server, monkeypatch):
         sync.sq("INSERT INTO provenance (path, size, mtime, source) VALUES (?,?,?,'app_export')",
                 (str(p), len(data), p.stat().st_mtime))  # fmt: skip
     dup_a = picture(1, size=(80, 142), quality=70)  # a uploaded again, later
-    dup_b = picture(2, size=(60, 107), quality=55)  # b uploaded again, later
+    dup_b = marked(picture(2), (0, 0, 40, 50))  # b again, later, with a sticker on: a less certain match
     library(
         item("KA", picture(1, quality=50), T + 1),  # saved to the camera roll at the same moment
         item("KA2", dup_a, T + 200 * DAY, is_favorite=True),
@@ -378,9 +389,11 @@ def test_memories_are_found_matched_and_sent(snaps, server, monkeypatch):
     for gone in (roll_b, dup_a, dup_b):
         d = sync._b64_hash(hashlib.sha1(gone).digest())
         assert ("trash", [d]) in client.api.calls and ("delete", [d]) in client.api.calls
-    # Each copy deleted from Google is kept on this server first: downloaded, unless it is here already.
-    assert sorted(kept) == ["KA2", "KB2"]
-    assert {n for (n,) in sync.q("SELECT name FROM downloads")} == {"KA2.jpg", "KB2.jpg"}
+    # A copy deleted from Google is kept on this server first, unless the memory here is certainly the
+    # same picture (KA2: all but identical) or the same file is here (KB: the camera-roll copy). The
+    # less certain KB2 is downloaded.
+    assert kept == ["KB2"]
+    assert {n for (n,) in sync.q("SELECT name FROM downloads")} == {"KB2.jpg"}
     assert ("favorite", sync._b64_hash(hashlib.sha1(picture(1, quality=50)).digest()), True) in client.api.calls
     assert sorted(client.api.sent) == [T + DAY, T + 2 * DAY, T + 3 * DAY]  # each memory's own moment
     new_b = sync._b64_hash(hashlib.sha1(moved_mem).digest())

@@ -7,13 +7,13 @@ export const SNAP_GROUPS: { id: SnapAction; title: string; hint: string; ic: Ico
   {
     id: "album",
     title: "Already in Google",
-    hint: "One copy stays (in your own albums too) and goes into the Snapchat album: the original (older, or from a camera), or one with the right date. Any other copies are duplicates: kept on this server, deleted from Google.",
+    hint: "One copy stays (in your own albums too) and goes into the Snapchat album: the original (older, or from a camera), or one with the right date. Any other copies are duplicates and are deleted from Google; the memory here is the same picture (a less certain match is downloaded first).",
     ic: "library",
   },
   {
     id: "replace",
     title: "In Google, wrong date",
-    hint: "Google only has copies dated later (camera-roll saves backed up afterwards). They're kept on this server and deleted from Google, and the memory is uploaded with Snapchat's date, time and place built in. Albums you made yourself don't carry over.",
+    hint: "Google only has copies dated later (camera-roll saves backed up afterwards). They're deleted from Google (a less certain match is downloaded first), and the memory is uploaded with Snapchat's date, time and place built in. Albums you made yourself don't carry over.",
     ic: "calendar",
   },
   {

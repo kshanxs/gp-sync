@@ -174,7 +174,8 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   (the original, or one with the right date) and goes into the Snapchat album; when Google only has
   later-dated copies, the memory is uploaded with Snapchat's date, time and place in their place
   (albums you made yourself in Google Photos can't be read, so they don't carry over). Every copy that
-  goes is kept on this server first (Downloads page) and then deleted from Google; photos from a
+  goes is deleted from Google: the memory on this server is the same picture, and a less certain
+  match is downloaded first (Downloads page); photos from a
   camera are never deleted. Copies on this server aren't uploaded as well, and files in the export
   folder that aren't in its list are held back. Nothing changes in Google until you press Start.
 

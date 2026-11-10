@@ -47,14 +47,13 @@ function googleThumb(account: string, key: string, kind: string): string {
 
 const ROLE: Record<SnapCopy["role"], [string, Tone]> = {
   keep: ["Stays", "good"],
-  delete: ["Kept here, deleted from Google", "warn"],
+  delete: ["Deleted from Google", "warn"],
   leave: ["From a camera: stays", ""],
 };
 
 /** One of Google's copies of a memory: its thumbnail, date and what happens to it. */
 function copyTile(c: SnapCopy, i: SnapItem, r: SnapchatReport): string {
-  const [label, tone] =
-    c.state === "deleted" ? (["Deleted from Google · kept here", "good"] as const) : ROLE[c.role];
+  const [label, tone] = c.state === "deleted" ? (["Deleted from Google", "good"] as const) : ROLE[c.role];
   const img =
     c.state === "deleted"
       ? `<span class="thumb grid place-items-center text-ink-3">${icon("trash")}</span>`
@@ -237,7 +236,7 @@ function reviewCard(r: SnapchatReport): string {
         </div>`;
       })
       .join("")}</div>
-    ${dupes ? `<p class="mt-2 text-xs text-ink-3">${icon("copy", "inline size-3.5 -mt-0.5")} ${num(dupes)} extra ${dupes === 1 ? "copy" : "copies"} in Google go as their memory is done: kept on this server first, then deleted from Google.</p>` : ""}
+    ${dupes ? `<p class="mt-2 text-xs text-ink-3">${icon("copy", "inline size-3.5 -mt-0.5")} ${num(dupes)} extra ${dupes === 1 ? "copy" : "copies"} in Google go as their memory is done. The memory here is the same picture, so only a less certain match is downloaded first.</p>` : ""}
   </section>`;
 }
 
@@ -374,11 +373,13 @@ async function start(action: Exclude<SnapAction, "skip">): Promise<void> {
       `In ${r.account}: ${num(n)} ${job.what(r)}. Each goes into the album ${r.album}.`,
       ...(action === "replace"
         ? [
-            "Google's later-dated copies are kept on this server, then deleted from Google. They leave albums you made yourself; favourite, archive and your caption come back.",
+            "Google's later-dated copies are deleted from Google (a less certain match is downloaded here first). They leave albums you made yourself; favourite, archive and your caption come back.",
           ]
         : []),
       ...(action !== "upload" && r.duplicates.total - r.duplicates.deleted
-        ? ["Extra copies of these memories in Google are kept on this server, then deleted from Google."]
+        ? [
+            "Extra copies of these memories in Google are deleted from Google: the memory here is the same picture (a less certain match is downloaded here first).",
+          ]
         : []),
     ],
     confirm: job.button,

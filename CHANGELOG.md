@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.16
+
+- Snapchat: no download when the memory on this server is already the same picture. An extra copy
+  in Google is downloaded before it is deleted only when the match is less certain; copies that are
+  the same file, taken in the same second, or all but identical in look (the camera-roll saves
+  that make up most duplicates) are deleted without one. Far less to download, and no copies of
+  pictures the server already has.
+
 ## 1.5.15
 
 - Snapchat: one slow download no longer holds everything back. Memories that only need the album

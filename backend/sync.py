@@ -5202,11 +5202,14 @@ def _snap_save(account, found, here, cameras=frozenset()):
 
 def _snap_copies(path):
     return [
-        {"key": k, "dedup": d, "taken": t, "original": bool(o), "favorite": bool(f), "state": st or "", "how": h}
-        for k, d, t, o, f, st, h in q(
-            "SELECT media_key, dedup, taken, original, favorite, state, how FROM snap_copies WHERE path=?", (path,)
+        {"key": k, "dedup": d, "taken": t, "original": bool(o), "favorite": bool(f), "state": st or "", "how": h,
+         "distance": dist}
+        for k, d, t, o, f, st, h, dist in q(
+            """SELECT media_key, dedup, taken, original, favorite, state, how, distance FROM snap_copies
+               WHERE path=?""",
+            (path,),
         )
-    ]
+    ]  # fmt: skip
 
 
 def _snap_upload(client, account, path, taken, size, track):
@@ -5383,18 +5386,31 @@ def _snap_album_pass(client, account, album, track):
     return True
 
 
+SNAP_SURE = 10  # a copy that looks this close to its memory is the same picture (real copies: 1-16)
+
+
+def _snap_same_picture(c):
+    """The memory on this server is certainly this copy's picture: the same file, taken in the same
+    second, or looking all but identical. Then Google's copy isn't downloaded before it is deleted."""
+    return c["how"] in ("same_file", "same_moment") or (
+        c["how"] == "looks_same" and c.get("distance") is not None and c["distance"] <= SNAP_SURE
+    )
+
+
 def _snap_drop_copy(client, account, path, c, track):
-    """Delete one of a memory's copies from Google, after keeping it on this server. True once Google
-    no longer has it."""
+    """Delete one of a memory's copies from Google. It is kept on this server first, unless the memory
+    here is certainly the same picture (or the same file is here). True once Google no longer has it."""
     name = rel(path)
     if client.api.find_remote_media_by_hash(_digest(c["dedup"])):
-        track["current"] = {"key": name, "step": "keeping", "done": 0, "total": 0}
-        _snap_keep_google_copy(client, account, c["key"], c["dedup"], track)
+        same = _snap_same_picture(c)
+        if not same:
+            track["current"] = {"key": name, "step": "keeping", "done": 0, "total": 0}
+            _snap_keep_google_copy(client, account, c["key"], c["dedup"], track)
         track["current"] = {"key": name, "step": "deleting", "done": 0, "total": 0}
         if not _delete_in_google(client, c["dedup"]):
             return False
-        log(f"Deleted a copy of the Snapchat memory {name} from Google Photos ({account}); kept on this server",
-            "deleted", name)  # fmt: skip
+        kept = "the memory here is the same picture" if same else "kept on this server"
+        log(f"Deleted a copy of the Snapchat memory {name} from Google Photos ({account}); {kept}", "deleted", name)
     q("UPDATE snap_copies SET state='deleted', error='' WHERE path=? AND media_key=?", (path, c["key"]))
     return True
 
