@@ -33,6 +33,7 @@ from pathlib import Path
 import cache
 import media
 import notify
+import pace
 import provenance
 import snapchat
 
@@ -306,7 +307,7 @@ DEFAULT_SETTINGS = {
     "timezone": "",  # IANA name chosen in Settings ("Asia/Kolkata"); "" = the system default
     "system_timezone": "",  # the dashboard device's zone, the system default when TZ isn't set
     "speed_limit_mbps": 0,  # 0 = no limit
-    "upload_workers": 3,  # files uploaded at once per account
+    "upload_workers": 0,  # files uploaded at once per account: 0 dynamic (see pace.py), or 1 to 8
     "albums": "off",  # off | top (first subfolder) | parent (folder the file is in)
     "notify": {
         "ntfy_url": "",
@@ -339,12 +340,12 @@ DEFAULT_SETTINGS = {
     },
     # Free storage: ask before each batch, keep the downloaded copies, how many items move at once,
     # and an optional album in Google for everything it freed (off: nothing is added to the library).
-    "reclaim": {"confirm": True, "keep": False, "workers": 4, "album": False, "album_name": "Freed by GP Sync"},
+    "reclaim": {"confirm": True, "keep": False, "workers": 0, "album": False, "album_name": "Freed by GP Sync"},
 }
-# At most 4 items or files at once: more makes Google throttle and fail (tested: 16 at once broke,
-# 4 at once ran almost without errors).
-RECLAIM_MAX_WORKERS = 4
-UPLOAD_MAX_WORKERS = 4
+# A fixed number of files at once goes up to pace.MANUAL_MAX; dynamic (0) up to pace.MAX, and slows
+# down when Google asks (16 at once made Google refuse most requests).
+RECLAIM_MAX_WORKERS = pace.MANUAL_MAX
+UPLOAD_MAX_WORKERS = pace.MANUAL_MAX
 UNDATED_ALBUM = "Date unknown"
 SECRET_KEYS = ("ntfy_token", "telegram_token")
 
@@ -409,9 +410,9 @@ def get_settings():
     offset = zone_offset_min(timezone_name(st))
     if offset is not None:
         st["tz_offset_min"] = offset
-    # Saved before the limit was lowered (up to 16): keep within it.
-    st["reclaim"]["workers"] = max(1, min(RECLAIM_MAX_WORKERS, int(st["reclaim"].get("workers") or 1)))
-    st["upload_workers"] = max(1, min(UPLOAD_MAX_WORKERS, int(st.get("upload_workers") or 1)))
+    # 0 is dynamic; a fixed number stays within pace.MANUAL_MAX (some were saved up to 16).
+    st["reclaim"]["workers"] = pace.clamp(st["reclaim"].get("workers"))
+    st["upload_workers"] = pace.clamp(st.get("upload_workers"))
     return st
 
 
@@ -448,7 +449,7 @@ def update_settings(changes):
                 raise ValueError(f"Unknown time zone: {new[key]}")
             new[key] = cur[key]  # a device that reports a zone this server doesn't know: keep the last one
     new["speed_limit_mbps"] = max(0.0, float(new["speed_limit_mbps"] or 0))
-    new["upload_workers"] = max(1, min(UPLOAD_MAX_WORKERS, int(new["upload_workers"] or 1)))
+    new["upload_workers"] = pace.clamp(new["upload_workers"])
     if new["albums"] not in ("off", "top", "parent"):
         new["albums"] = "off"
     n["round_min"] = max(1, int(n["round_min"]))
@@ -457,7 +458,7 @@ def update_settings(changes):
     u["name"] = " ".join(str(u["name"] or "").split())[:80] or UNDATED_ALBUM
     rc = new["reclaim"]
     rc["confirm"], rc["keep"], rc["album"] = bool(rc["confirm"]), bool(rc["keep"]), bool(rc["album"])
-    rc["workers"] = max(1, min(RECLAIM_MAX_WORKERS, int(rc["workers"] or 1)))
+    rc["workers"] = pace.clamp(rc["workers"])
     rc["album_name"] = " ".join(str(rc["album_name"] or "").split())[:80] or "Freed by GP Sync"
     pr = new.get("priority") or []
     pr = [clean_folder(p) for p in (pr if isinstance(pr, list) else [])]
@@ -505,6 +506,15 @@ def _account_paths():
         if auth:
             found.setdefault(email_of(auth), []).append(f)
     return found
+
+
+def migrate_pace():
+    """Once: files and items at once move to dynamic, the new default. The old defaults (3 and 4)
+    were the most allowed then, so they say nothing about what the user wants now."""
+    if meta_get("pace_dynamic"):
+        return
+    update_settings({"upload_workers": 0, "reclaim": {"workers": 0}})
+    meta_set("pace_dynamic", "1")
 
 
 def migrate_accounts():
@@ -2041,8 +2051,11 @@ def upload_all(client, todo, account="", st=None):
     state.update(phase="uploading", done=0, total=len(todo))
     queued = collections.defaultdict(list)
     rnd = {"files": 0, "bytes": 0}
-    workers = max(1, min(UPLOAD_MAX_WORKERS, int(st.get("upload_workers") or 1)))
+    fixed = pace.clamp(st.get("upload_workers"))
+    gate = pace.get(account, "upload")
+    workers = fixed or pace.MAX  # threads; the pace decides how many run at a time
     items = UploadQueue(todo)
+    retried = collections.Counter()  # files put back after Google asked to slow down
     lock = threading.RLock()  # counters, the queue and album batches are shared by the workers
     stop = threading.Event()  # pause, upload window or an outage: no new file starts
     state["uploading"] = {}
@@ -2063,7 +2076,15 @@ def upload_all(client, todo, account="", st=None):
 
     def run():
         while (item := next_item()) is not None:
-            one(*item)
+            if not gate.wait(item[1], fixed, stop.is_set):
+                with lock:
+                    items.items.insert(0, item)
+                return
+            how = "error"
+            try:
+                how = one(*item)
+            finally:
+                gate.finished(item[1], how, fixed)
 
     def one(path, size, mtime, *rest):
         """Upload one file (on a worker thread when several run at once)."""
@@ -2081,8 +2102,9 @@ def upload_all(client, todo, account="", st=None):
             state["current"] = cur
             state["uploading"][name] = cur
         phases = []
-        throttle = Throttle(st["speed_limit_mbps"] / workers)  # the limit is shared by the workers
+        throttle = Throttle(st["speed_limit_mbps"] / gate.allowed(fixed))  # the limit is shared by the workers
         started = time.monotonic()
+        how = "ok"  # how it went, for the pace: ok, slow (Google asked to slow down) or error
 
         def progress(ev, cur=cur, phases=phases, throttle=throttle):
             phase = ev.get("phase")
@@ -2160,6 +2182,15 @@ def upload_all(client, todo, account="", st=None):
         except Exception as e:
             err = f"{type(e).__name__}: {e}"[:500]
             problem = outage_kind(e)
+            how = pace.outcome(e)
+            if how == "slow" and not fixed and gate.limit > pace.MIN and retried[path] < 3:
+                # Dynamic: Google asked to slow down. Fewer run at once from now on, and this file
+                # goes back in the queue instead of stopping the round.
+                retried[path] += 1
+                with lock:
+                    items.items.insert(0, (path, size, mtime, *rest))
+                log(f"Google asked to slow down: fewer files at once ({name} goes again)", "info")
+                return how
             if problem:
                 # Not this file's fault: stop the round and try again later without
                 # using up the file's retries.
@@ -2172,7 +2203,7 @@ def upload_all(client, todo, account="", st=None):
                 if first and "login" in problem and account not in state["login_failed"]:
                     state["login_failed"].add(account)
                     alert("GP Sync: login rejected", f"{account}: {problem}", "warning", "on_login")
-                return
+                return how
             attempts = (
                 q(
                     """INSERT INTO copies (path,account,size,mtime,status,error,attempts,updated)
@@ -2204,6 +2235,7 @@ def upload_all(client, todo, account="", st=None):
                 state["current"] = next(iter(state["uploading"].values()), None)
         with lock:
             state["done"] += 1
+        return how
 
     try:
         if workers == 1:
@@ -2801,6 +2833,14 @@ def status_json():
         "current": state["current"],
         "uploading": list(state.get("uploading", {}).values()),
         "upload_workers": st["upload_workers"],
+        # How many run at once now, per account (dynamic changes it as it goes).
+        "pace": {
+            a: {
+                "upload": pace.get(a, "upload").report(st["upload_workers"]),
+                "storage": pace.get(a, "storage").report(st["reclaim"]["workers"]),
+            }
+            for a in accs
+        },
         "library": state["library"],
         "folders": state["folders"],
         "session": state["session"],
@@ -2953,6 +2993,7 @@ def storage_report(account, limit=500, kind="all"):
         "paused": reclaim_paused(account),
         "check": check_info(account),
         "prefs": get_settings()["reclaim"],
+        "pace": pace.get(account, "storage").report(get_settings()["reclaim"]["workers"]),
         "summary": storage_summary(),
         "free_space": shutil.disk_usage(DATA).free if DATA.exists() else 0,
     }
@@ -3410,8 +3451,8 @@ def reclaim_paused(account):
 # Items being worked on, several per account at once (Settings: reclaim.workers). Each item's steps
 # are saved as they happen, so a restart or an update resumes where it stopped.
 _reclaim_pool = concurrent.futures.ThreadPoolExecutor(
-    RECLAIM_MAX_WORKERS * 5, thread_name_prefix="free storage"
-)  # 4 per account, several accounts
+    pace.MAX * 5, thread_name_prefix="free storage"
+)  # up to pace.MAX per account, several accounts
 _reclaim_jobs = {}  # (account, media key) -> Future
 _reclaim_jobs_lock = threading.Lock()
 
@@ -3422,10 +3463,12 @@ def _reclaim_working(account):
         return [dict(t["current"]) for t in reclaim_state[account]["jobs"].values() if t.get("current")]
 
 
-def _reclaim_item(account, row, make_client):
+def _reclaim_item(account, row, make_client, out=None):
     """Move one item a step on, on a worker thread: download it, or replace it in Google.
-    Returns True if it did something."""
+    Returns True if it did something. `out["how"]` says how it went, for the pace."""
     key, dedup, name, size, taken, st_, local, fav, arch, cap, local_hash = row
+    out = {} if out is None else out
+    out["how"] = "ok"
     track = {"current": None, "stop": _stop_check(lambda: reclaim_paused(account))}
     with _reclaim_jobs_lock:
         reclaim_state[account]["jobs"][key] = track
@@ -3469,15 +3512,19 @@ def _reclaim_item(account, row, make_client):
         check_lanes.wake([account])
         return True
     except Paused:  # stopped mid-download: nothing changed in Google, it waits in the queue
+        out["how"] = "error"
         log(f"Paused: stopped downloading {name}; it stays queued", "pause")
         return False
     except Exception as e:
+        out["how"] = pace.outcome(e)
         msg = f"{type(e).__name__}: {e}"[:300]
         print(f"Free storage: {name}: {msg}", file=sys.stderr, flush=True)
         if st_ == "queued":
             if outage := outage_kind(e):  # no internet or Google is down: try again in a minute
                 reclaim_state[account]["error"] = outage
-                reclaim_state[account]["outage_until"] = time.time() + 60
+                # Dynamic and Google only asked to slow down: fewer at once, and on again soon.
+                soon = out["how"] == "slow" and not pace.clamp(get_settings()["reclaim"]["workers"])
+                reclaim_state[account]["outage_until"] = time.time() + (5 if soon else 60)
                 return False
             if _is_missing(e):  # gone from Google (stale key, or a duplicate already freed): drop it
                 q("DELETE FROM reclaim WHERE account=? AND media_key=?", (account, key))
@@ -3493,7 +3540,8 @@ def _reclaim_item(account, row, make_client):
             reclaim_state[account]["jobs"].pop(key, None)
 
 
-def _reclaim_finished(account, key):
+def _reclaim_finished(account, key, size=0, out=None, fixed=0):
+    pace.get(account, "storage").finished(size, (out or {}).get("how", "error"), fixed)
     with _reclaim_jobs_lock:
         _reclaim_jobs.pop((account, key), None)
     notify_change()
@@ -3515,16 +3563,15 @@ def reclaim_step(make_client=None, account=None, wait=True):
            ORDER BY state = 'queued', quota DESC""",
         (account, account),
     )
-    workers = get_settings()["reclaim"]["workers"]
+    fixed = get_settings()["reclaim"]["workers"]  # 0: dynamic (pace.py)
     per = {}  # account -> what holds it back, worked out once per step
     for acc, key, dedup, name, size, taken, st_, local, fav, arch, cap, local_hash in rows:
         if acc not in per:
-            with _reclaim_jobs_lock:
-                running = sum(1 for a, _ in _reclaim_jobs if a == acc)
-            held = reclaim_paused(acc)
-            per[acc] = {"slots": 0 if held else workers - running, "blocked": None, "ours": None}
+            per[acc] = {"held": reclaim_paused(acc), "blocked": None, "ours": None, "gate": pace.get(acc, "storage")}
         p = per[acc]
-        if p["slots"] <= 0:
+        # As many at once as the pace allows; a big item waits while many bytes are moving, and
+        # smaller ones behind it start meanwhile.
+        if p["held"] or not p["gate"].can_start(size, fixed):
             continue
         with _reclaim_jobs_lock:
             if (acc, key) in _reclaim_jobs:
@@ -3545,10 +3592,11 @@ def reclaim_step(make_client=None, account=None, wait=True):
                 _set_reclaim(acc, key, st_, why)
                 continue
         row = (key, dedup, name, size, taken, st_, local, fav, arch, cap, local_hash)
+        out = {}
+        p["gate"].started(size)
         with _reclaim_jobs_lock:
-            fut = _reclaim_jobs[(acc, key)] = _reclaim_pool.submit(_reclaim_item, acc, row, make_client)
-        fut.add_done_callback(lambda _f, a=acc, k=key: _reclaim_finished(a, k))
-        p["slots"] -= 1
+            fut = _reclaim_jobs[(acc, key)] = _reclaim_pool.submit(_reclaim_item, acc, row, make_client, out)
+        fut.add_done_callback(lambda _f, a=acc, k=key, n=size, o=out: _reclaim_finished(a, k, n, o, fixed))
         started = True
     with _reclaim_jobs_lock:
         mine = [f for (a, _), f in _reclaim_jobs.items() if account is None or a == account]
@@ -4885,13 +4933,13 @@ SNAP_PRINTS_MIN = 20
 SNAP_PRINT_GAP = 40  # seconds between batches
 SNAP_BACKOFF = 600
 SNAP_BACKOFF_MAX = 7200
-SNAP_UPLOADS_PER_STEP = 4
+SNAP_SLOW_SECONDS = 300  # time per step for downloads, deletes and uploads; new ones start until then
 SNAP_LOCAL_BYTES_PER_STEP = 512 * 1024**2  # files here read per step to find copies of memories
 SNAP_ACTIONS = ("album", "replace", "upload", "skip")
 SNAP_DIR = DATA / "snapchat"
 snapchat_state = collections.defaultdict(
-    lambda: {"current": None, "error": "", "wanted": 0, "prints": 0, "next_batch": 0.0, "slow_until": 0.0,
-             "backoff": 0, "batch": SNAP_PRINTS_PER_STEP}
+    lambda: {"current": None, "working": {}, "error": "", "wanted": 0, "prints": 0, "next_batch": 0.0,
+             "slow_until": 0.0, "backoff": 0, "batch": SNAP_PRINTS_PER_STEP}
 )  # fmt: skip
 _snap = {"paths": frozenset(), "skip": frozenset()}  # memory files, and files here they stand in for
 _snap_tried = {}  # path -> when a replace last found Google still had the old copy
@@ -5298,7 +5346,7 @@ def snapchat_step(account, make_client=None):
     track = snapchat_state[account]
     client = (make_client or _reclaim_client)(account)
     album = _snap_album()
-    did, heavy, now = False, 0, time.time()
+    did, now = False, time.time()
     try:
         # 1. Quick: already in Google, nothing left to delete. Only the album.
         slow = []
@@ -5321,58 +5369,10 @@ def snapchat_step(account, make_client=None):
         if not _snap_album_pass(client, account, album, track):
             return did
         did = did or bool(rows and len(slow) < len(rows))
-        # 2. Slow: a few at a time (downloads, deletes, uploads).
-        for (path, action, kind, taken, size, mtime, fav, arch, cap, local), keep, drop in slow:
-            if heavy >= SNAP_UPLOADS_PER_STEP:
-                break
-            if now - _snap_tried.get(path, 0) < 100:
-                continue
-            name = rel(path)
-            started = time.monotonic()
-            try:
-                waiting = False
-                for c in drop:
-                    if c["state"] == "deleted":
-                        continue
-                    heavy += 1
-                    if not _snap_drop_copy(client, account, path, c, track):
-                        waiting = True
-                        break
-                if waiting:
-                    _snap_tried[path] = time.time()
-                    q("UPDATE snap_items SET error=? WHERE path=?",
-                      ("Google hasn't deleted a copy yet: trying again soon", path))  # fmt: skip
-                    continue
-                if action == "album":
-                    if keep is None:
-                        raise RuntimeError("Google's copy is gone: look for the memories again")
-                    if any(c["favorite"] for c in drop) and not keep["favorite"]:
-                        with contextlib.suppress(Exception):
-                            client.api.set_favorite(keep["dedup"], True)
-                    _snap_finish(path, account, keep["key"], "exists", "")
-                    did = True
-                    continue
-                heavy += 1
-                key, digest, status = _snap_upload(client, account, path, taken, size, track)
-                if action == "replace":
-                    _restore_details(client, _b64_hash(digest), fav, arch, cap)
-                _snap_finish(path, account, key, status, digest.hex(), size, mtime, local)
-                ms = int((time.monotonic() - started) * 1000)
-                save_upload(name, kind, size, ms, status, account)
-                if status == "uploaded":
-                    add_stats(**({"videos": 1, "video_bytes": size, "video_ms": ms} if kind == "video"
-                                 else {"photos": 1, "photo_bytes": size, "photo_ms": ms}))  # fmt: skip
-                when = time.strftime("%Y-%m-%d %H:%M", time.gmtime(taken))
-                log(f"Snapchat memory {name}: uploaded dated {when} UTC ({account})", "uploaded", name)
-                did = True
-            except Exception as e:
-                if outage_kind(e):
-                    raise
-                msg = f"{type(e).__name__}: {e}"[:300]
-                print(f"Snapchat: {name}: {msg}", file=sys.stderr, flush=True)
-                q("UPDATE snap_items SET state='failed', error=? WHERE path=?", (msg, path))
-            finally:
-                track["current"] = None
+        # 2. Slow: downloads, deletes and uploads, several at once like a normal backup (Settings:
+        # files at once), for a few minutes so the account's other Google work gets its turn.
+        due = [x for x in slow if now - _snap_tried.get(x[0][0], 0) >= 100]
+        did = _snap_slow_pass(client, account, due, track) or did
         if not _snap_album_pass(client, account, album, track):
             return did
         track["error"] = ""
@@ -5384,6 +5384,107 @@ def snapchat_step(account, make_client=None):
             _snap_sets()
             notify_change()
     return did
+
+
+def _snap_slow_one(client, account, row, keep, drop, track):
+    """One memory's slow work: delete Google's extra copies (kept here first when unsure), then
+    upload the memory with its date (replace, upload). True if it got done. Outages are raised."""
+    path, action, kind, taken, size, mtime, fav, arch, cap, local = row
+    name = rel(path)
+    started = time.monotonic()
+    try:
+        for c in drop:
+            if c["state"] == "deleted":
+                continue
+            if not _snap_drop_copy(client, account, path, c, track):
+                _snap_tried[path] = time.time()
+                q("UPDATE snap_items SET error=? WHERE path=?",
+                  ("Google hasn't deleted a copy yet: trying again soon", path))  # fmt: skip
+                return False
+        if action == "album":
+            if keep is None:
+                raise RuntimeError("Google's copy is gone: look for the memories again")
+            if any(c["favorite"] for c in drop) and not keep["favorite"]:
+                with contextlib.suppress(Exception):
+                    client.api.set_favorite(keep["dedup"], True)
+            _snap_finish(path, account, keep["key"], "exists", "")
+            return True
+        key, digest, status = _snap_upload(client, account, path, taken, size, track)
+        if action == "replace":
+            _restore_details(client, _b64_hash(digest), fav, arch, cap)
+        _snap_finish(path, account, key, status, digest.hex(), size, mtime, local)
+        ms = int((time.monotonic() - started) * 1000)
+        save_upload(name, kind, size, ms, status, account)
+        if status == "uploaded":
+            add_stats(**({"videos": 1, "video_bytes": size, "video_ms": ms} if kind == "video"
+                         else {"photos": 1, "photo_bytes": size, "photo_ms": ms}))  # fmt: skip
+        when = time.strftime("%Y-%m-%d %H:%M", time.gmtime(taken))
+        log(f"Snapchat memory {name}: uploaded dated {when} UTC ({account})", "uploaded", name)
+        return True
+    except Exception as e:
+        if outage_kind(e):
+            raise
+        msg = f"{type(e).__name__}: {e}"[:300]
+        print(f"Snapchat: {name}: {msg}", file=sys.stderr, flush=True)
+        q("UPDATE snap_items SET state='failed', error=? WHERE path=?", (msg, path))
+        return False
+
+
+def _snap_slow_pass(client, account, due, track):
+    """Work through memories with slow work, as many at once as a normal backup uploads (one login,
+    shared). New ones start until SNAP_SLOW_SECONDS have passed, or on pause or an outage (which is
+    raised once every worker has stopped). Returns True if any got done."""
+    if not due:
+        return False
+    fixed = pace.clamp(get_settings().get("upload_workers"))
+    gate = pace.get(account, "upload")
+    workers = min(fixed or pace.MAX, len(due))  # threads; the pace decides how many run at a time
+    items = iter(due)
+    lock = threading.Lock()
+    stop = threading.Event()
+    deadline = time.monotonic() + SNAP_SLOW_SECONDS
+    result = {"did": False, "outage": None}
+
+    def run():
+        while True:
+            with lock:
+                if stop.is_set() or time.monotonic() > deadline or snapchat_paused(account):
+                    return
+                item = next(items, None)
+            if item is None:
+                return
+            row, keep, drop = item
+            size = row[4] or 0
+            if not gate.wait(size, fixed, lambda: stop.is_set() or time.monotonic() > deadline):
+                return
+            slot = {"current": None}  # this worker's progress, shown on the page
+            with lock:
+                track["working"][row[0]] = slot
+            how = "ok"
+            try:
+                if _snap_slow_one(client, account, row, keep, drop, slot):
+                    result["did"] = True
+                    notify_change()
+            except Exception as e:
+                how = pace.outcome(e)
+                # Dynamic, and Google only asked to slow down: fewer at once, the rest go on (this
+                # one stays queued). Otherwise everything stops.
+                if not (how == "slow" and not fixed and gate.limit > pace.MIN):
+                    result["outage"] = result["outage"] or e
+                    stop.set()
+            finally:
+                gate.finished(size, how, fixed)
+                with lock:
+                    track["working"].pop(row[0], None)
+
+    threads = [threading.Thread(target=run, daemon=True, name=f"snapchat {n}") for n in range(workers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if result["outage"]:
+        raise result["outage"]
+    return result["did"]
 
 
 SNAP_ALBUM_CALLS = 60  # album calls per step at most (100 items each)
@@ -5643,6 +5744,7 @@ def snapchat_report(account="", action="", limit=120, offset=0):
         for r in picked[offset : offset + limit]
     ]
     track = snapchat_state[account]
+    working = [w["current"] for w in list(track["working"].values()) if w["current"]]
     refreshed = meta_get(f"library_refreshed:{account}")
     matched = meta_get(f"snap_matched:{account}")
     return {
@@ -5667,7 +5769,8 @@ def snapchat_report(account="", action="", limit=120, offset=0):
         "paused": snapchat_paused(account),
         "held": state.get("snap_held", 0),
         "exporting": state.get("snap_exporting", []),
-        "current": track["current"],
+        "current": working[0] if working else None,  # the first, for older pages
+        "working": working,
         "error": track["error"],
     }
 
@@ -6046,10 +6149,14 @@ def copy_step(make_client=None, pair=None):
     rows = q(
         """SELECT src, dst, media_key, dedup_key, name, size, taken, favorite, archived, caption FROM copyjobs
            WHERE state='queued' AND (? IS NULL OR (src=? AND dst=?)) ORDER BY taken DESC LIMIT ?""",
-        (src_, src_, dst_, get_settings()["reclaim"]["workers"]),
+        (src_, src_, dst_, pace.MAX),
     )
     if not rows:
         return False
+    # As many as the destination's pace allows (Settings: items at once, the same as Free storage).
+    rows = rows[
+        : max(1, pace.get(rows[0][1], "copy").slots([r[5] for r in rows], get_settings()["reclaim"]["workers"]))
+    ]
     connected = dict(accounts())
     for src, dst, *_ in rows:
         if src not in connected or dst not in connected:  # an account was removed: wait, don't fail it all
@@ -6077,6 +6184,9 @@ def _copy_one(row, make_client):
     Returns False when Google or the internet is down (it stays queued)."""
     src, dst, key, dedup, name, size, taken, fav, arch, cap = row
     state_ = copy_state[(src, dst)]
+    gate, fixed = pace.get(dst, "copy"), get_settings()["reclaim"]["workers"]
+    how = "error"
+    gate.started(size)
     held = _stop_check(lambda: meta_get("copy_paused") == "1")
     track = state_["jobs"][key] = {"current": None, "stop": held}
     folder = COPY_DIR / f"{dst}-{key}"  # the same item can be copied to two accounts at once
@@ -6094,10 +6204,12 @@ def _copy_one(row, make_client):
             _set_copy(src, dst, key, "copied", new_key=new_key, started=started, finished=time.time())
             log(f"Copied {name} from {src} to {dst} ({fmt_bytes(size)})", "copied")
         state_["error"] = ""
+        how = "ok"
         return True
     except Paused:  # stopped mid-download: it stays queued
         return False
     except Exception as e:
+        how = pace.outcome(e)
         msg = f"{type(e).__name__}: {e}"[:300]
         print(f"Account copy: {name}: {msg}", file=sys.stderr, flush=True)
         if outage := outage_kind(e):  # Google or the internet is down: keep it queued, try again later
@@ -6106,6 +6218,7 @@ def _copy_one(row, make_client):
         _set_copy(src, dst, key, "failed", msg)
         return True
     finally:
+        gate.finished(size, how, fixed)
         track["current"] = None
         state_["jobs"].pop(key, None)
         shutil.rmtree(folder, ignore_errors=True)
@@ -7250,6 +7363,7 @@ def main():
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s", stream=sys.stderr)
     threading.Thread(target=log_writer, daemon=True).start()
     migrate_accounts()
+    migrate_pace()
     migrate_stats()
     split_pause()
     init_events()

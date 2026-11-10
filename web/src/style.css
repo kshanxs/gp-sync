@@ -1708,12 +1708,43 @@ svg:hover .donut-arc:not(:hover) {
   opacity: calc(var(--a0) + (var(--a1) - var(--a0)) * var(--e));
   fill: color-mix(in oklab, #3d2a0e calc(var(--p) * 100%), #eef0ff);
 }
+/* The moon's stars twinkle at night: dimmer and smaller, then bright again, each on its own beat.
+   The twinkle scales with the night share (1 - --p), so it fades out as the knob slides to day and
+   the pixels it lands on as the sun stay still. */
+@property --tw {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+@keyframes gt-twinkle {
+  0%,
+  100% {
+    --tw: 1;
+  }
+  45% {
+    --tw: 0.15;
+  }
+  60% {
+    --tw: 0.35;
+  }
+}
+.gt-icon rect.star {
+  --n: calc(1 - var(--p));
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: calc((var(--a0) + (var(--a1) - var(--a0)) * var(--e)) * (1 - (1 - var(--tw)) * var(--n)));
+  scale: calc(1 + (var(--tw) - 0.55) * 0.9 * var(--n));
+  animation: gt-twinkle 2.7s ease-in-out var(--td, 0s) infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   .gt {
     transition-duration: 0.2s;
   }
   .gt-icon rect {
     --c: 0;
+  }
+  .gt-icon rect.star {
+    animation: none;
   }
 }
 @media (max-width: 639px) {

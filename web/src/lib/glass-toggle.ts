@@ -18,6 +18,8 @@ export interface Px {
   y: number;
   /** Brightness 0..1. */
   b: number;
+  /** One of the moon's stars: it twinkles at night. */
+  star?: boolean;
 }
 
 /** Crescent moon with two small stars. */
@@ -34,7 +36,7 @@ export function moonPixels(): Px[] {
     [16, 6, 0.6],
     [12, 0, 0.5],
   ] as const)
-    out.push({ x, y, b });
+    out.push({ x, y, b, star: true });
   return out;
 }
 
@@ -97,11 +99,14 @@ let pairs: Pair[] | null = null;
 function icon(): string {
   pairs ??= pairPixels(moonPixels(), sunPixels());
   const r = (n: number) => Math.round(n * 100) / 100;
+  let stars = 0;
   return `<svg class="gt-icon" viewBox="-0.5 -0.5 ${GRID} ${GRID}" aria-hidden="true">${pairs
-    .map(
-      (p) =>
-        `<rect x="${p.from.x - 0.4}" y="${p.from.y - 0.4}" width="0.8" height="0.8" rx="0.12" style="--dx:${p.to.x - p.from.x};--dy:${p.to.y - p.from.y};--d:${r(p.delay)};--c:${r(p.curl)};--a0:${p.from.b};--a1:${p.to.b}"/>`,
-    )
+    .map((p) => {
+      // Each star twinkles on its own beat, so they never pulse together.
+      const star = p.from.star && p.from.b > 0 ? ` class="star"` : "";
+      const beat = star ? `;--td:${-0.9 * stars++}s` : "";
+      return `<rect${star} x="${p.from.x - 0.4}" y="${p.from.y - 0.4}" width="0.8" height="0.8" rx="0.12" style="--dx:${p.to.x - p.from.x};--dy:${p.to.y - p.from.y};--d:${r(p.delay)};--c:${r(p.curl)};--a0:${p.from.b};--a1:${p.to.b}${beat}"/>`;
+    })
     .join("")}</svg>`;
 }
 

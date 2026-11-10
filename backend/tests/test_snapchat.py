@@ -511,9 +511,45 @@ def test_quick_album_work_never_waits_behind_slow_work(snaps, monkeypatch):
     run(sync.snapchat_match_step, client)
     assert sync.snapchat_report(ACC)["duplicates"]["total"] == 1
     sync.snapchat_start(ACC, ["album"])
-    monkeypatch.setattr(sync, "SNAP_UPLOADS_PER_STEP", 0)  # the slow job has to wait
+    monkeypatch.setattr(sync, "SNAP_SLOW_SECONDS", -1)  # the slow job has to wait
     assert sync.snapchat_step(ACC, lambda _a: client)
     c = sync.snapchat_report(ACC)["counts"]["album"]
     assert (c["done"], c["queued"]) == (149, 1)  # all but m0, which waits for its duplicate
     ((_name, keys),) = client.api.albums.values()
     assert len(keys) == 149  # two album calls in one step
+
+
+def test_uploads_run_side_by_side_like_a_backup(snaps):
+    """The slow work runs as many memories at once as a normal backup uploads (Settings: files at
+    once), and the page shows each one being worked on."""
+    import threading
+
+    sync.update_settings({"upload_workers": 3})
+    entries = []
+    for n in range(6):
+        data = picture(300 + n)
+        put(f"Photos/Snapchat/u{n}.jpg", data, T + n * 10)
+        entries.append({"file": f"u{n}.jpg", "id": f"u{n}", "kind": "photo", "taken": T + n * 10, "sha1": sha(data),
+                        "width": 90, "height": 160})  # fmt: skip
+    manifest("Photos/Snapchat", entries)
+    library(item("OTHER", picture(999), T - 400 * DAY))
+    client = Google(thumbs={"OTHER": picture(999)})
+    together = threading.Barrier(3, timeout=5)  # only passes when three uploads are in flight at once
+    seen = []
+    upload = client._upload_file
+
+    def slow_upload(*a, **kw):
+        together.wait()
+        seen.append(len(sync.snapchat_report(ACC)["working"]))
+        return upload(*a, **kw)
+
+    client._upload_file = slow_upload
+    sync.scan()
+    run(sync.snapchat_match_step, client)
+    assert sync.snapchat_report(ACC)["counts"]["upload"]["total"] == 6
+    sync.snapchat_start(ACC, ["upload"])
+    assert sync.snapchat_step(ACC, lambda _a: client)  # all six in one step, three at a time
+    assert sorted(client.api.sent) == [T + n * 10 for n in range(6)]
+    assert min(seen) == 3
+    r = sync.snapchat_report(ACC)
+    assert r["counts"]["upload"]["done"] == 6 and r["working"] == [] and r["current"] is None

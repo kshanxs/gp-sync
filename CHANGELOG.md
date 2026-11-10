@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.5.19
+
+- Files at once: new **Dynamic** setting, the default (Settings › Sync, and Free storage ›
+  Options › Items at once). It starts at 4 per account, adds more while Google keeps up (up to 12)
+  and caps the bytes moving at once at 256 MB, so small photos run many side by side and big videos
+  a few. When Google asks to slow down (HTTP 429) everything in that account halves and waits a
+  minute before growing again; the file goes back in the queue instead of stopping the round. A
+  fixed number now goes up to 8. Used by uploads, Free storage, Copy accounts and Snapchat. Saved
+  settings move to Dynamic once.
+- Snapchat: the Google work (deleting extra copies, uploading memories) runs several at once like a
+  normal backup, for a few minutes each turn, instead of 4 memories one after another. The page
+  shows each one in progress.
+- Sync page: the bars of the other files uploading at the same time are full width (they were a
+  fixed 80 px), with the progress or step above them. A file being checked shows a moving bar
+  instead of a fill that emptied before the upload began.
+- The stars by the moon on the dark/light switch twinkle at night.
+
 ## 1.5.18
 
 - Snapchat: shorter group cards. "Already in Google" and "In Google, wrong date" now say what

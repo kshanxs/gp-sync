@@ -346,14 +346,28 @@ function controls(s: Status): void {
   });
 }
 
+/** "Uploading 1.2 MB of 3 MB", or the step ("Checking Google · 3 MB") before bytes go up. */
+function otherStep(u: NonNullable<Status["current"]>): string {
+  if (u.step === "uploading" && u.bytes_total) return `${bytes(u.bytes_done)} of ${bytes(u.bytes_total)}`;
+  return `${STEPS[u.step] ?? "Working"} · ${bytes(u.bytes_total)}`;
+}
+
+/** A full-width bar: the upload's progress, or a sliding one while the file is checked (the
+ * fingerprint step counts bytes too, so its count would fill the bar and then empty it). */
+function otherBar(u: NonNullable<Status["current"]>): string {
+  const up = u.step === "uploading" || u.step === "finalizing";
+  const w = u.step === "finalizing" ? 100 : pct(u.bytes_done, u.bytes_total);
+  return `<span class="bar mt-1 block h-1.5 ${up ? "" : "indeterminate"}"><i style="width:${up ? w : 35}%"></i></span>`;
+}
+
 /** The other files uploading at the same time (Settings › Sync, Files at once). */
 function alsoUploading(s: Status, shown: string): string {
   const others = (s.uploading ?? []).filter((u) => u.name !== shown);
   if (!others.length) return "";
-  return `<ul class="mt-3 space-y-1.5">${others
+  return `<ul class="mt-3 space-y-2.5">${others
     .map(
       (u) =>
-        `<li class="flex items-center gap-2 text-xs"><span class="min-w-0 flex-1 truncate" title="${esc(u.name)}">${esc(fileName(u.name))}</span><span class="bar w-20 shrink-0"><i style="width:${pct(u.bytes_done, u.bytes_total)}%"></i></span><span class="w-14 shrink-0 text-right text-ink-3 tabular-nums">${bytes(u.bytes_total)}</span></li>`,
+        `<li class="text-xs"><div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate" title="${esc(u.name)}">${esc(fileName(u.name))}</span><span class="shrink-0 text-ink-3 tabular-nums">${esc(otherStep(u))}</span></div>${otherBar(u)}</li>`,
     )
     .join("")}</ul>`;
 }

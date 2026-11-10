@@ -69,8 +69,8 @@ function copyTile(c: SnapCopy, i: SnapItem, r: SnapchatReport): string {
 }
 
 function stateBadge(i: SnapItem, r: SnapchatReport): string {
-  if (r.current?.key === i.name)
-    return badge(r.current.step === "deleting" ? "Replacing in Google" : "Working on it", "info", "loader");
+  const now = working(r).find((w) => w.key === i.name);
+  if (now) return badge(now.step === "deleting" ? "Replacing in Google" : "Working on it", "info", "loader");
   switch (i.state) {
     case "queued":
       return badge("Queued", "info", "hourglass");
@@ -197,6 +197,44 @@ function left(r: SnapchatReport, a: SnapAction): number {
   return r.counts[a].total - r.counts[a].done - r.counts[a].queued;
 }
 
+/** The memories being worked on now (older servers only send one). */
+function working(r: SnapchatReport): NonNullable<SnapchatReport["working"]> {
+  return r.working ?? (r.current ? [r.current] : []);
+}
+
+/** A line for what the memories being worked on are at: "uploading a memory · 2 MB of 5 MB", or
+ * "3 at once: 2 uploading (4 MB of 9 MB), 1 deleting an extra copy from Google". */
+function nowLine(r: SnapchatReport): string {
+  const w = working(r);
+  if (!w.length) return "";
+  if (w.length === 1) {
+    const c = w[0];
+    return `${STEP[c.step] ?? "working on a memory"}${c.total ? ` · ${bytes(c.done)} of ${bytes(c.total)}` : ""}`;
+  }
+  const by = new Map<string, { n: number; done: number; total: number }>();
+  for (const c of w) {
+    const g = by.get(c.step) ?? { n: 0, done: 0, total: 0 };
+    g.n += 1;
+    g.done += c.done;
+    g.total += c.total;
+    by.set(c.step, g);
+  }
+  const parts = [...by].map(
+    ([step, g]) =>
+      `${g.n} ${SHORT[step] ?? "working"}${g.total ? ` (${bytes(g.done)} of ${bytes(g.total)})` : ""}`,
+  );
+  return `${w.length} at once: ${parts.join(", ")}`;
+}
+
+const SHORT: Record<string, string> = {
+  keeping: "saving an extra copy here",
+  downloading: "downloading an extra copy",
+  local: "copying an extra copy",
+  deleting: "deleting an extra copy",
+  hashing: "checking",
+  uploading: "uploading",
+};
+
 /** What the memory being worked on is at (snapchat_state "current" steps). */
 const STEP: Record<string, string> = {
   keeping: "saving Google's extra copy here before deleting it",
@@ -222,7 +260,7 @@ function reviewCard(r: SnapchatReport): string {
     <h2 class="font-semibold">${busy ? `Sending · ${num(done)} of ${num(total)} done` : "What to do with your memories"}</h2>
     <p class="mt-1 text-xs text-ink-3">Each job starts on its own, in any order. Check the lists below first: change any memory's action, or leave it out.</p>
     ${busy ? `<div class="bar mt-3"><i style="width:${pct(done, total)}%"></i></div>` : ""}
-    ${busy && r.current ? `<p class="mt-2 text-xs text-ink-3">${icon("loader", "inline size-3.5 -mt-0.5 spin")} Now: ${esc(STEP[r.current.step] ?? "working on a memory")}${r.current.total ? ` · ${bytes(r.current.done)} of ${bytes(r.current.total)}` : ""}. Memories that only need the album don't wait for it.</p>` : ""}
+    ${busy && nowLine(r) ? `<p class="mt-2 text-xs text-ink-3">${icon("loader", "inline size-3.5 -mt-0.5 spin")} Now: ${esc(nowLine(r))}. Memories that only need the album don't wait for it.</p>` : ""}
     <div class="mt-3 divide-y divide-line">${JOBS.filter((j) => r.counts[j.id].total)
       .map((j) => {
         const n = left(r, j.id);
@@ -297,7 +335,7 @@ function render(): void {
     );
     return;
   }
-  const working = r.current != null || Object.values(r.counts).some((c) => c.queued > 0);
+  const going = r.current != null || Object.values(r.counts).some((c) => c.queued > 0);
   setPageStatus(
     r.paused
       ? {
@@ -307,16 +345,16 @@ function render(): void {
         }
       : r.searching
         ? { tone: "run", title: "Looking for memories in Google Photos", detail: r.account }
-        : working
+        : going
           ? { tone: "run", title: "Sending Snapchat memories", detail: r.account }
           : { tone: "good", title: `${num(r.memories)} Snapchat memories`, detail: r.account },
   );
   setPauseControl(
-    !(r.paused || working)
+    !(r.paused || going)
       ? null
       : {
           paused: r.paused,
-          working,
+          working: going,
           label: r.paused ? "Resume Snapchat memories" : "Pause Snapchat memories",
           toggle: async () => {
             await post("snapchat/pause", { account: r.account, paused: !r.paused });

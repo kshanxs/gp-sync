@@ -36,3 +36,10 @@ describe("theme reveal", () => {
     expect(revealRadius(1.4, 900, 40, 1000, 800)).toBeCloseTo(full);
   });
 });
+
+describe("night stars", () => {
+  it("marks the moon's three stars, and only them", () => {
+    const stars = moonPixels().filter((p) => p.star);
+    expect(stars.map((p) => `${p.x},${p.y}`)).toEqual(["14,2", "16,6", "12,0"]);
+  });
+});

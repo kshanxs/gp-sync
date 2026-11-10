@@ -501,8 +501,9 @@ def test_several_items_move_at_once(library, monkeypatch):
 
 def test_workers_setting_is_kept_in_range():
     assert sync.update_settings({"reclaim": {"workers": 99}})["reclaim"]["workers"] == sync.RECLAIM_MAX_WORKERS
-    assert sync.update_settings({"reclaim": {"workers": 0}})["reclaim"]["workers"] == 1
-    sync.update_settings({"reclaim": {"workers": 4}})
+    assert sync.update_settings({"reclaim": {"workers": 0}})["reclaim"]["workers"] == 0  # dynamic
+    assert sync.update_settings({"reclaim": {"workers": -3}})["reclaim"]["workers"] == 0
+    assert sync.update_settings({"reclaim": {"workers": 4}})["reclaim"]["workers"] == 4
 
 
 def test_paused_account_starts_nothing(library):
@@ -654,10 +655,10 @@ def test_freed_report_times_each_step(library):
     assert t["timing"]["slowest"][0]["name"] == "BIG.jpg"
 
 
-def test_more_than_four_at_once_saved_earlier_is_kept_within_four():
-    sync.meta_set("settings", '{"reclaim": {"workers": 16}, "upload_workers": 8}')
+def test_more_than_eight_at_once_saved_earlier_is_kept_within_eight():
+    sync.meta_set("settings", '{"reclaim": {"workers": 16}, "upload_workers": 9}')
     st = sync.get_settings()
-    assert st["reclaim"]["workers"] == 4 and st["upload_workers"] == 4
+    assert st["reclaim"]["workers"] == 8 and st["upload_workers"] == 8
     sync.q("DELETE FROM meta WHERE k='settings'")
 
 

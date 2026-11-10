@@ -39,7 +39,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 # `gpsync` command: docker exec <container> gpsync diagnostics > diagnostics.json
 RUN printf '#!/bin/sh\nexec /opt/venv/bin/python /app/cli.py "$@"\n' > /usr/local/bin/gpsync && chmod +x /usr/local/bin/gpsync
 
-COPY backend/sync.py backend/media.py backend/notify.py backend/cache.py backend/provenance.py backend/snapchat.py backend/cli.py VERSION ./
+COPY backend/sync.py backend/media.py backend/notify.py backend/cache.py backend/provenance.py backend/snapchat.py backend/pace.py backend/cli.py VERSION ./
 COPY --from=web /web/dist ./static
 
 # Last, because they change on every build: everything above stays cached and unchanged.

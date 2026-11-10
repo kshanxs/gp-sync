@@ -117,8 +117,12 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   goes to: one account, or several at once (the first is the main backup, the others get copies).
   Photos and Videos go to the first account by default (or every folder, if those don't exist).
 - **Upload hours, speed limit and files at once:** only upload between set hours, cap the upload
-  speed so the rest of your internet stays fast, and upload several files side by side (3 by
-  default, up to 4 per account; the speed limit is shared between them).
+  speed so the rest of your internet stays fast, and upload several files side by side (per
+  account; the speed limit is shared between them). **Dynamic** (the default) starts at 4, adds
+  more while Google keeps up (up to 12, and fewer for big videos: at most 256 MB moving at once)
+  and halves when Google asks to slow down (HTTP 429), putting that file back in the queue instead
+  of stopping. Or pick a fixed number, 1 to 8. The same goes for Free storage and Copy accounts
+  (Items at once).
 - **Albums:** put new uploads in Google Photos albums named after their folder.
 - **Files:** search and filter everything that was backed up, with thumbnails (iPhone HEIC too) and
   a link to each item in Google Photos. A duplicates tab lists identical files.
@@ -127,7 +131,7 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   counts. Arrival dates are inferred from filesystem timestamps, which can change.
 - **Free storage:** lists what counts against your Google storage, biggest first, photos and videos
   apart. Free single items, the 10 biggest, or everything of a kind (photos only, videos only, or
-  both). Several at once (up to 4), GP Sync gets an item, checks it against
+  both). Several at once (dynamic, or a fixed number up to 8), GP Sync gets an item, checks it against
   the checksum Google gives for it, deletes it in Google Photos (Trash included), uploads it again
   the free way and checks it no longer counts. Each step is saved, so a restart resumes safely. It
   stops if Google counts a re-upload, and deletes nothing in an account where its own uploads

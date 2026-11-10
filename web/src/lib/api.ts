@@ -1,5 +1,7 @@
 // Typed access to the app's REST API (all paths relative, so it works behind any proxy).
 
+import type { PaceNow } from "./pace";
+
 export interface Counts {
   uploaded: number;
   exists: number;
@@ -105,7 +107,10 @@ export interface Status {
   current: Current | null;
   /** Every file uploading right now (several at once: Settings › Sync, Files at once). */
   uploading?: Current[];
+  /** 0: dynamic (see lib/pace.ts). */
   upload_workers?: number;
+  /** How many run at once now, per account. */
+  pace?: Record<string, { upload: PaceNow; storage: PaceNow }>;
   library: Library;
   folders: Record<string, Folder>;
   session: { started: number; uploaded_files: number; uploaded_bytes: number };
@@ -292,7 +297,7 @@ export interface Settings {
   /** The dashboard device's zone, reported by the dashboard (the default when TZ isn't set). */
   system_timezone: string;
   speed_limit_mbps: number;
-  /** Files uploaded at once per account. */
+  /** Files uploaded at once per account: 0 dynamic, or 1 to 8. */
   upload_workers?: number;
   albums: "off" | "top" | "parent";
   notify: Notify;
@@ -487,6 +492,8 @@ export interface SnapchatReport {
   /** Folders the export script is still writing to. */
   exporting: string[];
   current: { key: string; step: string; done: number; total: number } | null;
+  /** Every memory being worked on now (several at once, like a backup). */
+  working?: { key: string; step: string; done: number; total: number }[];
   error: string;
 }
 export interface FileItem {
@@ -626,7 +633,7 @@ export interface ReclaimPrefs {
   confirm: boolean;
   /** Keep the downloaded copies (Downloads page). */
   keep: boolean;
-  /** Items moved at once per account. */
+  /** Items moved at once per account: 0 dynamic, or 1 to 8. */
   workers: number;
   /** Add each freed item to an album in Google. */
   album: boolean;
@@ -689,6 +696,7 @@ export interface StorageReport {
   working?: ReclaimProgress[];
   paused?: boolean;
   prefs?: ReclaimPrefs;
+  pace?: PaceNow;
   /** Every account's Free storage, for the account strip. */
   summary?: Record<string, ReclaimSummary>;
   listed: boolean;

@@ -14,6 +14,7 @@ import { host, setPageStatus, setPauseControl, setRefreshControl, status } from 
 import { accountChips, freeingAccounts, openingAccount, rememberAccount } from "../lib/account-menu";
 import { columns } from "../lib/charts";
 import { confirmDialog } from "../lib/dialog";
+import { atOnceOptions, atOnceText } from "../lib/pace";
 import { accountLine, badge, cardHead, checkNote, tile, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
@@ -36,7 +37,6 @@ let kind: "all" | "photo" | "video" = "all";
 const picked = new Set<string>();
 const KIND_NAME = { all: "photos and videos", photo: "photos", video: "videos" } as const;
 const ACTIVE = ["queued", "downloaded", "in_google", "checking"];
-const WORKER_CHOICES = [1, 2, 3, 4]; // more makes Google throttle and fail
 
 async function load(): Promise<void> {
   const mine = ++request;
@@ -244,8 +244,8 @@ function optionsCard(p: ReclaimPrefs): string {
         ${row("st-opt-keep", p.keep, "Keep the downloaded copies", "On: each copy stays on this server, under Downloads. Off: it is deleted once Google has the free upload.")}
       </div>
       <div class="divide-y divide-line">
-        <div class="flex items-start gap-3 px-4 py-3"><span class="min-w-0 flex-1"><span class="block text-sm font-medium">Items at once</span><span class="block text-xs text-ink-3">Per account, for Free storage and Copy accounts. More is faster on a fast connection; each needs its size free here while it moves.</span></span>
-          <select id="st-opt-workers" class="input w-20 shrink-0" aria-label="Items at once">${WORKER_CHOICES.map((n) => `<option value="${n}" ${n === p.workers ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+        <div class="flex items-start gap-3 px-4 py-3"><span class="min-w-0 flex-1"><span class="block text-sm font-medium">Items at once</span><span class="block text-xs text-ink-3">Per account, for Free storage and Copy accounts. Dynamic runs more side by side while Google keeps up (up to 12, many for small photos, few for big videos) and slows down when Google asks. Each needs its size free here while it moves.</span></span>
+          <select id="st-opt-workers" class="input w-44 shrink-0" aria-label="Items at once">${atOnceOptions(p.workers)}</select></div>
         ${row("st-opt-album", p.album, "Add freed items to an album", `Album “${p.album_name}” in Google Photos: an easy place to check them. Captions are never changed.`)}
       </div>
     </div>
@@ -270,7 +270,7 @@ function renderList(r: StorageReport): void {
       return `<button data-kind="${k}" aria-pressed="${k === kind}">${k === "all" ? "Both" : k === "photo" ? "Photos" : "Videos"} <span class="opacity-60">${num(n)}</span></button>`;
     })
     .join("");
-  const workers = r.prefs?.workers ?? 4;
+  const workers = r.prefs?.workers ? r.prefs.workers : (r.pace?.now ?? 4);
   html(
     $("#st-body"),
     `${accountStrip(r)}
@@ -342,7 +342,7 @@ function renderList(r: StorageReport): void {
         <div class="flex gap-3"><span class="grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-xs">2</span><span class="text-sm"><b>Deleted in Google</b>, Trash included, only after the copy here is checked again.</span></div>
         <div class="flex gap-3"><span class="grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-xs">3</span><span class="text-sm"><b>Uploaded again</b> the free way, then Google is asked that it doesn't count.</span></div>
       </div>
-      <div class="border-t border-line px-4 py-3 text-xs text-ink-3">Up to ${workers} items at once (Options). Each item goes step by step and every step is saved, so an update or restart resumes safely. Keeps quality, date, favourite, archive and caption. Albums, shared links and comments are lost. A few videos download as a copy Google changed slightly (an edited date): that copy is used when it matches the checksum Google lists for it.</div>
+      <div class="border-t border-line px-4 py-3 text-xs text-ink-3">${atOnceText(r.prefs?.workers ?? 0, r.pace).replace(/^u/, "U")} items at once (Options). Each item goes step by step and every step is saved, so an update or restart resumes safely. Keeps quality, date, favourite, archive and caption. Albums, shared links and comments are lost. A few videos download as a copy Google changed slightly (an edited date): that copy is used when it matches the checksum Google lists for it.</div>
     </section>`,
   );
 }
@@ -610,12 +610,12 @@ function render(): void {
 async function ask(what: string, count: string): Promise<{ keep: boolean } | null> {
   const p = report?.prefs;
   if (p && !p.confirm) return { keep: p.keep };
-  const workers = p?.workers ?? 4;
+  const workers = atOnceText(p?.workers ?? 0, report?.pace);
   const r = await confirmDialog({
     title: `Free up ${what}?`,
     icon: "sparkles",
     body: [
-      `${count} in ${account}. Biggest first, up to ${workers} at once: each is downloaded here and checked, deleted in Google Photos (Trash included) and uploaded again for free.`,
+      `${count} in ${account}. Biggest first, ${workers} at once: each is downloaded here and checked, deleted in Google Photos (Trash included) and uploaded again for free.`,
       "Kept: quality, date, favourite, archive and caption. Lost: albums made by hand, shared links and comments.",
     ],
     confirm: "Free up",
@@ -738,7 +738,10 @@ const storage: View = {
       const t = e.target as HTMLInputElement;
       if (t.id === "st-opt-workers") {
         const n = Number(t.value);
-        void savePrefs({ workers: n }, `Up to ${n} item${n === 1 ? "" : "s"} at once`);
+        void savePrefs(
+          { workers: n },
+          n ? `Up to ${n} item${n === 1 ? "" : "s"} at once` : "Items at once: dynamic",
+        );
       } else if (t.dataset.pick) {
         if (t.checked) picked.add(t.dataset.pick);
         else picked.delete(t.dataset.pick);
