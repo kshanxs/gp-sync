@@ -2,7 +2,7 @@ import { get, post, type SnapAction, type SnapCopy, type SnapItem, type Snapchat
 import { accountChips } from "../lib/account-menu";
 import { confirmDialog } from "../lib/dialog";
 import { $, animateChange, esc, html, toast } from "../lib/dom";
-import { ago, fileName, num, pct } from "../lib/format";
+import { ago, bytes, fileName, num, pct } from "../lib/format";
 import { icon } from "../lib/icons";
 import { choices, matchBadge, missingNote, SNAP_ACTION_LABEL, SNAP_GROUPS } from "../lib/snapchat";
 import { setPageStatus, setPauseControl, setRefreshControl, status } from "../lib/store";
@@ -199,6 +199,16 @@ function left(r: SnapchatReport, a: SnapAction): number {
   return r.counts[a].total - r.counts[a].done - r.counts[a].queued;
 }
 
+/** What the memory being worked on is at (snapchat_state "current" steps). */
+const STEP: Record<string, string> = {
+  keeping: "saving Google's extra copy here before deleting it",
+  downloading: "downloading Google's extra copy before deleting it",
+  local: "copying Google's extra copy from this server",
+  deleting: "deleting an extra copy from Google",
+  hashing: "checking a memory before uploading",
+  uploading: "uploading a memory",
+};
+
 function reviewCard(r: SnapchatReport): string {
   const busy = Object.values(r.counts).reduce((n, c) => n + c.queued, 0);
   const done = JOBS.reduce((n, j) => n + r.counts[j.id].done, 0);
@@ -214,6 +224,7 @@ function reviewCard(r: SnapchatReport): string {
     <h2 class="font-semibold">${busy ? `Sending · ${num(done)} of ${num(total)} done` : "What to do with your memories"}</h2>
     <p class="mt-1 text-xs text-ink-3">Each job starts on its own, in any order. Check the lists below first: change any memory's action, or leave it out.</p>
     ${busy ? `<div class="bar mt-3"><i style="width:${pct(done, total)}%"></i></div>` : ""}
+    ${busy && r.current ? `<p class="mt-2 text-xs text-ink-3">${icon("loader", "inline size-3.5 -mt-0.5 spin")} Now: ${esc(STEP[r.current.step] ?? "working on a memory")}${r.current.total ? ` · ${bytes(r.current.done)} of ${bytes(r.current.total)}` : ""}. Memories that only need the album don't wait for it.</p>` : ""}
     <div class="mt-3 divide-y divide-line">${JOBS.filter((j) => r.counts[j.id].total)
       .map((j) => {
         const n = left(r, j.id);

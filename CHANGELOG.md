@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.15
+
+- Snapchat: one slow download no longer holds everything back. Memories that only need the album
+  are finished and added first, all of them, 100 per album call (it was 100 per round, waiting
+  behind each download). Saving and deleting extra copies, and uploads, follow a few at a time.
+  The page says what the slow item is doing ("downloading Google's extra copy before deleting it ·
+  14 MB of 48 MB").
+
 ## 1.5.14
 
 - Snapchat: each job has its own, named button again, in one card: "Add to album" (already in

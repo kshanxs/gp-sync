@@ -5249,14 +5249,16 @@ def _snap_keep_google_copy(client, account, key, dedup, track):
 
 
 def snapchat_step(account, make_client=None):
-    """Do what the user started on the Snapchat page, memory by memory: duplicates in Google are kept
-    on this server and deleted there, then the memory stays (album) or is uploaded with its date
-    (replace, upload). Every one goes into the album. Returns True if anything was done."""
+    """Do what the user started on the Snapchat page. Quick work first, so one slow download never
+    holds the rest back: memories that only need the album are finished and added straight away
+    (100 per album call, as many calls as needed). Then a few memories with slow work: duplicates in
+    Google are kept on this server and deleted there, and memories are uploaded with their date
+    (replace, upload). Returns True if anything was done."""
     if snapchat_paused(account):
         return False
     rows = q(
         """SELECT path, action, kind, taken, size, mtime, favorite, archived, caption, local
-           FROM snap_items WHERE state='queued' AND account=? ORDER BY taken LIMIT 300""",
+           FROM snap_items WHERE state='queued' AND account=? ORDER BY taken""",
         (account,),
     )
     later = q(
@@ -5270,14 +5272,34 @@ def snapchat_step(account, make_client=None):
     album = _snap_album()
     did, heavy, now = False, 0, time.time()
     try:
-        for path, action, kind, taken, size, mtime, fav, arch, cap, local in rows:
+        # 1. Quick: already in Google, nothing left to delete. Only the album.
+        slow = []
+        for row in rows:
+            path, action, taken = row[0], row[1], row[3]
+            copies = _snap_copies(path)
+            keep, drop = snapchat.plan(action, copies, taken, DATE_SLACK)
+            if action != "album" or any(c["state"] != "deleted" for c in drop):
+                slow.append((row, keep, drop))
+                continue
+            if keep is None:
+                q("UPDATE snap_items SET state='failed', error=? WHERE path=?",
+                  ("Google's copy is gone: look for the memories again", path))  # fmt: skip
+                continue
+            if any(c["favorite"] for c in drop) and not keep["favorite"]:
+                with contextlib.suppress(Exception):  # a deleted duplicate was a favourite: the copy kept is
+                    client.api.set_favorite(keep["dedup"], True)
+            _snap_finish(path, account, keep["key"], "exists", "")
+            did = True
+        if not _snap_album_pass(client, account, album, track):
+            return did
+        did = did or bool(rows and len(slow) < len(rows))
+        # 2. Slow: a few at a time (downloads, deletes, uploads).
+        for (path, action, kind, taken, size, mtime, fav, arch, cap, local), keep, drop in slow:
             if heavy >= SNAP_UPLOADS_PER_STEP:
                 break
             if now - _snap_tried.get(path, 0) < 100:
                 continue
             name = rel(path)
-            copies = _snap_copies(path)
-            keep, drop = snapchat.plan(action, copies, taken, DATE_SLACK)
             started = time.monotonic()
             try:
                 waiting = False
@@ -5297,7 +5319,7 @@ def snapchat_step(account, make_client=None):
                     if keep is None:
                         raise RuntimeError("Google's copy is gone: look for the memories again")
                     if any(c["favorite"] for c in drop) and not keep["favorite"]:
-                        with contextlib.suppress(Exception):  # a duplicate was a favourite: the copy kept is
+                        with contextlib.suppress(Exception):
                             client.api.set_favorite(keep["dedup"], True)
                     _snap_finish(path, account, keep["key"], "exists", "")
                     did = True
@@ -5323,21 +5345,8 @@ def snapchat_step(account, make_client=None):
                 q("UPDATE snap_items SET state='failed', error=? WHERE path=?", (msg, path))
             finally:
                 track["current"] = None
-        # Into the album, a batch at a time (and any an earlier album call missed).
-        later = q(
-            """SELECT path, new_key FROM snap_items WHERE account=? AND state='done' AND in_album=0
-               AND new_key IS NOT NULL LIMIT ?""",
-            (account, SOURCE_BATCH),
-        )
-        if later:
-            added, left_out, ok = album_add(client, account, album, later)
-            _snap_in_album(added)
-            for path in left_out:  # Google can't find it now: leave it out instead of trying forever
-                q("UPDATE snap_items SET in_album=-1 WHERE path=?", (path,))
-            if not ok:
-                track["error"] = f"Could not add to the album {album}"
-                return did
-            did = did or bool(added)
+        if not _snap_album_pass(client, account, album, track):
+            return did
         track["error"] = ""
     except Exception as e:
         track["error"] = outage_kind(e) or f"{type(e).__name__}: {e}"[:300]
@@ -5347,6 +5356,31 @@ def snapchat_step(account, make_client=None):
             _snap_sets()
             notify_change()
     return did
+
+
+SNAP_ALBUM_CALLS = 60  # album calls per step at most (100 items each)
+
+
+def _snap_album_pass(client, account, album, track):
+    """Add finished memories to the album, 100 per call, until all are in (or Google refuses).
+    Returns False when the album couldn't be added to."""
+    for _ in range(SNAP_ALBUM_CALLS):
+        later = q(
+            """SELECT path, new_key FROM snap_items WHERE account=? AND state='done' AND in_album=0
+               AND new_key IS NOT NULL LIMIT ?""",
+            (account, SOURCE_BATCH),
+        )
+        if not later:
+            return True
+        added, left_out, ok = album_add(client, account, album, later)
+        _snap_in_album(added)
+        for path in left_out:  # Google can't find it now: leave it out instead of trying forever
+            q("UPDATE snap_items SET in_album=-1 WHERE path=?", (path,))
+        if not ok:
+            track["error"] = f"Could not add to the album {album}"
+            return False
+        notify_change()
+    return True
 
 
 def _snap_drop_copy(client, account, path, c, track):

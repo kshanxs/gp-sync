@@ -471,3 +471,30 @@ def test_nothing_in_an_export_folder_goes_up_until_it_is_listed(snaps):
     put("Videos/Snap/x.mp4", b"\0\0\0\x18ftypmp42 v", T)
     (sync.MEDIA / "Videos/Snap" / snapchat.RUNNING).write_text("1")
     assert "Videos/Snap/x.mp4" not in {sync.rel(p) for p, *_ in sync.scan()}
+
+
+def test_quick_album_work_never_waits_behind_slow_work(snaps, monkeypatch):
+    """Memories that only need the album are finished and added at once, all of them, even when a
+    slow job (here: a duplicate to download, with no slow work allowed this round) is in the queue."""
+    entries, items = [], []
+    for n in range(150):  # more than one album call's worth
+        data = picture(100 + n)
+        put(f"Photos/Snapchat/m{n}.jpg", data, T + n * 10)
+        entries.append({"file": f"m{n}.jpg", "id": f"m{n}", "kind": "photo", "taken": T + n * 10, "sha1": sha(data),
+                        "width": 90, "height": 160})  # fmt: skip
+        items.append(item(f"K{n}", picture(100 + n, quality=50), T + n * 10 + 1))  # right date
+    dup = picture(100, size=(80, 142), quality=70)  # a second copy of m0, later: deleted after a download
+    items.append(item("DUP", dup, T + 300 * DAY))
+    manifest("Photos/Snapchat", entries)
+    library(*items)
+    client = Google(google={hashlib.sha1(dup).digest()}, thumbs={"DUP": dup})
+    sync.scan()
+    run(sync.snapchat_match_step, client)
+    assert sync.snapchat_report(ACC)["duplicates"]["total"] == 1
+    sync.snapchat_start(ACC, ["album"])
+    monkeypatch.setattr(sync, "SNAP_UPLOADS_PER_STEP", 0)  # the slow job has to wait
+    assert sync.snapchat_step(ACC, lambda _a: client)
+    c = sync.snapchat_report(ACC)["counts"]["album"]
+    assert (c["done"], c["queued"]) == (149, 1)  # all but m0, which waits for its duplicate
+    ((_name, keys),) = client.api.albums.values()
+    assert len(keys) == 149  # two album calls in one step
