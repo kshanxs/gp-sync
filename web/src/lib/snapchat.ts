@@ -54,11 +54,19 @@ export function choices(i: Pick<SnapItem, "copies">): SnapAction[] {
   return i.copies.length ? ["album", "replace", "skip"] : ["upload", "skip"];
 }
 
-/** "1,162 memories aren't in these zips (Apr 2024 to Feb 2025)", or "" when none are missing. */
+/** "1,162 memories aren't in these zips: 1,135 from Apr 2024 to Feb 2025, and 27 in other
+ * months", or "" when none are missing. The biggest run of months in a row is the missing part. */
 export function missingNote(e: SnapExport): string {
   const missing = e.missing ?? 0;
   if (!missing) return "";
-  const months = Object.keys(e.missing_months ?? {}).sort();
+  const months = Object.entries(e.missing_months ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const n = (x: number) => x.toLocaleString("en-US");
+  const head = `${n(missing)} ${missing === 1 ? "memory isn't" : "memories aren't"} in these zips`;
+  if (!months.length) return head;
+  const index = (m: string) => {
+    const [y, mo] = m.split("-").map(Number);
+    return y * 12 + mo;
+  };
   const fmt = (m: string) => {
     const [y, mo] = m.split("-").map(Number);
     return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString("en-GB", {
@@ -67,12 +75,20 @@ export function missingNote(e: SnapExport): string {
       timeZone: "UTC",
     });
   };
-  const span = months.length
-    ? months.length === 1
-      ? ` (${fmt(months[0])})`
-      : ` (${fmt(months[0])} to ${fmt(months[months.length - 1])})`
-    : "";
-  return `${missing.toLocaleString("en-US")} ${missing === 1 ? "memory isn't" : "memories aren't"} in these zips${span}`;
+  // Runs of months in a row; the one with the most memories is the missing part of the export.
+  const runs: { from: string; to: string; count: number }[] = [];
+  for (const [m, c] of months) {
+    const last = runs[runs.length - 1];
+    if (last && index(m) === index(last.to) + 1) {
+      last.to = m;
+      last.count += c;
+    } else runs.push({ from: m, to: m, count: c });
+  }
+  const main = runs.reduce((a, b) => (b.count > a.count ? b : a));
+  const span = main.from === main.to ? fmt(main.from) : `${fmt(main.from)} to ${fmt(main.to)}`;
+  const rest = missing - main.count;
+  if (!rest) return `${head} (${span})`;
+  return `${head}: ${n(main.count)} from ${span}, and ${n(rest)} in other months`;
 }
 
 /** Google's date is off from Snapchat's by more than two minutes. */

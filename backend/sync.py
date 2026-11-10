@@ -4855,12 +4855,22 @@ def sources_accept_dates(names):
 # when the memory takes its place.
 
 SNAP_THUMB_WIDTH = 128
-SNAP_PRINTS_PER_STEP = 120  # Google thumbnails fingerprinted per step (4 at a time)
+# Google thumbnails are fetched in paced batches: about 2 a second at most (more makes Google answer
+# 429, too many requests, when other work runs too). After a 429 the batch halves and the next
+# waits SNAP_BACKOFF, doubling each time up to SNAP_BACKOFF_MAX.
+SNAP_PRINTS_PER_STEP = 80
+SNAP_PRINTS_MIN = 20
+SNAP_PRINT_GAP = 40  # seconds between batches
+SNAP_BACKOFF = 600
+SNAP_BACKOFF_MAX = 7200
 SNAP_UPLOADS_PER_STEP = 4
 SNAP_LOCAL_BYTES_PER_STEP = 512 * 1024**2  # files here read per step to find copies of memories
 SNAP_ACTIONS = ("album", "replace", "upload", "skip")
 SNAP_DIR = DATA / "snapchat"
-snapchat_state = collections.defaultdict(lambda: {"current": None, "error": "", "wanted": 0, "prints": 0})
+snapchat_state = collections.defaultdict(
+    lambda: {"current": None, "error": "", "wanted": 0, "prints": 0, "next_batch": 0.0, "slow_until": 0.0,
+             "backoff": 0, "batch": SNAP_PRINTS_PER_STEP}
+)  # fmt: skip
 _snap = {"paths": frozenset(), "skip": frozenset()}  # memory files, and files here they stand in for
 _snap_tried = {}  # path -> when a replace last found Google still had the old copy
 _snap_dirty = set()  # accounts whose matches must be worked out again
@@ -5080,35 +5090,55 @@ def snapchat_match_step(account, make_client=None):
         or []
     )
     library = [(k, d, t, _seconds(ts), w, h) for k, d, t, ts, w, h, _make in listed]
+    with_camera = [(k, d, t, _seconds(ts), w, h, mk) for k, d, t, ts, w, h, mk in listed]
     cameras = {r[0] for r in listed if r[6]}  # taken by a camera: an original, never replaced
     memories = _snap_memories()
     # Google's thumbnails of the items that could be copies, fingerprinted once and kept.
     first = snapchat.match(memories, library, {})
-    wanted = snapchat.thumbs_wanted(memories, library, first)
+    wanted = snapchat.thumbs_wanted(memories, with_camera, first)
     prints = dict(q("SELECT media_key, dhash FROM snap_prints WHERE account=?", (account,)))
     missing = [k for k in wanted if k not in prints]
     track.update(wanted=len(wanted), prints=len(wanted) - len(missing))
     if missing:
+        now = time.time()
+        if now < max(track["next_batch"], track["slow_until"]):
+            return False  # paced: the lane comes back within a minute
         client = (make_client or _reclaim_client)(account)
+        got, slowed = [], None
 
         def one(key):
             try:
-                return key, snapchat.dhash_bytes(client.api.get_thumbnail(key, width=SNAP_THUMB_WIDTH))
+                return key, snapchat.dhash_bytes(client.api.get_thumbnail(key, width=SNAP_THUMB_WIDTH)), None
             except Exception as e:
                 if outage_kind(e):
-                    raise
-                return key, ""  # not a picture Google can show: never a match
+                    return key, None, e
+                return key, "", None  # not a picture Google can show: never a match
 
         from concurrent.futures import ThreadPoolExecutor
 
-        with ThreadPoolExecutor(4) as pool:
-            got = list(pool.map(one, missing[:SNAP_PRINTS_PER_STEP]))
+        with ThreadPoolExecutor(2) as pool:
+            for key, fp, err in pool.map(one, missing[: track["batch"]]):
+                if err is not None:
+                    slowed = slowed or err
+                elif fp is not None:
+                    got.append((account, key, fp))
         with db_lock:
-            CONN.executemany("INSERT OR REPLACE INTO snap_prints VALUES (?,?,?)", [(account, k, f) for k, f in got])
+            CONN.executemany("INSERT OR REPLACE INTO snap_prints VALUES (?,?,?)", got)
             CONN.commit()
         track["prints"] += len(got)
+        track["next_batch"] = time.time() + SNAP_PRINT_GAP
+        if slowed is not None:
+            # Google wants fewer requests: keep what came, wait longer, ask for less at a time.
+            track["backoff"] = min(SNAP_BACKOFF_MAX, track["backoff"] * 2 or SNAP_BACKOFF)
+            track["slow_until"] = time.time() + track["backoff"]
+            track["batch"] = max(SNAP_PRINTS_MIN, track["batch"] // 2)
+            print(f"Snapchat ({account}): Google asked to slow down ({outage_kind(slowed)}); "
+                  f"next thumbnails in {track['backoff'] // 60} min", file=sys.stderr, flush=True)  # fmt: skip
+        else:
+            track["backoff"] = 0
+            track["error"] = ""
         notify_change()
-        return True
+        return bool(got)
     owned = {r[0] for r in library}
     prints = {k: f for k, f in prints.items() if k in owned}
     local_rows = q("SELECT path, sha1, dhash FROM snap_local WHERE sha1 != ''")
@@ -5549,6 +5579,7 @@ def snapchat_report(account="", action="", limit=120, offset=0):
         "fingerprinted": sum(1 for r in rows if r[16] is not None),
         "checked": sum(1 for r in rows if r[5] is not None),
         "thumbs": {"done": track["prints"], "total": track["wanted"]},
+        "slow_until": track["slow_until"] if track["slow_until"] > time.time() else None,
         "refreshed": float(refreshed) if refreshed else None,
         "matched": float(matched) if matched else None,
         "searching": bool(rows) and (not matched or any(r[5] is None for r in rows) or bool(_snap_dirty)),

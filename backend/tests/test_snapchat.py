@@ -86,6 +86,8 @@ def snaps(media, tmp_path, monkeypatch):
     sync._snap_tried.clear()
     sync.snapchat_state.clear()
     monkeypatch.setattr(sync, "GPMC_HOME", tmp_path / "gpmc")
+    monkeypatch.setattr(snapchat, "SHAPE_MEMORIES", 1)  # a handful of test memories still get searched by look
+    monkeypatch.setattr(sync, "SNAP_PRINT_GAP", 0)
     monkeypatch.setitem(sync.state, "phase", "idle")
     for p in list(sync.MEDIA.rglob("*")):
         if p.is_file():
@@ -223,7 +225,8 @@ def test_one_google_item_is_one_memory():
     assert sorted(f["match"] for f in found.values()) == ["looks_same", "none"]
 
 
-def test_thumbs_wanted_only_same_kind_shape_and_not_older():
+def test_thumbs_wanted_only_same_kind_shape_and_not_older(monkeypatch):
+    monkeypatch.setattr(snapchat, "SHAPE_MEMORIES", 1)
     memories = [{"path": "m", "kind": "photo", "taken": T, "dedups": [], "dhash": "x", "width": 9, "height": 16}]
     lib = [
         ("new", "a", 1, T + DAY, 90, 160),
@@ -235,6 +238,47 @@ def test_thumbs_wanted_only_same_kind_shape_and_not_older():
     assert snapchat.thumbs_wanted(memories, lib, {}) == ["new", "nosize"]
     found = {"m": {"copies": [{"key": "new"}]}}  # already a copy: not fingerprinted again
     assert snapchat.thumbs_wanted(memories, lib, found) == ["nosize"]
+
+
+def test_rare_shapes_dont_pull_in_the_library_and_camera_items_come_last():
+    snaps = [mem(f"s{i}", T) for i in range(5)]  # five 9:16 memories
+    odd = [{**mem("odd", T), "width": 3, "height": 4}]  # one 4:3 memory
+    lib = [
+        ("cam169", "a", 1, T + 2 * DAY, 90, 160, "Apple"),
+        ("roll169", "b", 1, T + DAY, 90, 160, None),
+        ("cam43", "c", 1, T + DAY, 300, 400, "Apple"),  # an ordinary camera photo
+    ]
+    assert snapchat.thumbs_wanted(snaps + odd, lib, {}) == ["roll169", "cam169"]
+
+
+def test_google_saying_slow_down_pauses_and_keeps_what_came(snaps):
+    mem_ = picture(13)
+    put("Photos/Snapchat/x.jpg", mem_, T)
+    manifest("Photos/Snapchat", [{"file": "x.jpg", "id": "x", "kind": "photo", "taken": T, "sha1": sha(mem_),
+                                  "width": 90, "height": 160}])  # fmt: skip
+    library(item("K1", picture(1), T + DAY), item("K2", picture(2), T + 2 * DAY))
+    calls = []
+
+    def thumb(key, width=None):
+        calls.append(key)
+        if key == "K1":
+            import requests
+
+            busy = requests.Response()
+            busy.status_code = 429
+            raise requests.HTTPError("429 Client Error: Too Many Requests", response=busy)
+        return picture(2)
+
+    client = Google()
+    client.api.get_thumbnail = thumb
+    sync.scan()
+    for _ in range(5):
+        sync.snapchat_match_step(ACC, lambda _a: client)
+    track = sync.snapchat_state[ACC]
+    assert track["slow_until"] > sync.time.time() + 500 and track["batch"] == sync.SNAP_PRINTS_PER_STEP // 2
+    assert dict(sync.q("SELECT media_key, dhash FROM snap_prints")).keys() == {"K2"}  # kept
+    assert sorted(calls) == ["K1", "K2"]  # waiting: no more calls
+    assert sync.snapchat_report(ACC)["slow_until"]
 
 
 # ---- the whole round in GP Sync

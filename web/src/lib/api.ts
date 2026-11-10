@@ -469,6 +469,8 @@ export interface SnapchatReport {
   fingerprinted: number;
   checked: number;
   thumbs: { done: number; total: number };
+  /** Google asked for fewer requests: comparing thumbnails goes on at this time (unix seconds). */
+  slow_until: number | null;
   refreshed: number | null;
   matched: number | null;
   searching: boolean;

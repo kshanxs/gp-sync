@@ -263,23 +263,37 @@ def action_for(found, taken, slack, originals=frozenset()):
     return "replace"
 
 
+SHAPE_MEMORIES = 5  # a shape this few memories have isn't searched by look (it would mean thousands of thumbnails)
+
+
 def thumbs_wanted(memories, library, found, since_slack=86400):
-    """Library items worth fingerprinting: not yet a copy of a memory, the same kind and shape as a
-    memory, and dated no earlier than the oldest memory (a copy is never older than the memory it
-    was saved from; a memory already found can still have further copies). Media keys, newest first."""
+    """Library items worth fingerprinting: not yet a copy of a memory, the same kind and shape as at
+    least SHAPE_MEMORIES memories (a handful of odd shapes, such as one 4:3 memory, would otherwise
+    pull in every camera photo), and dated no earlier than the oldest memory (a copy is never older
+    than the memory). Items without a camera come first: camera-roll saves of snaps are the likely
+    copies. Media keys, in that order, newest first."""
     if not memories:
         return []
     used = {c["key"] for f in found.values() for c in f.get("copies") or []}
     oldest = min(m["taken"] for m in memories) - since_slack
-    shapes = {(VIDEO if m["kind"] == "video" else PHOTO, _shape(m["width"], m["height"])) for m in memories}
+    buckets = {}
+    for m in memories:
+        s = _shape(m["width"], m["height"])
+        if s is not None:
+            key = (VIDEO if m["kind"] == "video" else PHOTO, round(s, 2))
+            buckets[key] = buckets.get(key, 0) + 1
+    shapes = [(k, s) for (k, s), n in buckets.items() if n >= SHAPE_MEMORIES]
     out = []
-    for key, _dedup, kind, taken, w, h in sorted(library, key=lambda r: -(r[3] or 0)):
+    for row in library:
+        key, _dedup, kind, taken, w, h = row[:6]
         if key in used or (taken or 0) < oldest or kind not in (PHOTO, VIDEO):
             continue
         s = _shape(w, h)
-        if s is None or any(k == kind and (t is None or abs(t - s) <= SHAPE_SLACK * max(t, s)) for k, t in shapes):
-            out.append(key)
-    return out
+        if s is None or any(k == kind and abs(t - s) <= SHAPE_SLACK * max(t, s) for k, t in shapes):
+            out.append(row)
+    # row[6], when given, is the camera that took it
+    out.sort(key=lambda r: (bool(r[6]) if len(r) > 6 else False, -(r[3] or 0)))
+    return [r[0] for r in out]
 
 
 def _shape(w, h):

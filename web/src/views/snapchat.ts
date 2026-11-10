@@ -157,6 +157,7 @@ function searchCard(r: SnapchatReport): string {
   return `<section class="card mb-4 p-4" aria-live="polite">
     <h2 class="font-semibold">${icon("search", "inline size-4 -mt-0.5")} Looking for your memories in Google Photos</h2>
     <p class="mt-1 text-xs text-ink-3">${r.refreshed ? `Library read ${ago(r.refreshed)}` : "Reading your library from Google first"} · nothing changes in Google yet</p>
+    ${r.slow_until ? `<p class="mt-2 text-xs text-warn">${icon("clock", "inline size-3.5 -mt-0.5")} Google asked GP Sync to slow down. Comparing goes on at ${esc(new Date(r.slow_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}; what's done is kept.</p>` : ""}
     <div class="mt-3 space-y-2">${steps
       .map(
         ([label, done, total]) =>
@@ -272,7 +273,7 @@ function render(): void {
   html(
     $("#sc-body"),
     `${exportCard(r)}
-    ${r.error ? `<section class="card mb-4 p-4 text-sm text-bad" role="alert">${esc(r.error)}</section>` : ""}
+    ${r.error && !r.slow_until ? `<section class="card mb-4 p-4 text-sm text-bad" role="alert">${esc(r.error)}</section>` : ""}
     ${r.searching ? searchCard(r) : ""}
     ${groupCards(r)}
     ${r.duplicates.total ? `<section class="card mb-4 flex flex-wrap items-center gap-3 p-4 text-sm"><span class="grid size-10 place-items-center rounded-xl bg-panel-2 text-ink-2">${icon("copy", "size-5")}</span><div class="min-w-0 flex-1"><b>${num(r.duplicates.total)} extra ${r.duplicates.total === 1 ? "copy" : "copies"} in Google</b><p class="text-xs text-ink-3">Each is kept on this server (Downloads, unless the same file is here) and then deleted from Google, so every memory is in Google once.</p></div><span class="text-xs text-ink-3">${num(r.duplicates.deleted)} deleted</span></section>` : ""}

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.12
+
+- Snapchat: comparing with Google's thumbnails no longer makes Google answer "too many requests"
+  (HTTP 429). Thumbnails come in paced batches; when Google asks to slow down, what came is kept,
+  the next batch waits (10 minutes, doubling up to 2 hours) and asks for fewer. The page says when
+  it goes on instead of showing an error.
+- Snapchat: far fewer thumbnails to compare. A shape only a handful of memories have (one 4:3
+  memory, say) no longer pulls in every camera photo of that shape (on a 41,000-item library:
+  18,690 thumbnails down to 11,037), and saves without a camera, the likely copies, come first.
+- Snapchat: the missing-memories note names the missing part of the export ("1,146 from Apr 2024
+  to Feb 2025") and counts the scattered rest apart, instead of one long range.
+
 ## 1.5.11
 
 - Snapchat Memories, with their real dates. `scripts/snapchat_export.py` turns Snapchat's "Download
