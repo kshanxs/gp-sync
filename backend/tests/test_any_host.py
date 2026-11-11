@@ -5,7 +5,10 @@ import base64
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
+
+from helpers import FAKE_AUTH
 
 import sync
 
@@ -105,3 +108,82 @@ def test_upload_folder_is_found_among_media_folders(media, monkeypatch, tmp_path
     monkeypatch.setattr(sync, "UPLOAD_DIR", elsewhere)
     assert sync.upload_folder_name() == ""  # not inside a backed-up folder
     assert sync.upload_info()["synced"] is False
+
+
+def _post_from(server, path, body, headers):
+    req = urllib.request.Request(server + path, data=body.encode(), method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def test_other_websites_cannot_change_anything(server, media):
+    """With no password, a page on another site must not add an account or move folders to it
+    (a plain form post or text/plain JSON needs no CORS check, so the server has to refuse it)."""
+    evil = "auth=" + urllib.parse.quote(FAKE_AUTH.replace("test%40example.com", "evil%40example.com"))
+    form = {"Content-Type": "application/x-www-form-urlencoded"}
+    for headers in (
+        {"Origin": "https://evil.example"},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Origin": "null"},
+        {"Sec-Fetch-Site": "same-site", "Origin": "http://127.0.0.1:9999"},
+    ):
+        assert _post_from(server, "/api/auth", evil, {**form, **headers}) == 403
+        assert _post_from(server, "/api/settings", '{"folders": {"Photos": ["x"]}}', headers) == 403
+    assert [a for a, _ in sync.accounts()] == ["test@example.com"]
+    assert sync.get_settings()["folders"] in (None, {})
+
+
+def test_own_dashboard_and_scripts_still_work(server, media):
+    host = urllib.parse.urlsplit(server).netloc
+    name = host.split(":")[0]
+    proxied = {"Origin": f"http://{name}:9999", "X-Forwarded-Host": f"{name}:9999"}
+    rewritten = {"Sec-Fetch-Site": "same-origin", "Origin": "http://umbrel.local:8527"}  # proxy changed Host
+    same = [{}, {"Origin": server}, {"Sec-Fetch-Site": "same-origin", "Origin": server}, proxied, rewritten]
+    for headers in same:  # a script, the dashboard, and the dashboard behind a proxy on another port
+        assert _post_from(server, "/api/sync", "", headers) == 200
+    assert _post_from(server, "/share", "", {"Sec-Fetch-Site": "cross-site"}) != 403  # the phone's share sheet
+
+
+def _get_as(server, host, path="/api/status", auth=None):
+    """GET with the Host a browser would send for the page's address (a rebinding page sends its own)."""
+    import http.client
+
+    c = http.client.HTTPConnection(urllib.parse.urlsplit(server).netloc)
+    headers = {"Host": host}
+    if auth:
+        headers["Authorization"] = "Basic " + base64.b64encode(auth.encode()).decode()
+    c.request("GET", path, headers=headers)
+    r = c.getresponse()
+    r.read()
+    return r.status
+
+
+def test_a_rebinding_page_cannot_read_anything(server, media):
+    """Without a password, a page on another site whose name now points at this server
+    (DNS rebinding) is same-origin to the browser: only names a home network uses get answers."""
+    for host in ("evil.example", "evil.example:8527", "photos.attacker.com"):
+        assert _get_as(server, host) == 403
+        assert _get_as(server, host, "/api/media?path=Photos/b.HEIC") == 403
+    for host in ("192.168.1.20:8527", "[fd00::1]:8527", "localhost:8527", "umbrel", "nas.local",
+                 "pi.lan", "box.home.arpa", "srv.internal", "umbrel.tail1234.ts.net", ""):  # fmt: skip
+        assert _get_as(server, host) == 200, host
+
+
+def test_allowed_hosts_adds_names_and_star_turns_the_check_off(server, media, monkeypatch):
+    monkeypatch.setattr(sync, "ALLOWED_HOSTS", ("photos.example.com", ".mydomain.net"))
+    assert _get_as(server, "photos.example.com") == 200
+    assert _get_as(server, "gp.mydomain.net:443") == 200
+    assert _get_as(server, "evil.example") == 403
+    monkeypatch.setattr(sync, "ALLOWED_HOSTS", ("*",))
+    assert _get_as(server, "evil.example") == 200
+
+
+def test_host_check_is_off_with_a_password_or_on_umbrel(server, media, monkeypatch):
+    monkeypatch.setattr(sync, "PLATFORM", "umbrel")  # Umbrel's own sign-in sits in front
+    assert _get_as(server, "evil.example") == 200
+    monkeypatch.setattr(sync, "PLATFORM", "docker")
+    monkeypatch.setattr(sync, "PASSWORD", "s3cret")  # a rebinding page never has the sign-in
+    assert _get_as(server, "photos.example.com", auth="me:s3cret") == 200

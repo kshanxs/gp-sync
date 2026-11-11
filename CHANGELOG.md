@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Security: other websites can no longer change GP Sync.** Without a password, a page on any
+  site you visited could send a hidden form to GP Sync and add its own Google account, point your
+  folders at it, or remove yours. Changes are now accepted only from GP Sync's own dashboard (and
+  from scripts like curl); a request a browser marks as coming from another site gets 403.
+- **Security: no reading through a borrowed web address.** Without a password, a website could
+  point its own name at your server (DNS rebinding) and read your photos and settings through it.
+  GP Sync now answers only home-network addresses when no password is set: IP addresses, one-word
+  names, `.local`, `.lan`, `.home.arpa`, `.internal` and Tailscale's `.ts.net`. If you open GP Sync
+  by a domain name without a password, add it to the new `ALLOWED_HOSTS` setting (`*` turns the
+  check off). Nothing changes with a password or on Umbrel.
+- Tests no longer need 2 GB free in the temp folder.
+
 ## 1.7.4
 
 - **Fix dates learns from your own files:** an undated file copied together with dated ones takes
