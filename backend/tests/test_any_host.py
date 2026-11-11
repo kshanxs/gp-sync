@@ -5,7 +5,10 @@ import base64
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
+
+from helpers import FAKE_AUTH
 
 import sync
 
@@ -105,3 +108,40 @@ def test_upload_folder_is_found_among_media_folders(media, monkeypatch, tmp_path
     monkeypatch.setattr(sync, "UPLOAD_DIR", elsewhere)
     assert sync.upload_folder_name() == ""  # not inside a backed-up folder
     assert sync.upload_info()["synced"] is False
+
+
+def _post_from(server, path, body, headers):
+    req = urllib.request.Request(server + path, data=body.encode(), method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def test_other_websites_cannot_change_anything(server, media):
+    """With no password, a page on another site must not add an account or move folders to it
+    (a plain form post or text/plain JSON needs no CORS check, so the server has to refuse it)."""
+    evil = "auth=" + urllib.parse.quote(FAKE_AUTH.replace("test%40example.com", "evil%40example.com"))
+    form = {"Content-Type": "application/x-www-form-urlencoded"}
+    for headers in (
+        {"Origin": "https://evil.example"},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Origin": "null"},
+        {"Sec-Fetch-Site": "same-site", "Origin": "http://127.0.0.1:9999"},
+    ):
+        assert _post_from(server, "/api/auth", evil, {**form, **headers}) == 403
+        assert _post_from(server, "/api/settings", '{"folders": {"Photos": ["x"]}}', headers) == 403
+    assert [a for a, _ in sync.accounts()] == ["test@example.com"]
+    assert sync.get_settings()["folders"] in (None, {})
+
+
+def test_own_dashboard_and_scripts_still_work(server, media):
+    host = urllib.parse.urlsplit(server).netloc
+    name = host.split(":")[0]
+    proxied = {"Origin": f"http://{name}:9999", "X-Forwarded-Host": f"{name}:9999"}
+    rewritten = {"Sec-Fetch-Site": "same-origin", "Origin": "http://umbrel.local:8527"}  # proxy changed Host
+    same = [{}, {"Origin": server}, {"Sec-Fetch-Site": "same-origin", "Origin": server}, proxied, rewritten]
+    for headers in same:  # a script, the dashboard, and the dashboard behind a proxy on another port
+        assert _post_from(server, "/api/sync", "", headers) == 200
+    assert _post_from(server, "/share", "", {"Sec-Fetch-Site": "cross-site"}) != 403  # the phone's share sheet

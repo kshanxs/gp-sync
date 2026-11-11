@@ -7278,6 +7278,30 @@ def static_file(path):
     return target if target.is_file() else None
 
 
+def from_other_site(headers):
+    """True when a browser sent this request from a page on another site.
+
+    A plain form post or a text/plain body needs no CORS check, so without a password any
+    website could otherwise add its own Google account and send the user's folders to it.
+    Browsers say where a request came from (Sec-Fetch-Site, which pages cannot set), so a proxy
+    rewriting Host (Umbrel's app proxy) does not matter. Older browsers send only Origin: its host
+    name must match Host or X-Forwarded-Host (the port may differ behind a proxy). Scripts (curl)
+    send neither header and pass."""
+    site = headers.get("Sec-Fetch-Site")
+    if site:
+        return site in ("cross-site", "same-site")  # same-site: another app on this server
+    origin = headers.get("Origin")
+    if origin is None:
+        return False
+    try:
+        sender = urllib.parse.urlsplit(origin).hostname
+        named = (headers.get("Host", "") + "," + headers.get("X-Forwarded-Host", "")).split(",")
+        hosts = {urllib.parse.urlsplit("//" + h.strip()).hostname for h in named if h.strip()}
+    except ValueError:
+        return True
+    return not sender or sender not in hosts
+
+
 SESSION_COOKIE = "gps_auth"
 
 
@@ -7739,6 +7763,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def post(self):
         path0 = self.path.partition("?")[0]
+        if path0 != "/share" and from_other_site(self.headers):  # the share sheet only opens a page
+            self.send(403, '{"ok": false, "error": "Changes can only come from the GP Sync dashboard"}')
+            self.close_connection = True
+            return
         if path0 in ("/login", "/logout"):
             n = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(min(max(n, 0), 4096)).decode(errors="replace")
