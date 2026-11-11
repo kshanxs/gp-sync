@@ -134,6 +134,15 @@ def test_report_lists_what_counts_biggest_first(library):
     r = sync.storage_report(ACC)
     assert [i["key"] for i in r["items"]] == ["BIG", "SMALL"]  # not free, partner or trashed ones
     assert r["counted"] == 2 and r["counted_bytes"] == len(DATA) + 5 and r["total"] == 3
+    # All of yours in Google, each file once at full size: BIG and SMALL count, FREE is stored free.
+    assert r["stored"] == {
+        "count": 3,
+        "bytes": len(DATA) + 5 + 4,
+        "free_count": 1,
+        "free_bytes": 4,
+        "photo": {"count": 3, "bytes": len(DATA) + 9},
+        "video": {"count": 0, "bytes": 0},
+    }
     assert r["ours"] == {"seen": 1, "counted": 0, "uploaded": 1}  # GP Sync's own upload doesn't count
     assert r["items"][0]["taken"] == 1_700_000_000
     # Its shape, for rows at real proportions; unknown when Google's list has none.
@@ -433,8 +442,9 @@ def test_keep_the_downloaded_copy(library, tmp_path, monkeypatch):
     assert not kept.exists() and sync.downloads_report()["items"] == []
 
 
-def test_an_item_in_albums_is_counted_once(library):
-    # The same photo appears as the library copy and again in two albums: same dedup, same quota.
+def test_copies_of_a_file_each_count_but_are_listed_once(library):
+    # The same bytes three times, as separate items (same dedup, each charged): Google One counts
+    # all three, and freeing deletes them together (by dedup key).
     same = b"album photo bytes" * 100
     dedup = b64(same)
 
@@ -448,17 +458,18 @@ def test_an_item_in_albums_is_counted_once(library):
     with Storage(library) as st:
         st.update([copy("LIB", True, ""), copy("ALB1", False, "A1"), copy("ALB2", False, "A2")])
     r = sync.storage_report(ACC)
-    # BIG + SMALL (from the fixture) + the one album photo, counted once at its real size.
+    # BIG + SMALL (from the fixture) + the photo, listed once with what all three copies cost.
     assert r["counted"] == 3
-    assert r["counted_bytes"] == len(DATA) + 5 + len(same)
-    keys = [i["key"] for i in r["items"] if i["name"] == "LIB.jpg"]
-    assert keys == ["LIB"]  # the canonical copy, not an album copy
+    assert r["counted_bytes"] == len(DATA) + 5 + 3 * len(same)
+    lib = [i for i in r["items"] if i["name"] == "LIB.jpg"]
+    assert [i["key"] for i in lib] == ["LIB"] and lib[0]["quota"] == 3 * len(same)  # the canonical copy
     assert "ALB1" not in [i["key"] for i in r["items"]]
     # Free all queues the photo once, by its canonical key.
     sync.q("DELETE FROM reclaim")
     assert sync.reclaim_queue_all(ACC, "all")["queued"] == 3
     queued = {k for (k,) in sync.q("SELECT media_key FROM reclaim")}
     assert "LIB" in queued and "ALB1" not in queued and "ALB2" not in queued
+    assert sync.q("SELECT quota FROM reclaim WHERE media_key='LIB'")[0][0] == 3 * len(same)  # freed: all three
 
 
 def test_an_item_gone_from_google_is_skipped_not_failed(library):
@@ -787,11 +798,13 @@ def test_a_changed_copy_on_this_server_is_not_used(library, tmp_path):
 
 def test_each_account_reports_what_still_counts(library):
     s = sync.storage_report(ACC)["summary"][ACC]
-    assert s["counted"] == len(DATA) + 5  # BIG and SMALL; free, partner and trashed items don't count
+    # BIG, SMALL and the item in the Trash (Google counts it until the Trash is emptied), as Google
+    # One shows it; free and partner items don't count.
+    assert s["counted"] == len(DATA) + 5 + 5
     with Storage(library) as st:
         st.update([item("BIG", quota=0), item("SMALL", data=b"small", quota=0)])
     sync.meta_set(f"library_refreshed:{ACC}", "2")  # as every library read does
-    assert sync.storage_summary()[ACC]["counted"] == 0  # read again after the library changed
+    assert sync.storage_summary()[ACC]["counted"] == 5  # read again after the library changed
 
 
 def test_an_unread_library_reports_nothing_counted(tmp_path, monkeypatch, media):
@@ -858,3 +871,85 @@ def test_one_trip_to_google_makes_both_thumbnail_sizes(library, monkeypatch):
     assert max(Image.open(small).size) == 320 and max(Image.open(big).size) == 640
     assert sync.warm_google_thumbs(ACC, ["BIG", "SMALL"], wait=True) == 1  # BIG is here already
     assert calls == [("BIG", 640), ("SMALL", 640)]
+
+
+class KeyedApi(FakeApi):
+    """Google that answers a checksum with the item that has it, as the real one does."""
+
+    def __init__(self, google, keys):
+        super().__init__(google)
+        self.keys = keys  # dedup key -> media key
+
+    def find_remote_media_by_hash(self, digest):
+        d = sync._b64_hash(digest)
+        return self.keys.get(d) if d in self.google else None
+
+
+def test_an_earlier_free_upload_is_not_taken_for_the_original(library, monkeypatch):
+    """Google served an edited copy; an earlier try deleted the original and uploaded the copy free,
+    then stopped before saving that. The copy's checksum now finds GP Sync's own upload: that isn't
+    the original still in Google (which looped on "hasn't deleted it yet"), it's the upload, checked."""
+    monkeypatch.setattr(sync.time, "sleep", lambda s: None)
+    edited = b"google's edited copy"
+    folder = sync.RECLAIM_DIR / ACC / "BIG"
+    folder.mkdir(parents=True)
+    (folder / "BIG.jpg").write_bytes(edited)
+    with Storage(library) as st:
+        st.update([item("UP", data=edited, quota=0)])  # the earlier free upload
+    sync.reclaim_queue(ACC, ["BIG"])
+    sync._reclaim_checked.clear()
+    sync.q("UPDATE reclaim SET state='in_google', local=?, local_hash=? WHERE media_key='BIG'",
+           (str(folder / "BIG.jpg"), b64(edited)))  # fmt: skip
+    client = FakeClient(library, {b64(edited)})  # the original (b64(DATA)) is gone from Google
+    client.api = KeyedApi(client.api.google, {b64(edited): "UP"})
+    sync.reclaim_step(lambda a: client)
+    state, new_key = sync.q("SELECT state, new_key FROM reclaim WHERE media_key='BIG'")[0]
+    assert (state, new_key) == ("checking", "UP")
+    assert client.uploads == [] and not [c for c in client.api.calls if c[0] in ("trash", "delete")]
+
+
+def test_the_original_and_an_earlier_upload_both_there(library, monkeypatch):
+    """The original is still in Google and so is an earlier free upload of the edited copy: the
+    original is deleted (that upload doesn't make it look undeleted), and the upload stands in."""
+    monkeypatch.setattr(sync.time, "sleep", lambda s: None)
+    edited = b"google's edited copy"
+    folder = sync.RECLAIM_DIR / ACC / "BIG"
+    folder.mkdir(parents=True)
+    (folder / "BIG.jpg").write_bytes(edited)
+    sync.reclaim_queue(ACC, ["BIG"])
+    sync.q("UPDATE reclaim SET state='downloaded', local=?, local_hash=? WHERE media_key='BIG'",
+           (str(folder / "BIG.jpg"), b64(edited)))  # fmt: skip
+    client = FakeClient(library, {b64(DATA), b64(edited)})
+    client.api = KeyedApi(client.api.google, {b64(DATA): "BIG", b64(edited): "UP"})
+    sync._reclaim_checked.clear()
+    sync.reclaim_step(lambda a: client)
+    state, new_key = sync.q("SELECT state, new_key FROM reclaim WHERE media_key='BIG'")[0]
+    assert (state, new_key) == ("checking", "UP") and client.uploads == []
+    # Deleted from the Trash twice: Google can miss the first while the item is still on its way there.
+    assert [c for c in client.api.calls if c[0] == "delete"] == [("delete", [b64(DATA)])] * 2
+
+
+def test_freed_originals_left_in_the_trash_are_emptied(library):
+    """A freed original that stayed in Google's Trash still counts: it's deleted for good once its
+    free copy (other bytes) is in the library. One whose copy has the same checksum is left alone,
+    and each is asked at most once an hour."""
+    free = b"free copy, other bytes"
+    with Storage(library) as st:
+        st.update([
+            item("OLDBIG", trash_timestamp=5),  # the original, in the Trash
+            item("NEWBIG", data=free, quota=0),  # its free copy
+            item("OLDSMALL", data=b"small", trash_timestamp=5),
+            item("NEWSMALL", data=b"small", quota=0),  # same bytes: deleting by checksum could hit it
+        ])  # fmt: skip
+    for key, dedup, new in (("OLDBIG", b64(DATA), "NEWBIG"), ("OLDSMALL", b64(b"small"), "NEWSMALL")):
+        sync.q("INSERT INTO reclaim (account, media_key, dedup_key, name, state, new_key, updated) "
+               "VALUES (?, ?, ?, ?, 'done', ?, 0)", (ACC, key, dedup, key, new))  # fmt: skip
+    sync._trash_tried.clear()
+    client = FakeClient(library, set())
+    assert sync.empty_freed_trash(client, ACC, now=1000) == 1
+    assert client.api.calls == [("delete", [b64(DATA)])]
+    assert sync.empty_freed_trash(client, ACC, now=1000 + 60) == 0  # not again within the hour
+    assert sync.empty_freed_trash(client, ACC, now=1000 + sync.TRASH_RETRY) == 1
+    # And Using storage counts the Trash, as Google One does.
+    r = sync.storage_report(ACC)
+    assert r["trash"] == {"count": 3, "bytes": len(DATA) + 5 + 5}  # with the fixture's TRASHED

@@ -728,6 +728,17 @@ export interface StorageReport {
   total: number;
   counted: number;
   counted_bytes: number;
+  /** Items in Google's Trash: they count against storage until it is emptied. */
+  trash?: { count: number; bytes: number };
+  /** Everything of yours in Google, each file once at full size, and how much of it is stored free. */
+  stored?: {
+    count: number;
+    bytes: number;
+    free_count: number;
+    free_bytes: number;
+    photo: { count: number; bytes: number };
+    video: { count: number; bytes: number };
+  };
   /** GP Sync's own uploads found in the library, and how many of them count (should be 0). */
   ours: { seen: number; counted: number; uploaded?: number };
   freed: { count: number; bytes: number };

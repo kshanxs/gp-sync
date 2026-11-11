@@ -239,6 +239,43 @@ function workingCard(r: StorageReport): string {
     : "";
 }
 
+/** Share stored free, never rounded up to 100% while anything still counts. */
+function freeShare(part: number, whole: number): string {
+  const p = pct(part, whole);
+  if (p >= 100) return "100%";
+  return `${p >= 99 ? Math.floor(p * 100) / 100 : Math.floor(p * 10) / 10}%`;
+}
+
+/** All of yours that Google holds, and how much of it doesn't count against storage. */
+function storedCard(r: StorageReport): string {
+  const s = r.stored;
+  if (!s?.count) return "";
+  const counting = s.bytes - s.free_bytes;
+  const share = freeShare(s.free_bytes, s.bytes);
+  return `<section class="card mb-4 p-4">
+    <div class="flex min-w-0 items-center gap-3">
+      <span class="grid size-10 shrink-0 place-items-center rounded-xl bg-good/15 text-good">${icon("cloud", "size-5")}</span>
+      <div class="min-w-0 flex-1">
+        <div class="label">Yours in Google Photos</div>
+        <div class="num truncate text-xl sm:text-2xl">${bytes(s.bytes)}</div>
+        <div class="truncate text-xs text-ink-3">${num(s.count)} files</div>
+      </div>
+      <div class="shrink-0 text-right"><div class="num text-xl text-good sm:text-2xl">${share}</div><div class="text-xs text-ink-3">stored free</div></div>
+    </div>
+    <div class="mt-3 flex h-2 overflow-hidden rounded-full bg-panel-2" role="img" aria-label="${share} stored free">
+      <span class="bg-good" style="width:${pct(s.free_bytes, s.bytes)}%"></span>
+      ${counting > 0 ? `<span class="bg-warn" style="width:${pct(counting, s.bytes)}%;min-width:3px"></span>` : ""}
+    </div>
+    <div class="even mt-3">
+      ${badge(`Photos · ${bytes(s.photo.bytes)}`, "", "photo", `${num(s.photo.count)} photos`)}
+      ${badge(`Videos · ${bytes(s.video.bytes)}`, "", "video", `${num(s.video.count)} videos`)}
+      ${badge(`Free · ${bytes(s.free_bytes)}`, "good", "check", `${num(s.free_count)} files stored free`)}
+      ${badge(`Counting · ${bytes(counting)}`, counting > 0 ? "warn" : "", "cloud", `${num(s.count - s.free_count)} files count against storage`)}
+    </div>
+    <p class="mt-2 text-xs text-ink-3">Each file once at its full size. Free items don't use your Google storage${r.trash?.bytes ? `; ${bytes(r.trash.bytes)} more waits in Google's Trash` : ""}.</p>
+  </section>`;
+}
+
 function renderList(r: StorageReport): void {
   const working = new Map((r.working ?? []).map((w) => [w.key, w]));
   const busy = r.items.filter((i) => ACTIVE.includes(i.state)).length;
@@ -276,8 +313,19 @@ function renderList(r: StorageReport): void {
         <button type="button" role="switch" class="switch shrink-0" id="st-auto" aria-checked="${!!r.prefs.auto}" aria-label="Free new items automatically"></button></section>`
         : ""
     }
+    ${storedCard(r)}
     <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
-      ${tile({ label: "Using storage", value: bytes(r.counted_bytes), ic: "cloud", sub: r.refreshing ? "Reading your library…" : `${num(r.counted)} of ${num(r.total)} items${r.refreshed ? ` · read ${ago(r.refreshed)}` : ""}` })}
+      ${tile({
+        label: "Using storage",
+        // As Google One counts it: the Trash too, until it is emptied.
+        value: bytes(r.counted_bytes + (r.trash?.bytes ?? 0)),
+        ic: "cloud",
+        sub: r.refreshing
+          ? "Reading your library…"
+          : r.trash?.bytes
+            ? `${bytes(r.trash.bytes)} in Google's Trash`
+            : `${num(r.counted)} of ${num(r.total)} items${r.refreshed ? ` · read ${ago(r.refreshed)}` : ""}`,
+      })}
       ${tile({ label: "Freed by GP Sync", value: bytes(r.freed.bytes), ic: "sparkles", sub: r.freed.count ? `${num(r.freed.count)} item${r.freed.count === 1 ? "" : "s"} · see details` : "Nothing freed yet", tone: r.freed.count ? "good" : "", href: `#/storage/${encodeURIComponent(account)}/freed` })}
       ${tile({
         label: "Moving now",

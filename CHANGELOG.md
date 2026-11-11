@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.2
+
+- **Yours in Google Photos:** a card on Free storage shows how much of your data Google holds (each
+  file once, at full size), how much of it is stored free, and photos and videos apart.
+- **Using storage matches Google One:** every copy of a file counts (Google charges each one), and
+  so does Google's Trash until it is emptied. Freeing a file frees all its copies.
+- **Freed originals no longer stay in Google's Trash:** a delete Google missed left some there,
+  still counted. GP Sync deletes once more right after, and empties the ones left behind.
+- **No more "Google hasn't deleted it yet" loop:** GP Sync's own free upload from an earlier try was
+  taken for the original; the item now finishes with that upload instead.
+- Chips that don't fit keep their icon.
+
 ## 1.7.1
 
 - **Uploads card counts every upload:** Free storage, Copies and Snapchat uploads now count next to

@@ -3128,8 +3128,18 @@ def storage_report(account, limit=500, kind="all"):
     ours = set(_own_uploads(account))
     items, counted, counted_bytes, total, ours_counted, ours_seen = [], 0, 0, 0, 0, 0
     kinds = {k: {"count": 0, "bytes": 0} for k in RECLAIM_TYPES}
+    # Everything of yours Google holds, each file once at its full size, and how much of it is free.
+    stored = {"count": 0, "bytes": 0, "free_count": 0, "free_bytes": 0,
+              **{k: {"count": 0, "bytes": 0} for k in RECLAIM_TYPES}}  # fmt: skip
     for key, dedup, name, kind, size, quota, taken in rows or []:
         total += 1
+        stored["count"] += 1
+        stored["bytes"] += size or 0
+        stored[RECLAIM_KINDS.get(kind, "photo")]["count"] += 1
+        stored[RECLAIM_KINDS.get(kind, "photo")]["bytes"] += size or 0
+        if not quota:
+            stored["free_count"] += 1
+            stored["free_bytes"] += size or 0
         if dedup in ours:
             ours_seen += 1
             ours_counted += bool(quota)
@@ -3158,6 +3168,13 @@ def storage_report(account, limit=500, kind="all"):
         j = jobs.get(key)
         return {"state": j[7], "error": j[8] or "", "new_key": j[9] or "", "updated": j[10]} if j else {"state": ""}
 
+    # Google's Trash still counts until it is emptied (by hand, after 60 days, or by GP Sync for
+    # originals it freed: see empty_freed_trash).
+    trash = (_library_rows(
+        account,
+        """SELECT COUNT(*), COALESCE(SUM(quota_charged_bytes), 0) FROM remote_media WHERE origin = 'self'
+           AND COALESCE(trash_timestamp, 0) != 0 AND quota_charged_bytes > 0""",
+    ) or [(0, 0)])[0]  # fmt: skip
     done = q("SELECT COUNT(*), SUM(quota) FROM reclaim WHERE account=? AND state='done'", (account,))[0]
     sql = "SELECT COUNT(*) FROM files WHERE account=? AND status IN ('uploaded','exists')"
     backed_up = q(sql, (account,))[0][0]
@@ -3197,6 +3214,8 @@ def storage_report(account, limit=500, kind="all"):
         "total": total,
         "counted": counted,
         "counted_bytes": counted_bytes,
+        "trash": {"count": trash[0], "bytes": trash[1]},
+        "stored": stored,
         "kinds": kinds,
         "ours": {
             "seen": ours_seen,
@@ -3264,10 +3283,14 @@ def reclaim_queue(account, keys, keep=False):
         f"""SELECT media_key, dedup_key, file_name, type, size_bytes, quota_charged_bytes, utc_timestamp,
                   is_favorite, is_archived, caption FROM remote_media WHERE {_MOVABLE}""",
     )
+    cost = collections.Counter()  # every copy of a file is charged, and freeing deletes them all
+    for r in rows or []:
+        cost[r[1]] += r[5] or 0
     n = 0
     for key, dedup, name, kind, size, quota, taken, fav, arch, cap in rows or []:
         if key not in wanted:
             continue
+        quota = cost[dedup] or quota
         q(
             """INSERT INTO reclaim (account, media_key, dedup_key, name, kind, size, quota, taken, favorite,
                                     archived, caption, state, updated, keep)
@@ -3398,6 +3421,13 @@ def update_library(client, account):
     with _library_lock(account):
         client.update_cache(show_progress=False)
         meta_set(f"library_refreshed:{account}", str(time.time()))
+    try:
+        empty_freed_trash(client, account)
+    except Exception as e:
+        if outage_kind(e):
+            raise
+        print(f"Free storage: emptying freed items from the Trash ({account}): {type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)  # fmt: skip
 
 
 _disk_lock = threading.Lock()
@@ -3671,7 +3701,30 @@ def _reclaim_item(account, row, make_client, out=None):
         if not hashes:
             _set_reclaim(account, key, "failed", "Google gave no usable checksum for this item")
             return True
-        in_google = any(client.api.find_remote_media_by_hash(_digest(h)) for h in hashes)
+        found = {h: client.api.find_remote_media_by_hash(_digest(h)) for h in hashes}
+        own = hashes[0]  # the original's checksum (the file's own when Google's is broken)
+        # The original is there: by its own checksum, or found as itself by the copy's checksum.
+        in_google = bool(found[own]) or key in found.values()
+        # Another item with the copy's checksum: GP Sync's free upload from an earlier try (the
+        # original was deleted, then the item was stopped before it was saved as uploaded).
+        earlier = next((m for h, m in found.items() if m and h != own and m != key), None)
+        if earlier and not in_google:
+            quota_ = _library_rows(account, "SELECT quota_charged_bytes FROM remote_media WHERE media_key=?",
+                                   (earlier,))  # fmt: skip
+            if quota_ and not quota_[0][0]:  # it's free: only the check is left
+                _restore_details(client, have, fav, arch, cap)
+                _set_reclaim(account, key, "checking", "", new_key=earlier, checks=0, uploaded_at=time.time())
+                check_lanes.wake([account])
+                return True
+            if quota_:
+                _set_reclaim(account, key, "failed",
+                             "Google already has this file as another item, which counts against storage")  # fmt: skip
+                return True
+            _set_reclaim(account, key, "in_google", "Google already has this file: waiting for its library list")
+            with _refresh_lock:
+                if account not in _refresh_requests:
+                    _refresh_requests.append(account)  # read it, so the item is found next time
+            return True
         if not _local_copy_ok(local, have):
             if in_google:  # the copy here is gone or damaged: download it again
                 _set_reclaim(account, key, "queued", local="", local_hash="")
@@ -3681,12 +3734,13 @@ def _reclaim_item(account, row, make_client, out=None):
         if in_google:
             # The copy here was just checked again, byte for byte: only now is Google's deleted.
             track["current"] = {"key": key, "step": "deleting", "done": 0, "total": size, "name": name}
-            if not _delete_in_google(client, dedup, *hashes):
+            if not _delete_in_google(client, dedup, *hashes, media_key=key):
                 _set_reclaim(account, key, "in_google", "Google hasn't deleted it yet: trying again soon")
                 return True
             log(f"Deleted {name} in Google Photos ({account}) to upload it again for free", "deleted")
         track["current"] = {"key": key, "step": "uploading", "done": 0, "total": size, "name": name}
-        result = _reupload(client, Path(local), have, size, key, track, when=taken)
+        # Google skips an upload it already has: an earlier try's upload stands in for it (checked).
+        result = earlier or _reupload(client, Path(local), have, size, key, track, when=taken)
         if result is None:
             _set_reclaim(account, key, "in_google", "Google still has it: trying again soon")
             return True
@@ -3853,28 +3907,32 @@ def _library_items(account):
         return cached[1]
     rows = _library_rows(
         account,
-        # The same photo appears once as the library item and again for each album it is in, all
-        # with the same dedup_key and the same quota_charged_bytes. Google charges it once, so each
-        # item is counted once here too (the canonical copy, which has no album, comes first).
+        # A file can be in the library more than once: the same bytes (same dedup_key) as separate
+        # items, each with its own media key. Google charges every copy (Google One's total matches
+        # only that way), and freeing deletes them all at once (Google deletes by dedup key). So each
+        # file is listed once, as its canonical copy, with what all its copies cost.
         """SELECT media_key, dedup_key, file_name, type, size_bytes, quota_charged_bytes, utc_timestamp
            FROM remote_media WHERE origin = 'self' AND COALESCE(trash_timestamp, 0) = 0
            AND COALESCE(is_locked, 0) = 0 ORDER BY is_canonical DESC, content_version""",
     )
     if rows is None:
         return None
-    seen, items = set(), []
+    first, items = {}, []
     for r in rows:
-        if r[1] not in seen:
-            seen.add(r[1])
-            items.append(r)
+        if r[1] in first:
+            i = first[r[1]]
+            items[i] = (*items[i][:5], (items[i][5] or 0) + (r[5] or 0), items[i][6])
+        else:
+            first[r[1]] = len(items)
+            items.append(tuple(r))
     _items_cache[account] = (stamp, items)
     return items
 
 
 def counted_bytes(account):
-    """Bytes that count against Google storage in an account (each item once, not once per album),
-    from its library list here. None when the library hasn't been read. Worked out again only when
-    the library list changes."""
+    """Bytes that count against Google storage in an account, as Google One shows them: every copy
+    of a file, and what waits in Google's Trash (charged until it is emptied), from its library list
+    here. None when the library hasn't been read. Worked out again only when the library changes."""
     path = _library_db(account)
     try:
         files = tuple(
@@ -3890,9 +3948,7 @@ def counted_bytes(account):
         return cached[1]
     rows = _library_rows(
         account,
-        """SELECT COALESCE(SUM(q), 0) FROM (SELECT MAX(quota_charged_bytes) AS q FROM remote_media
-           WHERE origin = 'self' AND COALESCE(trash_timestamp, 0) = 0 AND COALESCE(is_locked, 0) = 0
-           GROUP BY dedup_key)""",
+        "SELECT COALESCE(SUM(quota_charged_bytes), 0) FROM remote_media WHERE origin = 'self'",
     )
     value = None if rows is None else int(rows[0][0] or 0)
     _counted_cache[account] = (stamp, value)
@@ -4073,14 +4129,20 @@ def _local_copy_ok(local, dedup):
         return False
 
 
-def _delete_in_google(client, dedup, *also):
+def _delete_in_google(client, dedup, *also, media_key=None):
     """Delete one item in Google Photos for good: into Google's Trash, then out of it (an item in the
     Trash would block the new upload). Only called once the original is safe here, checked byte for
-    byte. Returns True once Google no longer has it, by its dedup key or the other checksums `also`."""
+    byte. Returns True once Google no longer has it, by its dedup key or the other checksums `also`.
+    `media_key`: the original's key. Another item found by one of `also` (GP Sync's own free upload of
+    an edited copy, from an earlier try) is then not taken for the original."""
     keys = [d for d in dict.fromkeys([dedup, *also]) if _is_hash(d)]
     if not keys:
         raise RuntimeError("Google gave no usable checksum for this item")
-    digests = [_digest(d) for d in keys]
+
+    def still_there(d):
+        found = client.api.find_remote_media_by_hash(_digest(d))
+        return bool(found) and (d == keys[0] or media_key is None or found == media_key)
+
     try:
         client.api.move_remote_media_to_trash([keys[0]])
     except Exception as e:  # already in the Trash (deleted by hand): deleting it from there still works
@@ -4089,9 +4151,62 @@ def _delete_in_google(client, dedup, *also):
     client.api.delete_remote_media_permanently([keys[0]])
     for wait in (0, 1, 2, 4):  # Google can take a moment to forget it
         time.sleep(wait)
-        if not any(client.api.find_remote_media_by_hash(d) for d in digests):
+        if not any(still_there(d) for d in keys):
+            # Google can take a moment to put it in the Trash, and a delete sent before that does
+            # nothing: the item then waits in the Trash, still counted (its checksum isn't found
+            # there). So once more, now that it is there; empty_freed_trash catches what's left.
+            try:
+                client.api.delete_remote_media_permanently([keys[0]])
+            except Exception as e:
+                if outage_kind(e):
+                    raise
             return True
     return False
+
+
+_trash_tried = {}  # (account, dedup key) -> when GP Sync last asked Google to empty it from the Trash
+TRASH_RETRY = 3600
+
+
+def _freed_in_trash(account, now=None):
+    """Originals Free storage freed that still wait in Google's Trash (and count): their free copy
+    is in the library, out of the Trash, with other bytes (another checksum) than the original, so
+    deleting the original's checksum for good can't touch it. Each asked again at most once an hour."""
+    now = time.time() if now is None else now
+    trashed = _library_rows(
+        account,
+        """SELECT DISTINCT dedup_key FROM remote_media WHERE origin = 'self'
+           AND COALESCE(trash_timestamp, 0) != 0""",
+    )
+    out = []
+    for (d,) in trashed or []:
+        if not _is_hash(d) or now - _trash_tried.get((account, d), now - TRASH_RETRY) < TRASH_RETRY:
+            continue
+        for (new_key,) in q("""SELECT new_key FROM reclaim WHERE account=? AND dedup_key=? AND state='done'
+                               AND COALESCE(new_key, '') != ''""", (account, d)):  # fmt: skip
+            copy = _library_rows(
+                account,
+                "SELECT dedup_key FROM remote_media WHERE media_key=? AND COALESCE(trash_timestamp, 0) = 0",
+                (new_key,),
+            )
+            if copy and copy[0][0] and copy[0][0] != d:
+                out.append(d)
+                break
+    return out
+
+
+def empty_freed_trash(client, account, now=None):
+    """Delete for good the freed originals left in Google's Trash. Returns how many were asked."""
+    now = time.time() if now is None else now
+    keys = _freed_in_trash(account, now)
+    for i in range(0, len(keys), 50):
+        part = keys[i : i + 50]
+        client.api.delete_remote_media_permanently(part)
+        for d in part:
+            _trash_tried[(account, d)] = now
+    if keys:
+        log(f"Emptied {len(keys)} freed original(s) left in Google's Trash ({account}): they still counted", "deleted")
+    return len(keys)
 
 
 OURS_COUNT = "GP Sync's own uploads count against storage in this account: nothing deleted"

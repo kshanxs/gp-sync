@@ -2015,7 +2015,12 @@ svg:hover .donut-arc:not(:hover) {
 }
 .even > *,
 .even > a > .badge {
-  @apply w-full min-w-0 justify-center overflow-hidden;
+  @apply w-full min-w-0 overflow-hidden;
+  /* Centred, but from the start when it doesn't fit: the icon is never the part cut off. */
+  justify-content: safe center;
+}
+.even svg {
+  @apply shrink-0;
 }
 .even > a {
   @apply flex min-w-0;
