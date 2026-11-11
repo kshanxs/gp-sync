@@ -63,12 +63,31 @@ def test_memory_cache_stays_bounded(monkeypatch):
     assert cache.get("k49") == b"x" * 100 and cache.get("k0") is None
 
 
-def test_files_answer_is_cached_until_data_changes(server, media):
+def test_answers_follow_the_user_at_once_and_background_work_soon(server, media, monkeypatch):
+    """A page's answer is reused for a few seconds while background work writes (it writes all the
+    time), then sent once more while a fresh one is made; anything the user changes (a POST) makes
+    the next answer fresh at once."""
+    import time as clock
+
+    cache.clear()
     sync.scan()
-    sync.q("INSERT INTO files (path,size,mtime,status,updated) VALUES (?,?,?,?,?)", ("/x/a.jpg", 1, 1, "uploaded", 1))
-    first = json.loads(get(server, "/api/files")[2])["total"]
-    sync.q("INSERT INTO files (path,size,mtime,status,updated) VALUES (?,?,?,?,?)", ("/x/b.jpg", 1, 1, "uploaded", 2))
-    assert json.loads(get(server, "/api/files")[2])["total"] == first + 1
+    add = "INSERT INTO files (path,size,mtime,status,updated) VALUES (?,?,?,?,?)"
+    sync.q(add, ("/x/a.jpg", 1, 1, "uploaded", 1))
+    total = lambda: json.loads(get(server, "/api/files")[2])["total"]  # noqa: E731
+    first = total()
+    sync.q(add, ("/x/b.jpg", 1, 1, "uploaded", 2))  # background work
+    assert total() == first  # reused for a few seconds
+    later = clock.time() + 6
+    monkeypatch.setattr(cache.time, "time", lambda: later)
+    assert total() == first  # stale: answered at once, made again behind it
+    for _ in range(100):
+        if total() == first + 1:
+            break
+        clock.sleep(0.02)
+    assert total() == first + 1
+    sync.q(add, ("/x/c.jpg", 1, 1, "uploaded", 3))
+    post(server + "/api/settings", b"{}")  # the user changed something
+    assert total() == first + 2
 
 
 def test_health_reports_the_cache(server, media):

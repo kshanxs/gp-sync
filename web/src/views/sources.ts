@@ -6,6 +6,7 @@ import {
   type SourceItem,
   type SourceSettings,
   type SourcesReport,
+  peek,
 } from "../lib/api";
 import { $, animateChange, esc, html, toast } from "../lib/dom";
 import { ago, fileName, folderOf, num, pct } from "../lib/format";
@@ -19,6 +20,7 @@ import type { View } from "./view";
 // caption, or be archived. Snapchat saves also get an estimated save date.
 
 let report: SourcesReport | null = null;
+let opened = false;
 let source: SourceId | "" = "";
 let shown = 60;
 let timer = 0;
@@ -29,7 +31,14 @@ const picked = new Set<string>();
 
 async function load(): Promise<void> {
   const mine = ++request;
-  const r = await get<SourcesReport>(`sources?source=${encodeURIComponent(source)}`).catch(() => null);
+  const url = `sources?source=${encodeURIComponent(source)}`;
+  const seen = opened ? peek<SourcesReport>(url) : undefined;
+  opened = false;
+  if (seen) {
+    report = seen;
+    render();
+  }
+  const r = await get<SourcesReport>(url).catch(() => null);
   if (mine !== request) return;
   report = r;
   if (r) source = r.source;
@@ -356,6 +365,7 @@ function onChange(e: Event): void {
 const sources: View = {
   subtitle: "Where each photo and video came from",
   mount(el) {
+    opened = true; // the first load draws the last answer at once (peek), then the fresh one
     picked.clear();
     source = "";
     shown = 60;

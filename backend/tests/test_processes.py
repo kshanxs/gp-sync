@@ -30,3 +30,33 @@ def test_each_process_has_its_own_days_hours_and_weekdays(clean_stats):
 
 def test_backend_has_its_own_version():
     assert sync.BACKEND_VERSION and sync.about()["backend_version"] == sync.BACKEND_VERSION
+
+
+def test_every_upload_counts_with_what_sent_it(clean_stats):
+    """Uploads are counted from everything that sends files to Google: the backup, Free storage
+    (the free re-upload), copies and Snapchat memories, each once."""
+    sync.q("DELETE FROM reclaim")
+    sync.q("DELETE FROM copyjobs")
+    sync.q("DELETE FROM snap_items")
+    sync.sq("DELETE FROM uploads")
+    now = time.time()
+    add = "INSERT INTO uploads (time, name, kind, bytes, ms, result, account) VALUES (?,?,?,?,?,?,?)"
+    sync.sq(add, (now, "Photos/a.jpg", "photo", 300, 10, "uploaded", "a"))
+    sync.sq(add, (now, "Photos/b.jpg", "photo", 300, 10, "failed", "a"))  # not sent
+    sync.sq(add, (now, "Photos/Snapchat/m.mp4", "video", 900, 10, "uploaded", "a"))
+    sync.q("INSERT INTO snap_items (path, manifest, mid, kind) VALUES (?, 'x', 'm', 'video')",
+           (str(sync.MEDIA / "Photos/Snapchat/m.mp4"),))  # fmt: skip
+    sync.q("""INSERT INTO reclaim (account, media_key, state, size, quota, uploaded_at)
+              VALUES ('a', 'K', 'checking', 500, 500, ?)""", (now,))  # fmt: skip
+    sync.q("""INSERT INTO reclaim (account, media_key, state, size, quota)
+              VALUES ('a', 'Q', 'queued', 800, 800)""")  # fmt: skip
+    sync.q("""INSERT INTO copyjobs (src, dst, media_key, state, size, finished, updated)
+              VALUES ('a', 'b', 'C', 'copied', 70, ?, ?)""", (now, now))  # fmt: skip
+    u = sync.process_activity(30, 0)["uploaded"]
+    assert {k: (v["count"], v["bytes"]) for k, v in u.items()} == {
+        "backup": (1, 300),
+        "freed": (1, 500),
+        "copied": (1, 70),
+        "snapchat": (1, 900),
+    }
+    assert u["freed"]["days"][0]["count"] == 1

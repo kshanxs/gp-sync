@@ -100,7 +100,7 @@
 html,
 body {
   height: 100%;
-  /* The app has its own pull to refresh: the page itself never bounces or drags the header down. */
+  /* No pull to refresh (the browser's or the app's): the page never bounces or drags the header down. */
   overscroll-behavior: none;
 }
 #view {
@@ -1074,42 +1074,6 @@ html.theme-reveal::view-transition-old(gt-live) {
   textarea.input {
     font-size: 16px;
   }
-}
-
-/* Pull to refresh (phones): a small round chip under the header with a drawing circle. */
-/* Pull to refresh: comes out from under the header and the page's control strip (both above it),
-   at the top of the page itself, never over their buttons. */
-#ptr {
-  @apply pointer-events-none fixed left-1/2 z-20 grid size-10 place-items-center rounded-full border border-line;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  opacity: 0;
-  transform: translate(-50%, -44px) scale(0.6);
-  will-change: transform, opacity;
-}
-#ptr.back {
-  transition:
-    transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 0.25s;
-}
-#ptr svg {
-  @apply size-7;
-  fill: none;
-  stroke-linecap: round;
-  stroke-width: 2.6;
-}
-.ptr-track {
-  stroke: var(--panel-2);
-}
-.ptr-arc {
-  stroke: var(--accent);
-}
-/* Past the mark: the chip pops slightly, telling the finger it can let go. */
-#ptr.ready {
-  border-color: color-mix(in oklab, var(--accent) 40%, var(--line));
-}
-#ptr.spin svg {
-  animation: spin-slow 0.7s linear infinite;
 }
 
 /* Focus: no outline after a tap or click (phones would draw a square glow around the
@@ -2215,4 +2179,73 @@ a.work-row {
   .rows-grid {
     --row: 210px;
   }
+}
+
+/* ---- Folders: the chosen day's numbers, the chart's picked bar, and the photo grid by day. */
+.day-stat {
+  @apply min-w-0 rounded-xl border border-line bg-panel-2/50 px-3 py-2;
+}
+.day-stat.s1 .num {
+  color: var(--s1);
+}
+.day-stat.s2 .num {
+  color: var(--s2);
+}
+.day-stat.good .num {
+  color: var(--good);
+}
+.day-stat.bad .num {
+  color: var(--bad);
+}
+/* Bars are buttons: the picked day stands out (and is outlined); with a pick the others fade. */
+button.col {
+  @apply relative cursor-pointer rounded-t-[5px] outline-offset-2;
+}
+button.col[aria-pressed="true"]::after {
+  content: "";
+  @apply pointer-events-none absolute inset-x-[-1px] -bottom-1 h-[3px] rounded-full bg-accent;
+}
+.cols.has-pick button.col:not([aria-pressed="true"]) .col-bar {
+  opacity: 0.35;
+}
+.cols.has-pick button.col[aria-pressed="true"] .col-bar {
+  opacity: 1;
+}
+.ph-grid {
+  @apply grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10;
+}
+.ph-day {
+  @apply col-span-full px-0.5 pt-3 pb-1 text-sm font-semibold first:pt-0;
+}
+.ph-tile {
+  @apply min-w-0 cursor-pointer;
+}
+.ph-tile:focus-visible {
+  @apply rounded-lg outline-2 outline-accent;
+}
+.ph-state {
+  @apply absolute bottom-1.5 left-1.5 grid size-5 place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm;
+}
+.ph-state.good {
+  @apply text-good;
+}
+.ph-state.bad {
+  @apply bg-bad text-white;
+}
+.ph-state.warn {
+  @apply text-warn;
+}
+.ph-video {
+  @apply absolute top-1.5 right-1.5 grid size-5 place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm;
+}
+
+/* ---- Overview's Uploads card: a chip per kind of work that sent files today, in its colour. */
+.up-chip {
+  @apply inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] text-ink-2;
+  border-color: color-mix(in oklab, var(--c) 40%, transparent);
+  background: color-mix(in oklab, var(--c) 12%, transparent);
+}
+.up-chip > svg,
+.up-chip > b {
+  color: var(--c);
 }

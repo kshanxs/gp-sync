@@ -1,4 +1,4 @@
-import { get, type Duplicates, type FileItem, type Status } from "../lib/api";
+import { get, peek, type Duplicates, type FileItem, type Status } from "../lib/api";
 import { $, $$, esc, html, touched } from "../lib/dom";
 import { ago, bytes, fileName, folderOf, num } from "../lib/format";
 import { icon } from "../lib/icons";
@@ -24,6 +24,7 @@ let timer = 0;
 let loading = false;
 let request = 0;
 let observer: IntersectionObserver | null = null;
+let opened = false; // the first load draws the last answer at once (peek), then the fresh one
 
 async function loadFiles(reset: boolean): Promise<void> {
   if (!reset && (loading || items.length >= total)) return;
@@ -31,9 +32,15 @@ async function loadFiles(reset: boolean): Promise<void> {
   loading = true;
   const offset = reset ? 0 : items.length;
   try {
-    const r = await get<{ total: number; items: FileItem[] }>(
-      `files?q=${encodeURIComponent(q)}&status=${st}&folder=${encodeURIComponent(folder)}&sort=${sort}&limit=60&offset=${offset}`,
-    );
+    const url = `files?q=${encodeURIComponent(q)}&status=${st}&folder=${encodeURIComponent(folder)}&sort=${sort}&limit=60&offset=${offset}`;
+    const seen = reset && opened ? peek<{ total: number; items: FileItem[] }>(url) : undefined;
+    if (reset) opened = false;
+    if (seen) {
+      total = seen.total;
+      items = seen.items;
+      renderFiles();
+    }
+    const r = await get<{ total: number; items: FileItem[] }>(url);
     if (mine !== request) return; // a newer search or filter answered first
     total = r.total;
     if (reset) {
@@ -167,6 +174,7 @@ function show(): void {
 const library: View = {
   subtitle: "Every photo and video here",
   mount(el, args) {
+    opened = true;
     tab = args[0] === "duplicates" ? "dups" : "files";
     if (args[0] === "folder") folder = args.slice(1).map(decodeURIComponent).join("/");
     el.innerHTML = `

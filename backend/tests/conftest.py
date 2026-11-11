@@ -10,6 +10,7 @@ _tmp = Path(tempfile.mkdtemp(prefix="gphotos-sync-test-"))
 os.environ["DATA_DIR"] = str(_tmp / "data")
 os.environ["MEDIA_DIR"] = str(_tmp / "media")
 os.environ["SETTLE_SECONDS"] = "0"
+os.environ["WARM_THUMBS"] = "0"  # no thumbnails fetched from Google behind a test's back
 os.environ["UPLOAD_DIR"] = str(_tmp / "media" / "Photos" / "Uploads")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

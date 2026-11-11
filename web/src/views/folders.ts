@@ -6,11 +6,12 @@ import {
   type FolderGroup,
   type FolderReport,
   type Settings,
+  peek,
 } from "../lib/api";
 import { sparkline } from "../lib/charts";
 import { backupPriorityControl } from "../lib/backup-priority";
 import { $, $$, esc, html, toast, touched } from "../lib/dom";
-import { ago, bytes, date, fileName, num, pct } from "../lib/format";
+import { ago, bytes, clock, date, dayKey, fileName, num, pct } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
 import { host } from "../lib/store";
 import { badge, cardHead, openAttrs, thumb, type Tone } from "../lib/ui";
@@ -31,6 +32,8 @@ let group: "folders" | "devices" = "devices";
 let path = "";
 let days = 30;
 let report: FolderReport | null = null;
+let opened = false;
+let filesOpened = false; // the same for the photos below
 let request = 0;
 let refreshTimer = 0;
 
@@ -156,9 +159,14 @@ function rangeText(): string {
 async function load(): Promise<void> {
   const mine = ++request;
   const kind = path ? "folders" : group; // inside a device it is a folder like any other
-  const r = await get<FolderReport>(
-    `folders?group=${kind}&path=${encodeURIComponent(path)}&days=${days}&tz=${tz}`,
-  ).catch(() => null);
+  const url = `folders?group=${kind}&path=${encodeURIComponent(path)}&days=${days}&tz=${tz}`;
+  const seen = opened ? peek<FolderReport>(url) : undefined;
+  opened = false;
+  if (seen) {
+    report = seen;
+    render();
+  }
+  const r = await get<FolderReport>(url).catch(() => null);
   if (mine !== request) return; // the user moved on
   report = r;
   render();
@@ -170,9 +178,15 @@ async function loadFiles(reset: boolean): Promise<void> {
   fLoading = true;
   const offset = reset ? 0 : shownFiles.length;
   try {
-    const r = await get<FolderFiles>(
-      `folders/files?path=${encodeURIComponent(path)}&group=${group}&status=${fStatus}&kind=${fKind}&sort=${fSort}&offset=${offset}&limit=60&day=${encodeURIComponent(fDay)}&tz=${tz}`,
-    );
+    const url = `folders/files?path=${encodeURIComponent(path)}&group=${group}&status=${fStatus}&kind=${fKind}&sort=${fSort}&offset=${offset}&limit=60&day=${encodeURIComponent(fDay)}&tz=${tz}`;
+    const seen = reset && filesOpened ? peek<FolderFiles>(url) : undefined;
+    if (reset) filesOpened = false;
+    if (seen) {
+      files = seen;
+      shownFiles = seen.items;
+      renderFiles();
+    }
+    const r = await get<FolderFiles>(url);
     if (mine !== fRequest) return;
     files = r;
     shownFiles = reset ? r.items : shownFiles.concat(r.items);
@@ -189,9 +203,6 @@ async function loadFiles(reset: boolean): Promise<void> {
 
 function renderBar(): void {
   $$("button", $("#fo-group")).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.g === group)));
-  $$("button", $("#fo-range")).forEach((b) =>
-    b.setAttribute("aria-pressed", String(Number(b.dataset.d) === days)),
-  );
   const sep = `<span class="text-ink-3">${icon("chevron", "size-3.5")}</span>`;
   const parts = path.split("/").filter(Boolean);
   // A device starts at its folder (Photos/iPhone); show it by name, then what's inside it.
@@ -222,10 +233,25 @@ function renderBar(): void {
   html($("#fo-crumbs"), `<div class="flex min-w-0 flex-wrap items-center gap-1.5 text-sm">${crumbs}</div>`);
 }
 
-// ---- summary: one compact card instead of six big tiles
+// ---- the main card: the folder's totals, the chosen day (today unless a bar was picked), the chart
 
-function stat(label: string, value: string, sub: string): string {
-  return `<div class="min-w-0"><div class="label truncate">${esc(label)}</div><div class="num mt-1 truncate text-lg sm:text-xl">${value}</div><div class="truncate text-xs text-ink-3">${sub}</div></div>`;
+function stat(label: string, value: string, sub = ""): string {
+  return `<div class="min-w-0"><div class="label truncate">${esc(label)}</div><div class="num mt-1 truncate text-lg sm:text-xl">${value}</div>${sub ? `<div class="truncate text-xs text-ink-3">${sub}</div>` : ""}</div>`;
+}
+
+/** "Today", "Yesterday", else "Sun, Nov 9", for a day key ("2026-11-09"). */
+function dayTitle(day: string, today: string, long = false): string {
+  const t = Date.parse(`${today}T12:00:00Z`);
+  const d = Date.parse(`${day}T12:00:00Z`);
+  if (day === today) return "Today";
+  if (t - d === 86400000) return "Yesterday";
+  return new Date(d).toLocaleDateString([], {
+    timeZone: "UTC",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(long && day.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {}),
+  });
 }
 
 function renderSummary(r: FolderReport): void {
@@ -246,16 +272,49 @@ function renderSummary(r: FolderReport): void {
        ${path ? prioBadge(path) : ""}
        <span class="ml-auto text-xs text-ink-3 tabular-nums">${done}% in Google Photos</span></div>
      <div class="bar mt-2"><i style="width:${done}%"></i></div>
-     <div class="mt-4 grid grid-cols-3 gap-4 lg:grid-cols-6">
+     <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
        ${stat("Photos", num(t.photos), bytes(t.photo_bytes))}
        ${stat("Videos", num(t.videos), bytes(t.video_bytes))}
        ${stat("Backed up", num(t.synced), `${num(t.files - t.synced)} waiting`)}
-       ${stat(`New in ${RANGES.find(([d]) => d === days)?.[1] ?? `${days} d`}`, num(t.new), `${num(t.new_week)} this week`)}
-       ${stat("Today", num(t.new_day), "added")}
        ${stat("Last added", t.last_added ? ago(t.last_added) : "–", t.last_added ? date(t.last_added, true) : "Nothing yet")}
      </div>
      ${path && (t.files > t.synced || prio.includes(path)) ? backupPriorityControl(path, prio.indexOf(path), t.files > t.synced) : ""}`,
   );
+}
+
+/** The chosen day's numbers, above the chart: today unless a bar was picked. */
+function renderDay(r: FolderReport): void {
+  const day = fDay || r.today;
+  const d = r.daily.find((x) => x.day === day) ?? {
+    day,
+    photos: 0,
+    videos: 0,
+    backed_up: 0,
+    waiting: 0,
+    failed: 0,
+  };
+  const added = d.photos + d.videos;
+  const inGoogle = percent(d.backed_up, added);
+  html(
+    $("#fo-day"),
+    `<div class="flex flex-wrap items-center gap-2">
+       <div class="min-w-0 flex-1"><div class="label">${fDay ? "Picked day" : "Added today"}</div>
+         <div class="mt-0.5 flex flex-wrap items-baseline gap-x-2"><span class="text-lg font-semibold">${esc(dayTitle(day, r.today, true))}</span>${day === r.today ? `<span class="text-xs text-ink-3">${esc(dayTitle(day, "", true))}</span>` : ""}</div></div>
+       ${fDay ? `<button class="btn sm" id="fo-clear-day">${icon("calendar")}Back to today</button>` : ""}
+       <div class="seg" id="fo-range">${RANGES.map(([n, l]) => `<button data-d="${n}" aria-pressed="${n === days}" class="max-sm:px-2.5">${l}</button>`).join("")}</div>
+     </div>
+     <div class="even mt-3">
+       ${dayStat("Added", num(added), added ? `${inGoogle}% in Google` : "Nothing", "")}
+       ${dayStat("Photos", num(d.photos), "", "s1")}
+       ${dayStat("Videos", num(d.videos), "", "s2")}
+       ${dayStat("In Google", num(d.backed_up), "", "good")}
+       ${dayStat(d.failed ? "Failed" : "Waiting", num(d.failed || d.waiting), d.failed ? `${num(d.waiting)} waiting` : "", d.failed ? "bad" : "")}
+     </div>`,
+  );
+}
+
+function dayStat(label: string, value: string, sub: string, tone: string): string {
+  return `<div class="day-stat ${tone}"><div class="text-[11px] text-ink-3">${esc(label)}</div><div class="num text-xl">${value}</div>${sub ? `<div class="truncate text-[11px] text-ink-3">${esc(sub)}</div>` : ""}</div>`;
 }
 
 // ---- devices and subfolders
@@ -338,12 +397,30 @@ function renderList(r: FolderReport): void {
 
 function fileTile(f: FolderFiles["items"][number]): string {
   const [label, tone, ic] = FILE_STATES[f.state] ?? [f.state, "info", "info"];
-  return `<figure class="card media-tile group cursor-pointer overflow-hidden" ${openAttrs(f.name, f.state === "failed")}>
-    <div class="shimmer relative aspect-square overflow-hidden">${thumb(f.name, "zoom-img fade-img size-full object-cover", f.mtime)}
-      <div class="on-media absolute bottom-2 left-2 flex gap-1">${badge(label, tone, ic)}${f.kind === "video" ? `<span class="badge">${icon("video")}</span>` : ""}</div></div>
-    <figcaption class="p-2.5"><div class="truncate text-sm font-medium" title="${esc(f.name)}">${esc(fileTitle(f))}</div>
-      <div class="truncate text-xs text-ink-3">${bytes(f.size)} · added ${date(f.added)}</div>
-      ${f.error ? `<div class="mt-1 truncate text-xs text-bad" title="${esc(f.error)}">${esc(f.error)}</div>` : ""}</figcaption></figure>`;
+  return `<figure class="ph-tile group" ${openAttrs(f.name, f.state === "failed")} title="${esc(`${fileTitle(f)}\n${label} · ${bytes(f.size)}${f.error ? `\n${f.error}` : ""}`)}">
+    <div class="shimmer relative aspect-square overflow-hidden rounded-lg">${thumb(f.name, "zoom-img fade-img size-full object-cover", f.mtime)}
+      <span class="ph-state ${tone}" aria-label="${esc(label)}">${icon(ic, "size-3")}</span>
+      ${f.kind === "video" ? `<span class="ph-video">${icon("play", "size-3")}</span>` : ""}</div>
+    <figcaption class="mt-1 flex justify-between gap-1 px-0.5 text-[11px] text-ink-3 tabular-nums"><span class="keep-line truncate">${clock(f.added)}</span><span class="keep-line shrink-0">${bytes(f.size)}</span></figcaption></figure>`;
+}
+
+/** Newest or oldest first: a heading at each new day, like a photo library. */
+const byDay = () => fSort === "new" || fSort === "old";
+
+function tilesHtml(items: FolderFiles["items"], after?: FolderFiles["items"][number]): string {
+  let last = after ? dayKey(after.added) : "";
+  const today = report?.today ?? dayKey(Date.now() / 1000);
+  return items
+    .map((f) => {
+      const day = dayKey(f.added);
+      const head =
+        byDay() && day !== last
+          ? `<div class="ph-day" data-key="day:${day}">${esc(dayTitle(day, today, true))}</div>`
+          : "";
+      last = day;
+      return head + fileTile(f);
+    })
+    .join("");
 }
 
 function moreHtml(): string {
@@ -394,7 +471,7 @@ function renderFiles(): void {
   html(
     body,
     shownFiles.length
-      ? `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8" id="fo-grid" data-gallery>${shownFiles.map(fileTile).join("")}</div>
+      ? `<div class="ph-grid" id="fo-grid" data-gallery>${tilesHtml(shownFiles)}</div>
        <div class="mt-4 flex min-h-10 justify-center" id="fo-sentinel">${moreHtml()}</div>`
       : `<div class="empty">${icon("library")}${fStatus === "all" && fKind === "all" ? "No photos or videos here" : "Nothing matches"}</div>`,
   );
@@ -404,7 +481,7 @@ function renderFiles(): void {
 function appendFiles(more: FolderFiles["items"]): void {
   const grid = document.getElementById("fo-grid");
   if (!grid) return renderFiles();
-  grid.insertAdjacentHTML("beforeend", more.map(fileTile).join(""));
+  grid.insertAdjacentHTML("beforeend", tilesHtml(more, shownFiles[shownFiles.length - more.length - 1]));
   const body = document.getElementById("fo-files");
   if (body) touched(body);
   const end = document.getElementById("fo-sentinel");
@@ -452,45 +529,32 @@ function renderChart(r: FolderReport): void {
       [],
       long ? { weekday: "short", day: "numeric", month: "short" } : { day: "numeric", month: "short" },
     );
-  const empty = !rows.some((d) => d.photos + d.videos);
+  const weekly = days > 90; // a bar per week: not a single day to pick
+  const picked = fDay || r.today;
   html(
     $("#fo-chart"),
-    empty
-      ? `<div class="empty">${icon("chart")}Nothing new in ${rangeText()}</div>`
-      : `<div class="cols flex h-20 items-end gap-[3px] sm:h-28">${rows
-          .map((d) => {
-            const head = days > 90 ? `Week of ${nice(d.day)}` : nice(d.day, true);
-            const tip = `${head}\nPhotos: ${num(d.photos)}\nVideos: ${num(d.videos)}\nIn Google: ${num(d.backed_up)}\nWaiting: ${num(d.waiting)}\nFailed: ${num(d.failed)}`;
-            return `<div class="col flex h-full flex-1 flex-col justify-end gap-[2px]" data-tip="${esc(tip)}">
-              ${d.videos ? `<div class="col-bar rounded-t-[4px] bg-s2" style="height:${(d.videos / max) * 100}%"></div>` : ""}
-              ${d.photos ? `<div class="col-bar ${d.videos ? "" : "rounded-t-[4px]"} bg-s1" style="height:${(d.photos / max) * 100}%"></div>` : ""}
-              ${d.photos || d.videos ? "" : `<div class="h-[2px] rounded bg-panel-2"></div>`}</div>`;
-          })
-          .join("")}</div>
-        <div class="mt-1.5 flex gap-[3px] text-[10px] text-ink-3">${rows
-          .map(
-            (d, i) =>
-              `<div class="flex-1 text-center whitespace-nowrap">${(rows.length - 1 - i) % every === 0 ? esc(nice(d.day)) : ""}</div>`,
-          )
-          .join("")}</div>`,
+    `<div class="cols flex h-24 items-end gap-[3px] sm:h-32 ${fDay ? "has-pick" : ""}">${rows
+      .map((d) => {
+        const head = weekly ? `Week of ${nice(d.day)}` : nice(d.day, true);
+        const tip = `${head}\nPhotos: ${num(d.photos)}\nVideos: ${num(d.videos)}\nIn Google: ${num(d.backed_up)}\nWaiting: ${num(d.waiting)}${d.failed ? `\nFailed: ${num(d.failed)}` : ""}${weekly ? "" : "\nTap to see this day"}`;
+        const on = !weekly && d.day === picked;
+        const bars = `${d.videos ? `<div class="col-bar rounded-t-[4px] bg-s2" style="height:${(d.videos / max) * 100}%"></div>` : ""}
+          ${d.photos ? `<div class="col-bar ${d.videos ? "" : "rounded-t-[4px]"} bg-s1" style="height:${(d.photos / max) * 100}%"></div>` : ""}
+          ${d.photos || d.videos ? "" : `<div class="h-[2px] rounded bg-panel-2"></div>`}`;
+        return weekly
+          ? `<div class="col flex h-full flex-1 flex-col justify-end gap-[2px]" data-tip="${esc(tip)}">${bars}</div>`
+          : `<button type="button" class="col flex h-full flex-1 flex-col justify-end gap-[2px]" data-day="${d.day}" aria-pressed="${on}" aria-label="${esc(`${nice(d.day, true)}: ${num(d.photos)} photos, ${num(d.videos)} videos`)}" data-tip="${esc(tip)}">${bars}</button>`;
+      })
+      .join("")}</div>
+    <div class="mt-1.5 flex gap-[3px] text-[10px] text-ink-3">${rows
+      .map(
+        (d, i) =>
+          `<div class="flex-1 text-center whitespace-nowrap ${!weekly && d.day === picked ? "font-semibold text-ink" : ""}">${(rows.length - 1 - i) % every === 0 ? esc(nice(d.day)) : ""}</div>`,
+      )
+      .join("")}</div>
+    <div class="mt-2 flex items-center gap-3 text-xs text-ink-3"><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s1"></i>Photos</span><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s2"></i>Videos</span><span class="ml-auto">${weekly ? "One bar per week" : "Tap a day to see it"}</span></div>`,
   );
-  const recent = r.daily.slice(-7).reverse();
-  html(
-    $("#fo-daily"),
-    `<div class="flex flex-wrap items-center justify-between gap-2"><div><div class="text-sm font-medium">Daily arrivals</div><p class="text-xs text-ink-3">From file times on this server.</p></div>
-      <label class="text-xs text-ink-3">View a day <input class="input ml-1 w-auto" type="date" id="fo-day" value="${esc(fDay)}" min="${r.daily[0]?.day ?? ""}" max="${r.today}"></label></div>
-     <div class="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">${recent
-       .map(
-         (d) =>
-           `<button class="rounded-xl border p-3 text-left ${fDay === d.day ? "border-accent bg-accent/10" : "border-line bg-panel-2"}" data-day="${d.day}" aria-pressed="${fDay === d.day}">
-         <span class="block text-sm font-medium">${esc(nice(d.day, true))}</span>
-         <span class="mt-1 block text-xs text-ink-2">${num(d.photos)} photos · ${num(d.videos)} videos</span>
-         <span class="mt-1 block text-xs text-ink-3">${num(d.waiting)} waiting · ${num(d.backed_up)} in Google${d.failed ? ` · ${num(d.failed)} failed` : ""}</span>
-       </button>`,
-       )
-       .join("")}</div>
-     ${fDay ? `<button class="btn sm mt-3" id="fo-clear-day">${icon("x")}Show all days</button>` : ""}`,
-  );
+  renderDay(r);
 }
 
 function render(): void {
@@ -508,8 +572,8 @@ function render(): void {
     return;
   }
   renderSummary(r);
-  renderList(r);
   renderChart(r);
+  renderList(r);
 }
 
 function skeleton(): void {
@@ -518,22 +582,26 @@ function skeleton(): void {
     '<div class="skeleton h-5 w-40"></div><div class="skeleton mt-3 h-2"></div><div class="skeleton mt-4 h-12"></div>',
   );
   html($("#fo-list"), '<div class="skeleton m-4 h-12"></div>'.repeat(3));
+  html($("#fo-day"), '<div class="skeleton h-5 w-32"></div><div class="skeleton mt-3 h-14"></div>');
   html($("#fo-chart"), '<div class="skeleton h-28"></div>');
   html($("#fo-files-tools"), "");
   html(
     $("#fo-files"),
-    `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">${'<div class="card overflow-hidden"><div class="shimmer media-tile aspect-square"></div><div class="space-y-1.5 p-2.5"><div class="skeleton h-3.5 w-3/4"></div><div class="skeleton h-3 w-1/2"></div></div></div>'.repeat(6)}</div>`,
+    `<div class="ph-grid">${'<div class="shimmer aspect-square rounded-lg"></div>'.repeat(12)}</div>`,
   );
 }
 
 function filesSub(): string {
-  if (fDay) return `Added ${fDay} · including folders inside`;
+  if (fDay)
+    return `Added ${dayTitle(fDay, report?.today ?? "", true)}${path ? " · including the folders inside" : ""}`;
   if (path) return "Including the folders inside";
   if (group === "devices") return "Newest first, from every device";
   return "Newest first, from every backed-up folder";
 }
 
 function open(): void {
+  opened = true; // a folder seen before draws at once, then its fresh numbers
+  filesOpened = true;
   files = null;
   shownFiles = [];
   fStatus = "all";
@@ -552,19 +620,18 @@ function open(): void {
 const folders: View = {
   subtitle: "Files per device and folder",
   mount(el, args) {
+    opened = true; // the first load draws the last answer at once (peek), then the fresh one
+    filesOpened = true;
     parse(args);
     el.innerHTML = `
     <section class="card mb-4 flex flex-wrap items-center gap-2 p-3">
       <div class="seg" id="fo-group"><button data-g="devices">${icon("devices")}Devices</button><button data-g="folders">${icon("folder")}Folders</button></div>
       <div class="order-first w-full min-w-0 px-1 pb-1 sm:order-none sm:w-auto sm:flex-1 sm:pb-0" id="fo-crumbs"></div>
     </section>
-    <section class="card mb-4">
+    <section class="card mb-4 overflow-hidden">
       <div class="p-4" id="fo-summary"></div>
-      <div class="border-t border-line">
-        ${cardHead("Added per day", "chart", `<span class="hidden items-center gap-3 sm:flex"><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s1"></i>Photos</span><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s2"></i>Videos</span></span><div class="seg ml-2" id="fo-range">${RANGES.map(([d, l]) => `<button data-d="${d}" class="max-sm:px-2.5">${l}</button>`).join("")}</div>`)}
-        <div class="card-b" id="fo-chart"></div>
-        <div class="border-t border-line p-4" id="fo-daily"></div>
-      </div>
+      <div class="border-t border-line p-4" id="fo-day"></div>
+      <div class="px-4 pb-4" id="fo-chart"></div>
     </section>
     <section class="card mb-4 hidden overflow-hidden" id="fo-prio-card"></section>
     <section class="card mb-4 overflow-hidden" id="fo-list-card"><div id="fo-list-head"></div><div class="divide-y divide-line" id="fo-list"></div></section>
@@ -577,28 +644,22 @@ const folders: View = {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
       if (b) location.hash = b.dataset.g === "devices" ? "#/folders" : "#/folders/f";
     });
-    el.addEventListener("change", (e) => {
-      const target = e.target as HTMLInputElement;
-      if (target.id !== "fo-day") return;
-      fDay = target.value;
-      html($("#fo-files-sub"), filesSub());
-      if (report) renderChart(report);
-      void loadFiles(true);
-    });
-    $("#fo-range").addEventListener("click", (e) => {
-      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
-      if (!b) return;
-      days = Number(b.dataset.d);
-      void load();
-    });
+
     el.addEventListener("click", (e) => {
+      const range = (e.target as HTMLElement).closest<HTMLButtonElement>("#fo-range button");
+      if (range) {
+        days = Number(range.dataset.d);
+        void load();
+        return;
+      }
+      // A bar picks its day (the card above shows it, the photos below are that day's); the same
+      // bar again, or Back to today, goes back.
       const dayButton = (e.target as HTMLElement).closest<HTMLElement>("[data-day], #fo-clear-day");
       if (dayButton) {
         fDay = dayButton.dataset.day === fDay ? "" : (dayButton.dataset.day ?? "");
         html($("#fo-files-sub"), filesSub());
         if (report) renderChart(report);
         void loadFiles(true);
-        document.getElementById("fo-files-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
       const b = (e.target as HTMLElement).closest<HTMLElement>(

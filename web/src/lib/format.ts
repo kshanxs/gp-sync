@@ -110,6 +110,11 @@ export function date(unix: number, withYear = false): string {
   });
 }
 
+/** The calendar day of a time in the chosen zone, as "2026-11-10" (the server's day keys). */
+export function dayKey(unix: number): string {
+  return new Date(unix * 1000).toLocaleDateString("sv", { timeZone: zone });
+}
+
 export function dayLabel(unix: number, now = new Date()): string {
   const d = new Date(unix * 1000);
   // The calendar day in the chosen zone, as a number of days.

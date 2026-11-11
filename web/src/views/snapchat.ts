@@ -1,6 +1,14 @@
 import { workPanel } from "../lib/work-panel";
 import { openUploadOptions, paceButton } from "../lib/pace-sheet";
-import { get, post, type SnapAction, type SnapCopy, type SnapItem, type SnapchatReport } from "../lib/api";
+import {
+  get,
+  post,
+  type SnapAction,
+  type SnapCopy,
+  type SnapItem,
+  type SnapchatReport,
+  peek,
+} from "../lib/api";
 import { accountChips } from "../lib/account-menu";
 import { confirmDialog } from "../lib/dialog";
 import { $, animateChange, esc, html, toast } from "../lib/dom";
@@ -18,6 +26,7 @@ import type { View } from "./view";
 // has with a wrong date are replaced, the rest are uploaded. Nothing changes until Start.
 
 let report: SnapchatReport | null = null;
+let opened = false;
 let show: SnapAction = "replace";
 let limit = 60;
 let listHtml = ""; // the list as last drawn: redrawn only when it changes (images keep loading)
@@ -27,7 +36,14 @@ let request = 0;
 
 async function load(): Promise<void> {
   const mine = ++request;
-  const r = await get<SnapchatReport>(`snapchat?action=${show}&limit=${limit}`).catch(() => null);
+  const url = `snapchat?action=${show}&limit=${limit}`;
+  const seen = opened ? peek<SnapchatReport>(url) : undefined;
+  opened = false;
+  if (seen) {
+    report = seen;
+    render();
+  }
+  const r = await get<SnapchatReport>(url).catch(() => null);
   if (mine !== request) return;
   report = r;
   render();
@@ -536,6 +552,7 @@ async function onChange(e: Event): Promise<void> {
 const snapchat: View = {
   subtitle: "Snapchat Memories with their real date, without duplicates",
   mount(el) {
+    opened = true; // the first load draws the last answer at once (peek), then the fresh one
     show = "replace";
     limit = 60;
     listHtml = "";

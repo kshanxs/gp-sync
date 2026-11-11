@@ -7,6 +7,7 @@ import {
   type CopyCandidates,
   type CopyItem,
   type CopyReport,
+  peek,
 } from "../lib/api";
 import { $, esc, html, toast } from "../lib/dom";
 import { ago, bytes, date, duration, num, pct, speed, until } from "../lib/format";
@@ -22,6 +23,7 @@ import type { View } from "./view";
 let src = "";
 let dst = "";
 let report: CopyReport | null = null;
+let opened = false;
 let request = 0;
 let timer = 0;
 let ticks = 0;
@@ -68,9 +70,14 @@ async function loadCandidates(): Promise<void> {
 
 async function load(): Promise<void> {
   const mine = ++request;
-  const r = await get<CopyReport>(`copy?src=${encodeURIComponent(src)}&dst=${encodeURIComponent(dst)}`).catch(
-    () => null,
-  );
+  const url = `copy?src=${encodeURIComponent(src)}&dst=${encodeURIComponent(dst)}`;
+  const seen = opened ? peek<CopyReport>(url) : undefined;
+  opened = false;
+  if (seen) {
+    report = seen;
+    render();
+  }
+  const r = await get<CopyReport>(url).catch(() => null);
   if (mine !== request) return;
   report = r;
   if (r) {
@@ -549,6 +556,7 @@ function onClick(e: Event): void {
 const copyView: View = {
   subtitle: "Items one account has and the other lacks, in original quality",
   mount(el) {
+    opened = true; // the first load draws the last answer at once (peek), then the fresh one
     kinds = new Set(["photo", "video"]);
     fromYear = "";
     toYear = "";

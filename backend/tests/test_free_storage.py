@@ -831,3 +831,30 @@ def test_a_download_cut_off_by_the_network_is_tried_again():
     import requests
 
     assert "No connection" in sync.outage_kind(requests.exceptions.ChunkedEncodingError("IncompleteRead"))
+
+
+def test_one_trip_to_google_makes_both_thumbnail_sizes(library, monkeypatch):
+    """Google is asked once per item, for the sharp size; the usual size is made from it. Warming
+    fetches the first screen ahead of the browser, and skips what is here already."""
+    import io
+
+    from gpmc.api import Api
+    from PIL import Image
+
+    calls = []
+
+    def fake(self, key, width=None):
+        calls.append((key, width))
+        buf = io.BytesIO()
+        Image.new("RGB", (1280, 960), "green").save(buf, "JPEG")
+        return buf.getvalue()
+
+    monkeypatch.setattr(Api, "get_thumbnail", fake)
+    monkeypatch.setattr(sync, "THUMBS", sync.RECLAIM_DIR.parent / "thumbs")
+    name = f"{ACC}\nBIG"
+    small = sync.google_thumb(name)
+    big = sync.google_thumb(name, sync.media.THUMB_BIG)
+    assert calls == [("BIG", 640)]
+    assert max(Image.open(small).size) == 320 and max(Image.open(big).size) == 640
+    assert sync.warm_google_thumbs(ACC, ["BIG", "SMALL"], wait=True) == 1  # BIG is here already
+    assert calls == [("BIG", 640), ("SMALL", 640)]

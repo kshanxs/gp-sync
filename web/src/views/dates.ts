@@ -1,4 +1,4 @@
-import { get, post, type DateItem, type DatesReport } from "../lib/api";
+import { get, post, type DateItem, type DatesReport, peek } from "../lib/api";
 import {
   dateFixable as fixable,
   dateWaiting as waiting,
@@ -27,6 +27,7 @@ import type { View } from "./view";
 
 let account = "";
 let report: DatesReport | null = null;
+let opened = false;
 let show: DateFilter = "wrong";
 let shown = 60;
 let editing = "";
@@ -41,7 +42,14 @@ function selectedItems(): DateItem[] {
 
 async function load(): Promise<void> {
   const mine = ++request;
-  const r = await get<DatesReport>(`dates?account=${encodeURIComponent(account)}`).catch(() => null);
+  const url = `dates?account=${encodeURIComponent(account)}`;
+  const seen = opened ? peek<DatesReport>(url) : undefined;
+  opened = false;
+  if (seen) {
+    report = seen;
+    render();
+  }
+  const r = await get<DatesReport>(url).catch(() => null);
   if (mine !== request) return;
   report = r;
   if (r && !account) account = r.account;
@@ -433,6 +441,7 @@ function linkedAccount(args: string[] | undefined): string {
 const dates: View = {
   subtitle: "Photos and videos Google gave the wrong day",
   mount(el, args) {
+    opened = true; // the first load draws the last answer at once (peek), then the fresh one
     account = linkedAccount(args);
     picked.clear();
     show = "wrong";

@@ -218,6 +218,8 @@ def db():
             PRIMARY KEY (src, dst, media_key))"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS copyjobs_state ON copyjobs(state, taken)")
+    # Free storage asks "how many of this account are queued / done / failed" many times a second.
+    conn.execute("CREATE INDEX IF NOT EXISTS reclaim_state ON reclaim(account, state)")
     # Keep in sync: everything `src` has is copied to `dst` every so often (both ways: two rows).
     conn.execute(
         """CREATE TABLE IF NOT EXISTS mirrors (
@@ -1182,7 +1184,46 @@ def process_activity(days=371, tz_offset_min=0):
         "today": time.strftime("%Y-%m-%d", time.gmtime(today * 86400)),
         "tz_offset_min": int(tz_offset_min),
         "processes": out,
+        "uploaded": uploads_by_kind(since, offset),
     }
+
+
+UPLOAD_KINDS = ("backup", "freed", "copied", "snapchat")
+
+
+def uploads_by_kind(since, offset=0):
+    """Every file sent to Google, per day and by what sent it: the backup of your folders, Free
+    storage (each item goes up again the free way), copies to another account, and Snapchat
+    memories. {kind: {"days": [{day, count, bytes}], "count", "bytes"}}."""
+    out = {k: {"days": {}, "count": 0, "bytes": 0} for k in UPLOAD_KINDS}
+
+    def add(kind, when, size):
+        if not when:
+            return
+        day = time.strftime("%Y-%m-%d", time.gmtime(when + offset))
+        d = out[kind]["days"].setdefault(day, {"day": day, "count": 0, "bytes": 0})
+        d["count"] += 1
+        d["bytes"] += size or 0
+        out[kind]["count"] += 1
+        out[kind]["bytes"] += size or 0
+
+    # The backup and Snapchat both record each upload; a memory's file says which one sent it.
+    snaps = {rel(p) for (p,) in q("SELECT path FROM snap_items")}
+    for when, name, size in sq(
+        "SELECT time, name, bytes FROM uploads WHERE time >= ? AND result = 'uploaded'", (since,)
+    ):
+        add("snapchat" if name in snaps else "backup", when, size)
+    for when, size in q("SELECT uploaded_at, size FROM reclaim WHERE uploaded_at >= ?", (since,)):
+        add("freed", when, size)
+    for when, size in q(
+        """SELECT COALESCE(finished, updated), size FROM copyjobs WHERE state IN ('copied', 'done')
+           AND COALESCE(finished, updated) >= ?""",
+        (since,),
+    ):
+        add("copied", when, size)
+    for kind in out.values():
+        kind["days"] = sorted(kind["days"].values(), key=lambda d: d["day"])
+    return out
 
 
 def totals():
@@ -2503,19 +2544,71 @@ def thumbnail(name, size=media.THUMB_SIZE):
     return None
 
 
+def _gthumb_paths(name):
+    """Where an item's Google thumbnail is kept: the usual size and the sharp one."""
+    base = THUMBS / "google" / hashlib.sha1(name.encode()).hexdigest()
+    return Path(f"{base}.webp"), Path(f"{base}-{media.THUMB_BIG}.webp")
+
+
+_gthumb_locks = collections.defaultdict(threading.Lock)  # one fetch per item at a time
+
+
 def google_thumb(name, size=media.THUMB_SIZE):
-    """Thumbnail of an item that is only in Google (for the storage page)."""
+    """Thumbnail of an item that is only in Google (for the storage page). Google is asked once, for
+    the sharp size, and the usual size is made from it: each trip takes a second or two."""
     account, _, key = name.partition("\n")
     auth = dict(accounts()).get(account)
     if not auth or not re.fullmatch(r"[\w-]+", key):
         return None
-    big = size > media.THUMB_SIZE
-    target = THUMBS / "google" / f"{hashlib.sha1(name.encode()).hexdigest()}{f'-{size}' if big else ''}.webp"
+    small, big = _gthumb_paths(name)
+    target = big if size > media.THUMB_SIZE else small
     if target.exists():
         return target
-    from gpmc.api import Api
+    if len(_gthumb_locks) > 5000:  # forget the locks of items done long ago
+        _gthumb_locks.clear()
+    with _gthumb_locks[name]:
+        if target.exists():  # another request just made it
+            return target
+        if not big.exists():
+            from gpmc.api import Api
 
-    return media.save_bytes(Api(auth).get_thumbnail(key, width=size), target, size)
+            data = Api(auth).get_thumbnail(key, width=media.THUMB_BIG)
+            media.save_bytes(data, big, media.THUMB_BIG)
+        if not small.exists():
+            media.make_thumbnail(big, small)
+    return target
+
+
+# The first screen of Free storage asks for dozens of thumbnails at once, and a browser fetches only
+# about six at a time from one server. They are fetched here ahead of it, several at once, while the
+# page draws, so they are ready (or nearly) when it asks.
+WARM_THUMBS = os.environ.get("WARM_THUMBS", "1") != "0"
+_warm_pool = concurrent.futures.ThreadPoolExecutor(6, thread_name_prefix="thumbs")
+_warming = set()
+
+
+def warm_google_thumbs(account, keys, wait=False):
+    """Fetch the thumbnails of these items in the background, the ones not here yet."""
+    futures = []
+    for key in keys:
+        name = f"{account}\n{key}"
+        if name in _warming or all(p.exists() for p in _gthumb_paths(name)):
+            continue
+        _warming.add(name)
+
+        def run(n=name):
+            try:
+                google_thumb(n, media.THUMB_BIG)
+            except Exception as e:
+                print(f"Thumbnail for {n.partition(chr(10))[2]}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            finally:
+                _warming.discard(n)
+                media.release_memory()
+
+        futures.append(_warm_pool.submit(run))
+    if wait:
+        concurrent.futures.wait(futures)
+    return len(futures)
 
 
 def _small_thumb_path(account, key):
@@ -3023,15 +3116,7 @@ def storage_report(account, limit=500, kind="all"):
         "summary": storage_summary(),
         "free_space": shutil.disk_usage(DATA).free if DATA.exists() else 0,
     }
-    rows = _library_rows(
-        account,
-        # The same photo appears once as the library item and again for each album it is in, all
-        # with the same dedup_key and the same quota_charged_bytes. Google charges it once, so each
-        # item is counted once here too (the canonical copy, which has no album, comes first).
-        """SELECT media_key, dedup_key, file_name, type, size_bytes, quota_charged_bytes, utc_timestamp
-           FROM remote_media WHERE origin = 'self' AND COALESCE(trash_timestamp, 0) = 0
-           AND COALESCE(is_locked, 0) = 0 ORDER BY is_canonical DESC, content_version""",
-    )
+    rows = _library_items(account)
     jobs = {
         r[0]: r
         for r in q(
@@ -3043,11 +3128,7 @@ def storage_report(account, limit=500, kind="all"):
     ours = set(_own_uploads(account))
     items, counted, counted_bytes, total, ours_counted, ours_seen = [], 0, 0, 0, 0, 0
     kinds = {k: {"count": 0, "bytes": 0} for k in RECLAIM_TYPES}
-    seen = set()  # dedup_keys already counted: each photo once, not once per album
     for key, dedup, name, kind, size, quota, taken in rows or []:
-        if dedup in seen:
-            continue
-        seen.add(dedup)
         total += 1
         if dedup in ours:
             ours_seen += 1
@@ -3060,9 +3141,14 @@ def storage_report(account, limit=500, kind="all"):
             k["bytes"] += quota
             items.append((key, dedup, name, RECLAIM_KINDS.get(kind, "photo"), size, quota, _seconds(taken)))
     listed = {i[0] for i in items}
-    for key, dedup, name, kind, size, quota, taken, *_ in jobs.values():
-        if key not in listed:  # deleted in Google already, or done
-            items.append((key, dedup, name, kind, size, quota, taken))
+    # Items no longer in the library list (freed, or deleted in Google): ones still under way or
+    # failed always; freed ones only when the list has room for them (they come last anyway).
+    gone = [j for key, j in jobs.items() if key not in listed]
+    finished = ("done", "counted")
+    for j in [j for j in gone if j[7] not in finished] + (
+        [j for j in gone if j[7] in finished] if len(items) < limit else []
+    ):
+        items.append(j[:7])
     rank = {"queued": 0, "downloaded": 0, "in_google": 0, "checking": 0, "failed": 1, "counts": 1,
             "done": 3, "counted": 3}  # fmt: skip
     # Under way first (so they are always on screen), then what went wrong, then the rest, biggest first.
@@ -3740,6 +3826,49 @@ def reclaim_summary():
 
 
 _counted_cache = {}  # account -> (library file times, bytes counted against storage)
+_items_cache = {}  # account -> (library file times, its items)
+
+
+def _library_stamp(account):
+    """What changes whenever the account's library list does (its files, and each library read)."""
+    path = _library_db(account)
+    try:
+        files = tuple(
+            (st.st_mtime_ns, st.st_size) for f in (path, Path(f"{path}-wal")) if f.exists() for st in [os.stat(f)]
+        )
+    except OSError:
+        files = ()
+    return (files, meta_get(f"library_refreshed:{account}")) if files else None
+
+
+def _library_items(account):
+    """The account's own items (not in the Trash or Locked folder), each once: (media_key, dedup_key,
+    name, type, size, quota, taken). None when the library hasn't been read. Read again only when
+    the library list changes: the Free storage page asks every few seconds."""
+    stamp = _library_stamp(account)
+    if stamp is None:
+        return None
+    cached = _items_cache.get(account)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    rows = _library_rows(
+        account,
+        # The same photo appears once as the library item and again for each album it is in, all
+        # with the same dedup_key and the same quota_charged_bytes. Google charges it once, so each
+        # item is counted once here too (the canonical copy, which has no album, comes first).
+        """SELECT media_key, dedup_key, file_name, type, size_bytes, quota_charged_bytes, utc_timestamp
+           FROM remote_media WHERE origin = 'self' AND COALESCE(trash_timestamp, 0) = 0
+           AND COALESCE(is_locked, 0) = 0 ORDER BY is_canonical DESC, content_version""",
+    )
+    if rows is None:
+        return None
+    seen, items = set(), []
+    for r in rows:
+        if r[1] not in seen:
+            seen.add(r[1])
+            items.append(r)
+    _items_cache[account] = (stamp, items)
+    return items
 
 
 def counted_bytes(account):
@@ -4323,13 +4452,30 @@ def same_content(path, size, sha1hex, fingerprint=True):
     return out
 
 
-def best_date(path, size, mtime, sha1hex, fingerprint=True):
+def best_date_facts():
+    """What best_date looks up for every file, read once for a whole list (Fix dates lists hundreds:
+    asking per file took seconds)."""
+    by_path, by_sha = {}, {}
+    for path, sha1, manual in sq("SELECT path, sha1, manual FROM media_dates WHERE manual IS NOT NULL"):
+        by_path[path] = min(manual, by_path.get(path, manual))
+        if sha1:
+            by_sha[sha1] = min(manual, by_sha.get(sha1, manual))
+    est = {p: e for p, e in sq(f"SELECT path, est_date FROM provenance WHERE {_EFFECTIVE}='snapchat'") if e}
+    return {"manual_path": by_path, "manual_sha": by_sha, "est": est, "settings": get_settings()}
+
+
+def best_date(path, size, mtime, sha1hex, fingerprint=True, facts=None):
     """(date to give Google, where it comes from) for a file with no date of its own: a date the
     user picked ("manual"), the moment of the Snapchat memory it is a copy of ("snapchat"), a date
     in the file name ("filename", e.g. WhatsApp's IMG-20240504-WA0001),
     the estimated save date of a Snapchat item ("estimated"), the earliest identical copy here
     ("copy"), or the file's own time ("file")."""
-    if sha1hex:
+    if facts is not None:  # read once for a whole list (best_date_facts)
+        known = [
+            m for m in (facts["manual_path"].get(path), facts["manual_sha"].get(sha1hex) if sha1hex else None) if m
+        ]
+        picked = [(min(known),)] if known else None
+    elif sha1hex:
         picked = sq(
             "SELECT MIN(manual) FROM media_dates WHERE (path=? OR sha1=?) AND manual IS NOT NULL", (path, sha1hex)
         )
@@ -4339,12 +4485,17 @@ def best_date(path, size, mtime, sha1hex, fingerprint=True):
         return float(picked[0][0]), "manual"
     if (snap := snapchat_time(path, sha1hex)) is not None:
         return snap, "snapchat"
-    st = get_settings()
+    st = facts["settings"] if facts is not None else get_settings()
     named = provenance.name_date(path, st["tz_offset_min"])
     if named is not None and named <= time.time() + 86400:
         return named, "filename"
-    if st["sources"]["estimate_dates"] and (est := estimated_date(path)) is not None:
-        return est, "estimated"
+    est = (
+        (facts["est"].get(path) if facts is not None else estimated_date(path))
+        if st["sources"]["estimate_dates"]
+        else None
+    )
+    if est is not None:
+        return float(est), "estimated"
     if sha1hex:
         times = [m for m in same_content(path, size, sha1hex, fingerprint).values() if m]
         if times and min(times) < mtime - 1:
@@ -4493,6 +4644,7 @@ def dates_report(account):
     rows.sort(key=lambda r: (not facts[r[0]][3], r[3] != "uploaded", r[0]))
     seen = set()
     items = []
+    known = best_date_facts()
     for path, size, mtime, status_, key, _acc, updated, sha1 in rows:
         sha1 = sha1 or facts[path][0] or ""
         if sha1 and sha1 in seen:
@@ -4503,7 +4655,7 @@ def dates_report(account):
         in_google, google_source = _known_google_date(listed, refreshed, updated, status_, sent)
         if listed and (not key or refreshed > (updated or 0)):
             key = listed[4] or key
-        best, source = best_date(path, size, mtime, sha1, fingerprint=False)
+        best, source = best_date(path, size, mtime, sha1, fingerprint=False, facts=known)
         if source not in ("manual", "filename") and in_google is not None and in_google < best - DATE_SLACK:
             # A file is copied here after it was taken, never before: an earlier date in Google
             # (from the phone's own backup, say) is closer to the truth than our file times.
@@ -6916,9 +7068,10 @@ class Handler(BaseHTTPRequestHandler):
             viewers["last_request"] = time.time()
             stream_slots.release()
 
-    def cached(self, key, ttl, make):
-        """Answer with JSON from the cache (made by make() when missing or stale)."""
-        self.send(200, cache.remember(key, ttl, lambda: json.dumps(make()).encode()))
+    def cached(self, key, ttl, make, fresh=5):
+        """Answer with JSON from the cache: reused while nothing changed (up to `ttl` seconds), or
+        for `fresh` seconds after background changes, then made again behind the answer (cache.swr)."""
+        self.send(200, cache.swr(key, lambda: json.dumps(make()).encode(), ttl, fresh))
 
     def image(self, kind, name, make):
         """A thumbnail or preview: from the cache, else made (and cached) by make(name)."""
@@ -7054,12 +7207,22 @@ class Handler(BaseHTTPRequestHandler):
             if account not in dict(accounts()):
                 self.json({"error": "unknown account"}, 400)
             else:
-                self.json(freed_report(account))
+                self.cached(f"freed:{account}", 120, lambda: freed_report(account), fresh=30)
         elif path == "/api/storage":
             account = arg("account", "") or busy_account("storage")
             kind = arg("kind", "all")
             kind = kind if kind in ("all", "photo", "video") else "all"
-            self.json(storage_report(account, kind=kind) if account else {"account": "", "listed": False, "items": []})
+            if not account:
+                self.json({"account": "", "listed": False, "items": []})
+                return
+
+            def make():
+                report = storage_report(account, kind=kind)
+                if WARM_THUMBS:  # the first screen's pictures, before the page asks
+                    warm_google_thumbs(account, [i["key"] for i in report["items"][:60]])
+                return report
+
+            self.cached(f"storage:{account}:{kind}", 30, make, fresh=2)
         elif path == "/api/copy":
             accs = [a for a, _ in accounts()]
             busy = q("SELECT src, dst FROM copyjobs WHERE state='queued' GROUP BY src, dst ORDER BY COUNT(*) DESC")
@@ -7067,7 +7230,7 @@ class Handler(BaseHTTPRequestHandler):
             src = arg("src", "") or (busy[0] if busy and not arg("dst", "") else accs[0] if accs else "")
             dst = arg("dst", "") or (busy[1] if busy and busy[0] == src else next((a for a in accs if a != src), ""))
             if src in accs and dst in accs and src != dst:
-                self.json(copy_report(src, dst))
+                self.cached(f"copy:{src}:{dst}", 30, lambda: copy_report(src, dst), fresh=3)
             else:
                 self.json({"src": src, "dst": dst, "accounts": accs, "ready": False})
         elif path == "/api/copy/items":
@@ -7120,19 +7283,20 @@ class Handler(BaseHTTPRequestHandler):
             )
             self.cached("files:" + json.dumps(args), 60, lambda: list_files(*args))
         elif path == "/api/dates":
-            self.json(dates_report(arg("account", "")))
+            account = arg("account", "")
+            self.cached(f"dates:{account}", 120, lambda: dates_report(account), fresh=10)
         elif path == "/api/sources":
-            self.json(sources_report(arg("source", ""), arg("limit", 600, 1, 5000)))
+            source, limit = arg("source", ""), arg("limit", 600, 1, 5000)
+            self.cached(f"sources:{source}:{limit}", 120, lambda: sources_report(source, limit), fresh=10)
         elif path == "/api/snapchat":
             action = arg("action", "")
-            self.json(
-                snapchat_report(
-                    arg("account", ""),
-                    action if action in SNAP_ACTIONS else "",
-                    arg("limit", 120, 1, 1000),
-                    arg("offset", 0, 0, 10**9),
-                )
+            snap = (
+                arg("account", ""),
+                action if action in SNAP_ACTIONS else "",
+                arg("limit", 120, 1, 1000),
+                arg("offset", 0, 0, 10**9),
             )
+            self.cached(f"snapchat:{json.dumps(snap)}", 30, lambda: snapchat_report(*snap), fresh=3)
         elif path == "/api/duplicates":
             self.cached("duplicates", 300, duplicates)
         elif path == "/api/activity":
@@ -7186,7 +7350,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send(404, "{}")
         elif path == "/api/downloads":
-            self.json(downloads_report(arg("account", "")))
+            account = arg("account", "")
+            self.cached(f"downloads:{account}", 120, lambda: downloads_report(account), fresh=10)
         elif path == "/api/downloads/file":
             target = download_path(arg("id", 0, 0, 2**62))
             if target:
@@ -7206,6 +7371,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send(404, "{}")
 
     def do_POST(self):
+        # Whatever the user changes shows at once on the next look: cached answers aren't reused
+        # (before, and again after, for a page that asked while this ran).
+        cache.user_changed()
+        try:
+            self.post()
+        finally:
+            cache.user_changed()
+
+    def post(self):
         path0 = self.path.partition("?")[0]
         if path0 in ("/login", "/logout"):
             n = int(self.headers.get("Content-Length") or 0)

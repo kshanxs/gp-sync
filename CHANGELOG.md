@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.7.1
+
+- **Uploads card counts every upload:** Free storage, Copies and Snapchat uploads now count next to
+  the backup's, so the card no longer says 0 while other work uploads. A coloured chip shows each
+  kind that sent files today, and the badge says Running whenever any upload work is going on.
+- **Tap Uploads for details:** a sheet, like Moving now's, lists each kind's uploads today, their
+  size, a 14-day trend, how many are uploading right now and a link to its page.
+- **Pages open at once:** every page shows its last answer straight away and refreshes it in the
+  background; anything you change clears it. Free storage's report and Fix dates are many times
+  faster, and the first thumbnails are fetched from Google before you scroll to them.
+- **Folders, overhauled:** four summary numbers, a daily bar chart you can tap to show that day in
+  the main card (today by default), and a photo grid grouped by day.
+- Pull down to refresh is gone.
+
 ## 1.7.0
 
 - **New photo viewer (PhotoSwipe):** a photo grows out of its thumbnail and shrinks back into it.

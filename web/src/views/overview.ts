@@ -2,7 +2,7 @@
 // rest stay out of the way; the cards left share the row evenly. Upload history (today, streak,
 // where the photos are, the year) is on the Sync page.
 
-import { get, post, tz, type Disk, type Processes, type Status } from "../lib/api";
+import { get, post, tz, type Disk, type Processes, type Status, type UploadKind } from "../lib/api";
 import { host, setPageStatus, setPauseControl, setRefreshControl } from "../lib/store";
 import { sparkline } from "../lib/charts";
 import { $, $$, esc, html } from "../lib/dom";
@@ -14,6 +14,7 @@ import { workBox, workCount, type WorkItem } from "../lib/work-panel";
 import { badge, cardHead, eventMeta, openAttrs, spaceTone, thumb, tile, type Tone } from "../lib/ui";
 import { liveProcesses, PROCESS_HREF } from "../lib/live";
 import { PROCESS, PROCESS_KEYS } from "../lib/processes";
+import { openSheet, type Sheet } from "../lib/sheet";
 import type { View } from "./view";
 
 let chart: NetChart | null = null;
@@ -127,6 +128,111 @@ const PROC_COLS: Record<number, string> = {
   5: "sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5",
 };
 
+// ---- uploads: everything that sends files to Google, not only the backup
+
+const UPLOAD: Record<UploadKind, { label: string; icon: IconName; color: string; href: string }> = {
+  backup: { label: "Backup", icon: "folder", color: "var(--s1)", href: "#/sync" },
+  freed: { label: "Free storage", icon: "cloud", color: "var(--s2)", href: "#/storage" },
+  copied: { label: "Copies", icon: "users", color: "var(--s3)", href: "#/copy" },
+  snapchat: { label: "Snapchat", icon: "sparkles", color: "var(--s5)", href: "#/snapchat" },
+};
+const UPLOAD_KINDS = Object.keys(UPLOAD) as UploadKind[];
+
+/** Files uploading right now, by what sends them. */
+function uploadingNow(s: Status): Record<UploadKind, number> {
+  const n: Record<UploadKind, number> = { backup: 0, freed: 0, copied: 0, snapchat: 0 };
+  if (s.phase !== "paused") n.backup = (s.uploading ?? (s.current ? [s.current] : [])).length;
+  const of: Record<string, UploadKind> = { storage: "freed", copy: "copied", snapchat: "snapchat" };
+  for (const j of s.jobs ?? []) if (j.step === "uploading" && of[j.kind]) n[of[j.kind]!]++;
+  return n;
+}
+
+/** Work under way that sends files to Google (between uploads too: downloading, checking). */
+function uploadWorkRunning(s: Status): boolean {
+  return (
+    UPLOAD_KINDS.some((k) => uploadingNow(s)[k] > 0) ||
+    (s.jobs ?? []).some((j) => j.kind === "storage" || j.kind === "copy" || j.kind === "snapchat")
+  );
+}
+
+/** One kind's (or all kinds') counts for each of the last 14 days, oldest first. */
+function last14(kinds: UploadKind[]): number[] {
+  const today = procs?.today;
+  return Array.from({ length: 14 }, (_, i) => {
+    if (!today) return 0;
+    const d = new Date(`${today}T00:00:00`);
+    d.setDate(d.getDate() - 13 + i);
+    const key = d.toLocaleDateString("sv");
+    return kinds.reduce((a, k) => a + (procs?.uploaded?.[k]?.days.find((x) => x.day === key)?.count ?? 0), 0);
+  });
+}
+
+function uploadedToday(k: UploadKind): { count: number; bytes: number } {
+  const d = procs?.uploaded?.[k]?.days.find((x) => x.day === procs?.today);
+  return { count: d?.count ?? 0, bytes: d?.bytes ?? 0 };
+}
+
+let uploadsSheet: Sheet | null = null;
+
+/** The sheet the Uploads card opens: each kind's uploads today, its last 14 days and what is
+ * uploading now, with a link to its page. */
+function uploadsBody(s: Status): string {
+  const now = uploadingNow(s);
+  return UPLOAD_KINDS.map((k) => {
+    const u = UPLOAD[k];
+    const t = uploadedToday(k);
+    return `<a href="${u.href}" class="sheet-row items-center hover:bg-panel-2/50" data-sheet-close>
+      <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2" style="color:${u.color}">${icon(u.icon, "size-4")}</span>
+      <span class="min-w-0 flex-1"><span class="block text-sm font-medium">${esc(u.label)}</span>
+        <span class="block text-xs text-ink-3"><b class="text-ink-2 tabular-nums">${num(t.count)}</b> today${t.bytes ? ` · ${bytes(t.bytes)}` : ""}${now[k] ? ` · <span class="text-accent">${num(now[k])} uploading now</span>` : ""}</span></span>
+      <span class="h-8 w-20 shrink-0">${sparkline(last14([k]), u.color)}</span>
+      <span class="text-ink-3">${icon("chevron", "size-4")}</span></a>`;
+  }).join("");
+}
+
+function openUploads(): void {
+  const s = last;
+  if (!s) return;
+  const total = UPLOAD_KINDS.reduce((a, k) => a + uploadedToday(k).count, 0);
+  uploadsSheet = openSheet({
+    title: "Uploads",
+    icon: "upload",
+    sub: `${num(total)} sent to Google today, by what sent them`,
+    body: uploadsBody(s),
+    onClose: () => (uploadsSheet = null),
+  });
+}
+
+/** The Uploads card: every file sent to Google today, with a chip for each kind that sent some. */
+function uploadsCard(s: Status, el: HTMLElement, base: string): void {
+  const now = uploadingNow(s);
+  const busy = UPLOAD_KINDS.reduce((a, k) => a + now[k], 0);
+  const today = UPLOAD_KINDS.map((k) => [k, uploadedToday(k)] as const);
+  const count = today.reduce((a, [, t]) => a + t.count, 0);
+  const size = today.reduce((a, [, t]) => a + t.bytes, 0);
+  const chips = today
+    .filter(([k, t]) => t.count || now[k])
+    .map(
+      ([k, t]) =>
+        `<span class="up-chip" style="--c:${UPLOAD[k].color}" title="${esc(`${UPLOAD[k].label}: ${num(t.count)} today${now[k] ? `, ${num(now[k])} uploading now` : ""}`)}">${icon(UPLOAD[k].icon, "size-3 shrink-0")}<b class="tabular-nums">${num(t.count)}</b><span class="truncate">${esc(UPLOAD[k].label)}</span></span>`,
+    );
+  el.classList.toggle("is-running", uploadWorkRunning(s));
+  html(
+    el,
+    base
+      .replace("%COUNT%", procs ? num(count) : "–")
+      .replace("%SUB%", `uploaded today${size ? ` · ${bytes(size)}` : ""}`)
+      .replace("%SPARK%", sparkline(last14(UPLOAD_KINDS), PROCESS.uploads.color))
+      .replace(
+        "%DETAIL%",
+        chips.length
+          ? `<div class="even mt-3">${chips.join("")}</div>`
+          : `<div class="mt-3 truncate text-xs text-ink-2">${esc(busy ? `${num(busy)} uploading now` : "Nothing sent to Google yet today")}</div>`,
+      ),
+  );
+  if (uploadsSheet) html(uploadsSheet.el.querySelector<HTMLElement>(".sheet-body")!, uploadsBody(s));
+}
+
 /** One card per process in use: what it is doing now and what it did today, with the last 14 days. */
 function renderProcs(s: Status): void {
   if (!document.getElementById("ov-procs")) return;
@@ -136,7 +242,17 @@ function renderProcs(s: Status): void {
     procs?.processes[k as keyof Processes["processes"]]?.days.find((d) => d.day === today)?.count ?? 0;
   // In use: running, waiting, paused with items left, or did something today.
   const used = new Set(
-    all.filter((l) => l.running || l.paused || l.waiting > 0 || todayCount(l.key) > 0).map((l) => l.key),
+    all
+      .filter(
+        (l) =>
+          l.running ||
+          l.paused ||
+          l.waiting > 0 ||
+          todayCount(l.key) > 0 ||
+          // Uploads: anything sent to Google today, by any kind of work
+          (l.key === "uploads" && UPLOAD_KINDS.some((k) => uploadedToday(k).count || uploadingNow(s)[k])),
+      )
+      .map((l) => l.key),
   );
   if (!used.size) used.add("uploads"); // all quiet: still show how the backup stands
   const grid = $("#ov-procs");
@@ -158,14 +274,31 @@ function renderProcs(s: Status): void {
     // In a narrow card (four in a row) the badge keeps only its icon, so the name fits.
     const stateBadge = (label: string, tone: Tone, ic: IconName) =>
       `<span class="badge ${tone} shrink-0" title="${label}">${icon(ic)}<span class="hidden @[15rem]:inline">${label}</span></span>`;
-    const state = l.paused
-      ? stateBadge("Paused", "warn", "pause")
-      : l.running
-        ? stateBadge("Running", "info", "loader")
-        : l.waiting
-          ? stateBadge("Waiting", "", "hourglass")
-          : stateBadge("Idle", "", "ok");
+    // Uploads run whenever anything sends files, even with the backup paused.
+    const sending = l.key === "uploads" && uploadWorkRunning(s);
+    const state = sending
+      ? stateBadge("Running", "info", "loader")
+      : l.paused
+        ? stateBadge("Paused", "warn", "pause")
+        : l.running
+          ? stateBadge("Running", "info", "loader")
+          : l.waiting
+            ? stateBadge("Waiting", "", "hourglass")
+            : stateBadge("Idle", "", "ok");
     const count = day?.count ?? 0;
+    if (l.key === "uploads") {
+      uploadsCard(
+        s,
+        el,
+        `<div class="flex items-center gap-2.5"><span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2" style="color:${p.color}">${icon(p.icon, "size-4")}</span>
+        <span class="min-w-0 flex-1 truncate font-medium">${esc(p.label)}</span>${state}</div>
+      <div class="mt-3 flex items-end justify-between gap-3">
+        <div class="min-w-0"><div class="num text-2xl">%COUNT%</div><div class="text-xs text-ink-3">%SUB%</div></div>
+        <div class="h-8 w-16 shrink-0 @[15rem]:w-24">%SPARK%</div>
+      </div>%DETAIL%`,
+      );
+      continue;
+    }
     el.classList.toggle("is-running", l.running && !l.paused);
     html(
       el,
@@ -333,6 +466,12 @@ const overview: View = {
       </section>
     </div>`;
     applyLayout();
+    // The Uploads card opens its details in a sheet (each kind of upload), like Moving now.
+    $('[data-proc="uploads"]').addEventListener("click", (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey) return; // a new tab still opens Sync
+      e.preventDefault();
+      openUploads();
+    });
     $$("[data-ov-custom]").forEach((b) => b.addEventListener("click", openCustomize));
     chart = new NetChart($("#ov-net"), matchMedia("(max-width: 640px)").matches ? 200 : 300);
     $("#ov-range").addEventListener("click", (e) => {
@@ -469,6 +608,7 @@ const overview: View = {
     clearInterval(procTimer);
     chart = null;
     document.getElementById("ov-sheet")?.remove();
+    uploadsSheet?.close();
   },
 };
 

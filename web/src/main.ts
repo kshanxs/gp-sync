@@ -9,7 +9,6 @@ import {
   onPageControls,
   onStatus,
   pageControls,
-  refresh,
   refresh as refresh_,
   setPageStatus,
   setPauseControl,
@@ -124,7 +123,6 @@ function shell(): string {
         ${glassToggle("sm")}
         <a class="btn primary hidden sm:inline-flex" id="btn-add" href="#/upload" aria-label="Add photos and videos from this device" title="Add photos and videos from this device">${icon("upload")}<span>Add files</span></a>
       </header>
-      <div id="ptr" aria-hidden="true" style="top:calc(4rem + env(safe-area-inset-top))"><svg viewBox="0 0 40 40"><circle class="ptr-track" cx="20" cy="20" r="11"/><circle class="ptr-arc" cx="20" cy="20" r="11" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" transform="rotate(-90 20 20)"/></svg></div>
       <div id="page-ctl" class="page-ctl hidden" role="region" aria-label="Controls for this page"></div>
       <main id="view" class="scroll-thin flex-1 overflow-y-auto px-4 pt-4 pb-28 lg:px-6 lg:pt-6 lg:pb-8"></main>
     </div>
@@ -211,95 +209,6 @@ function mountView(r: Route, rest: string[]): void {
   $("#page-title").textContent = r.title;
   r.view.mount(page, rest);
   if (r.view.update) unsubscribe = onStatus(r.view.update.bind(r.view));
-}
-
-/** Reload the open page (pull to refresh, or after big changes). */
-export function reloadView(): void {
-  if (!active) return;
-  const [, ...rest] = location.hash.replace(/^#\/?/, "").split("/");
-  mountView(active, rest);
-  void refresh();
-}
-
-function pullToRefresh(): void {
-  // Like iOS and Android: only the indicator moves, the header and page stay put. It follows the
-  // finger with some resistance, draws a circle while pulling, and spins once let go past the mark.
-  const main = $("#view");
-  const ind = $("#ptr");
-  const arc = ind.querySelector<SVGCircleElement>(".ptr-arc")!;
-  const svg = ind.querySelector("svg")!;
-  const PULL = 72; // px of (resisted) pull that triggers a refresh
-  let startX = 0;
-  let startY: number | null = null;
-  let pull = 0;
-  let busy = false;
-  const draw = (d: number) => {
-    const p = Math.min(1, d / PULL);
-    ind.style.transform = `translate(-50%, ${Math.min(d, PULL * 1.15) - 44}px) scale(${0.6 + p * 0.4})`;
-    ind.style.opacity = String(Math.min(1, p * 1.6));
-    arc.style.strokeDashoffset = String(100 - p * 85);
-    svg.style.transform = `rotate(${p * 200}deg)`;
-    ind.classList.toggle("ready", p >= 1);
-  };
-  const reset = () => {
-    ind.classList.add("back");
-    ind.classList.remove("ready", "spin");
-    ind.style.transform = "";
-    ind.style.opacity = "0";
-    svg.style.transform = "";
-    setTimeout(() => ind.classList.remove("back"), 260);
-  };
-  main.addEventListener(
-    "touchstart",
-    (e) => {
-      if (busy || e.touches.length > 1 || main.scrollTop > 0) {
-        startY = null;
-        return;
-      }
-      startX = e.touches[0]!.clientX;
-      startY = e.touches[0]!.clientY;
-      pull = 0;
-      // Start at the top of the page itself: below the header and, when shown, the control strip.
-      ind.style.top = `${main.getBoundingClientRect().top}px`;
-    },
-    { passive: true },
-  );
-  main.addEventListener(
-    "touchmove",
-    (e) => {
-      if (startY == null) return;
-      const t = e.touches[0]!;
-      const dy = t.clientY - startY;
-      // A sideways swipe (charts, chips) or scrolling up is not a pull.
-      if (pull === 0 && (dy <= 0 || Math.abs(t.clientX - startX) > dy)) {
-        if (Math.abs(t.clientX - startX) > 8 || dy < -4) startY = null;
-        return;
-      }
-      if (main.scrollTop > 0) return;
-      pull = Math.max(0, dy) * 0.5; // resistance, as on iOS
-      draw(pull);
-    },
-    { passive: true },
-  );
-  const end = () => {
-    if (startY == null) return;
-    startY = null;
-    if (pull >= PULL && !busy) {
-      busy = true;
-      navigator.vibrate?.(8);
-      ind.classList.add("back", "spin");
-      ind.style.transform = `translate(-50%, ${PULL * 0.6 - 44}px)`;
-      arc.style.strokeDashoffset = "75";
-      reloadView();
-      setTimeout(() => {
-        reset();
-        busy = false;
-      }, 800);
-    } else if (pull > 0) reset();
-    pull = 0;
-  };
-  main.addEventListener("touchend", end);
-  main.addEventListener("touchcancel", end);
 }
 
 // ---- live shell updates
@@ -459,7 +368,6 @@ function boot(): void {
   const root = $("#app");
   root.innerHTML = shell();
   enableTips();
-  pullToRefresh();
   // Thumbnails and file rows open the viewer, with the other files of the same list.
   const openFrom = (target: HTMLElement) => {
     const item = target.closest<HTMLElement>("[data-open]");

@@ -164,9 +164,15 @@ export interface ProcessHistory {
   count: number;
   bytes: number;
 }
+export type UploadKind = "backup" | "freed" | "copied" | "snapchat";
 export interface Processes {
   today: string;
   processes: Record<ProcessKey, ProcessHistory>;
+  /** Every file sent to Google, by what sent it (the backup, Free storage, copies, Snapchat). */
+  uploaded?: Record<
+    UploadKind,
+    { days: { day: string; count: number; bytes: number }[]; count: number; bytes: number }
+  >;
 }
 export interface Totals {
   photos: number;
@@ -838,10 +844,24 @@ export function setTzOffset(min: number | undefined): void {
   if (typeof min === "number") tz = min;
 }
 
+// The last answer for each address, kept for this visit: a page opened again draws it at once
+// (peek) while the fresh one loads. Anything the user changes (post) forgets them all.
+const recent = new Map<string, unknown>();
+const RECENT_MAX = 60;
+
 export async function get<T>(path: string): Promise<T> {
   const r = await fetch("api/" + path, { cache: "no-store" });
   if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
-  return (await r.json()) as T;
+  const data = (await r.json()) as T;
+  recent.delete(path);
+  recent.set(path, data);
+  if (recent.size > RECENT_MAX) recent.delete(recent.keys().next().value!);
+  return data;
+}
+
+/** The last answer for this address in this visit, if any, to draw while get() fetches it again. */
+export function peek<T>(path: string): T | undefined {
+  return recent.get(path) as T | undefined;
 }
 
 export async function post<T = Record<string, unknown>>(path: string, body?: unknown): Promise<T> {
@@ -851,6 +871,7 @@ export async function post<T = Record<string, unknown>>(path: string, body?: unk
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = (await r.json().catch(() => ({}))) as T & { error?: string };
+  recent.clear(); // what the pages last saw may have just changed
   if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
   return data;
 }

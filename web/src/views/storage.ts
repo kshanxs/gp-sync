@@ -6,6 +6,7 @@ import {
   type ReclaimProgress,
   type StorageItem,
   type StorageReport,
+  peek,
 } from "../lib/api";
 import { $, esc, html, toast } from "../lib/dom";
 import { ago, bytes, date, duration, num, pct, remaining, speed } from "../lib/format";
@@ -26,6 +27,7 @@ import type { View } from "./view";
 
 let account = "";
 let report: StorageReport | null = null;
+let opened = false;
 let freed: FreedReport | null = null;
 /** The list of what counts, or the Freed page (#/storage/<account>/freed). */
 let sub: "list" | "freed" | "time" = "list";
@@ -42,9 +44,14 @@ const ACTIVE = ["queued", "downloaded", "in_google", "checking"];
 
 async function load(): Promise<void> {
   const mine = ++request;
-  const r = await get<StorageReport>(`storage?account=${encodeURIComponent(account)}&kind=${kind}`).catch(
-    () => null,
-  );
+  const url = `storage?account=${encodeURIComponent(account)}&kind=${kind}`;
+  const seen = opened ? peek<StorageReport>(url) : undefined;
+  opened = false;
+  if (seen) {
+    report = seen;
+    render();
+  }
+  const r = await get<StorageReport>(url).catch(() => null);
   if (mine !== request) return;
   report = r;
   if (r && !account) account = r.account;
@@ -699,6 +706,7 @@ function subOf(args: string[] | undefined): typeof sub {
 const storage: View = {
   subtitle: "What counts against your quota, and moving it off",
   mount(el, args) {
+    opened = true; // the first load draws the last answer at once (peek), then the fresh one
     // Coming back opens the account that is freeing (or the one picked last), not always the main one.
     account = openingAccount("storage", args, freeingAccounts());
     sub = subOf(args);

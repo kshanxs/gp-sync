@@ -1,4 +1,4 @@
-import { get, post, type DownloadsReport } from "../lib/api";
+import { get, post, type DownloadsReport, peek } from "../lib/api";
 import { avatar } from "../lib/account-menu";
 import { confirmDialog } from "../lib/dialog";
 import { $, esc, html, toast } from "../lib/dom";
@@ -10,10 +10,18 @@ import type { View } from "./view";
 // Copies kept on this server when storage was freed with "delete the downloaded copy" turned off.
 
 let report: DownloadsReport | null = null;
+let opened = false;
 let account = "";
 
 async function load(): Promise<void> {
-  report = await get<DownloadsReport>(`downloads?account=${encodeURIComponent(account)}`).catch(() => null);
+  const url = `downloads?account=${encodeURIComponent(account)}`;
+  const seen = opened ? peek<DownloadsReport>(url) : undefined;
+  opened = false;
+  if (seen) {
+    report = seen;
+    render();
+  }
+  report = await get<DownloadsReport>(url).catch(() => null);
   render();
 }
 
@@ -86,6 +94,7 @@ async function onClick(e: Event): Promise<void> {
 const downloads: View = {
   subtitle: "Copies kept on this server",
   mount(el) {
+    opened = true; // the first load draws the last answer at once (peek), then the fresh one
     account = "";
     el.innerHTML = `<div id="dl-body"><div class="card skeleton h-40"></div></div>`;
     el.addEventListener("click", (e) => void onClick(e));
