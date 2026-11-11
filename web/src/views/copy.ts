@@ -116,6 +116,14 @@ const STATES: Record<CopyItem["state"], [string, Tone, IconName]> = {
 const thumbOf = (i: CopyItem) =>
   `<img class="thumb" loading="lazy" decoding="async" alt="" data-kind="${i.kind}" src="api/storage/thumb?account=${encodeURIComponent(src)}&key=${encodeURIComponent(i.key)}">`;
 
+/** Items the other account doesn't have yet: queued for copying, and not picked at all. */
+function notCopied(r: CopyReport): { count: number; bytes: number } {
+  return {
+    count: r.todo.photo.count + r.todo.video.count + r.jobs.queued,
+    bytes: r.todo.photo.bytes + r.todo.video.bytes + r.jobs.queued_bytes,
+  };
+}
+
 function itemRow(i: CopyItem): string {
   const [label, tone, ic] = STATES[i.state] ?? [i.state, "", "info"];
   return `<div data-key="${esc(i.key)}" class="row px-4">${thumbOf(i)}
@@ -345,7 +353,7 @@ function render(): void {
   html(
     $("#cp-src-stat"),
     listed
-      ? `${num(r!.src_total)} items in the library · ${num((r!.todo.photo.count ?? 0) + (r!.todo.video.count ?? 0))} not in the other`
+      ? `${num(r!.src_total)} items in the library · ${num(notCopied(r!).count)} not in the other yet`
       : "Library not read yet",
   );
   // From the last library read: copies made since then show in the Copied count until the next read.
@@ -425,6 +433,7 @@ function render(): void {
     return;
   }
   const todo = r.todo.photo.count + r.todo.video.count;
+  const left = notCopied(r);
   html(
     $("#cp-body"),
     `${r.jobs.counts && r.paused ? `<section class="card mb-4 flex items-start gap-3 border-bad/40 p-4">${icon("warn", "size-5 shrink-0 text-bad")}<div class="text-sm"><div class="font-medium">Paused: Google counted a copy against ${esc(r.dst)}'s storage</div><div class="mt-0.5 text-ink-3">Copies would use that account's storage. Nothing was deleted.</div></div></section>` : ""}
@@ -433,7 +442,18 @@ function render(): void {
     <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
       ${tile({ label: "In this account", value: num(r.src_total), ic: "library", sub: "Photos and videos" })}
       ${tile({ label: "Duplicates found", value: num(r.duplicates.count), ic: "copy", sub: r.duplicates.count ? `${bytes(r.duplicates.bytes)} · not copied` : "None so far" })}
-      ${tile({ label: "Not copied yet", value: num(todo), ic: "copy", sub: todo ? `${bytes(r.todo.photo.bytes + r.todo.video.bytes)} only in ${esc(r.src)}` : `${esc(r.dst)} has everything` })}
+      ${tile({
+        label: "Not copied yet",
+        value: num(left.count),
+        ic: "copy",
+        sub: !left.count
+          ? `${esc(r.dst)} has everything`
+          : r.jobs.queued && todo
+            ? `${num(r.jobs.queued)} queued · ${num(todo)} not picked · ${bytes(left.bytes)}`
+            : r.jobs.queued
+              ? `${num(r.jobs.queued)} queued · ${bytes(left.bytes)}`
+              : `${bytes(left.bytes)} only in ${esc(r.src)}`,
+      })}
       ${tile({ label: "Copied", value: num(r.jobs.copied), ic: "check", sub: r.jobs.copied ? `${bytes(r.jobs.copied_bytes)} so far` : "Nothing copied yet", tone: r.jobs.copied ? "good" : "" })}
     </div>
     <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[22rem_1fr]">

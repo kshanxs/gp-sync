@@ -558,3 +558,44 @@ def test_uploads_run_side_by_side_like_a_backup(snaps):
     assert max(jobs) == 3
     assert sync.snapchat_summary()[ACC] == {"queued": 0, "done": 6, "failed": 0, "total": 6, "paused": False}
     assert sync.process_activity(1)["processes"]["snapchat"]["count"] == 6
+
+
+def test_fix_dates_uses_every_memory_a_file_here_is_a_copy_of(media):
+    """A file here with no date inside gets the moment of the Snapchat memory it is a copy of, by any
+    link the Snapchat page found: a copy Google keeps (same moment, or the same picture), the very
+    same bytes, or a picture fingerprint as close as a duplicate's. Loose look-alikes, and a picture
+    two memories taken at different moments look like, aren't used."""
+    for t in ("snap_items", "snap_copies", "snap_local"):
+        sync.q(f"DELETE FROM {t}")
+    sync.sq("DELETE FROM media_dates")
+    h = {n: hashlib.sha1(n.encode()).hexdigest() for n in ("roll", "kept", "loose", "same", "look", "two")}
+    print_a, print_b = "f" * 16, ""  # most memories here have no print
+
+    def memory(name, taken, action="album", dhash=print_b, sha1=None, kind="photo"):
+        sync.q("INSERT INTO snap_items (path, kind, taken, action, dhash, sha1) VALUES (?,?,?,?,?,?)",
+               (f"/snap/{name}", kind, taken, action, dhash, sha1))  # fmt: skip
+
+    def copy(name, how, distance, local="", dedup=""):
+        sync.q("INSERT INTO snap_copies (path, media_key, dedup, how, distance, local) VALUES (?,?,?,?,?,?)",
+               (f"/snap/{name}", f"K{name}", dedup, how, distance, local))  # fmt: skip
+
+    memory("m1", T + 1)
+    copy("m1", "same_moment", 0, local="/media/roll.jpg")  # Google keeps the camera-roll save
+    memory("m2", T + 2)
+    copy("m2", "looks_same", 10, dedup=sync._b64_hash(bytes.fromhex(h["kept"])))
+    memory("m3", T + 3)
+    copy("m3", "looks_same", 35, local="/media/loose.jpg")  # too loose to date by
+    memory("m4", T + 4, sha1=h["same"])
+    memory("m5", T + 5, dhash=print_a)
+    memory("m6", T + 600, dhash="f" * 15 + "e")
+    memory("m7", T + 7, dhash="8" * 16)
+    for name in ("look", "two"):
+        sync.sq("INSERT INTO media_dates (path, size, mtime, inside) VALUES (?, 1, 1, 0)", (f"/media/{name}.jpg",))
+    sync.q("INSERT INTO snap_local (path, dhash) VALUES ('/media/look.jpg', ?)", ("8" * 15 + "9",))
+    sync.q("INSERT INTO snap_local (path, dhash) VALUES ('/media/two.jpg', ?)", (print_a,))  # m5 and m6
+
+    when = {n: sync.snapchat_time(f"/media/{n}.jpg", h[n]) for n in h}
+    assert when == {"roll": T + 1, "kept": T + 2, "loose": None, "same": T + 4, "look": T + 7, "two": None}
+    # The same answers when read once for a whole list, as Fix dates does.
+    facts = sync.best_date_facts()
+    assert sync.best_date("/media/roll.jpg", 1, T + 99 * DAY, h["roll"], facts=facts) == (T + 1, "snapchat")

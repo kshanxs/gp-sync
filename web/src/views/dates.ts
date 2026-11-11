@@ -92,6 +92,8 @@ const SOURCE: Record<DateItem["source"], string> = {
   google: "Google Photos",
   filename: "the file name",
   estimated: "the Snapchat estimate",
+  snapchat: "its Snapchat memory",
+  learned: "the dated files around it",
 };
 
 function stateOf(i: DateItem, r: DatesReport): { label: string; tone: Tone; ic: Parameters<typeof icon>[0] } {
@@ -168,7 +170,7 @@ function row(i: DateItem, r: DatesReport): string {
       <div class="truncate text-xs text-ink-3">${esc(folderOf(i.name))}</div>
       <div class="mt-2 grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-3">
         <div><span class="block text-ink-3">${googleLabel}</span><b class="${i.wrong ? "text-warn" : "text-ink-2"}">${esc(when(i.google))}</b></div>
-        <div><span class="block text-ink-3">Suggested date</span><b class="text-ink-2">${esc(when(i.best))}</b><span class="block text-ink-3">From ${SOURCE[i.source]}</span></div>
+        <div><span class="block text-ink-3">Suggested date</span><b class="text-ink-2">${esc(when(i.best))}</b><span class="block text-ink-3">From ${SOURCE[i.source] ?? "GP Sync"}${i.why ? `: ${esc(i.why)}` : ""}</span></div>
         ${i.fix ? `<div><span class="block text-ink-3">${previousLabel}</span><b class="text-ink-2">${i.previous_google == null ? "Not recorded" : esc(when(i.previous_google))}</b></div>` : ""}
       </div>
       ${cur ? `<div class="bar mt-2"><i style="width:${pct(cur.done, cur.total)}%"></i></div>` : ""}

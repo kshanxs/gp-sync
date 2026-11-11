@@ -518,3 +518,43 @@ def test_gpmc_still_sends_the_upload_time_by_keyword():
     assert "upload_timestamp=" in inspect.getsource(Client._upload_file)
     assert "upload_timestamp" in inspect.signature(Api.commit_upload).parameters
     assert {"add_media_to_album", "create_album"} <= set(dir(Api))
+
+
+def test_undated_files_learn_their_date_from_the_dated_files_around_them(media, monkeypatch):
+    """Dated files copied together moved by the same amount from their real dates (here, copied
+    three days later): an undated file copied with them moved by that much too. In a numbered run
+    it sits between two dated neighbours. Files around it that disagree date nothing."""
+    sync.sq("DELETE FROM media_dates")
+    sync.q("DELETE FROM files")
+    T, H, D = 1_700_000_000, 3600, 86400
+    library = []
+
+    def dated(path, mtime, taken):
+        key = f"K{len(library)}"
+        library.append((key, f"d{len(library)}", taken * 1000))  # Google keeps milliseconds
+        sync.sq("INSERT INTO media_dates (path, size, mtime, inside) VALUES (?, 1, ?, 1)", (path, mtime))
+        sync.q("INSERT INTO files (path, status, account, media_key) VALUES (?, 'uploaded', ?, ?)", (path, ACC, key))
+
+    def undated(path, mtime):
+        sync.sq("INSERT INTO media_dates (path, size, mtime, inside) VALUES (?, 1, ?, 0)", (path, mtime))
+
+    for i in range(4):  # a folder copied three days after the photos were taken
+        dated(f"/m/trip/a{i}x.jpg", T + 3 * D + i * 60, T + i * 60)
+    undated("/m/trip/shared.jpg", T + 3 * D + 90)
+    dated("/m/cam/IMG_0100.JPG", T + 50 * D, T)  # a numbered run, files copied much later
+    dated("/m/cam/IMG_0104.JPG", T + 50 * D, T + 4 * H)
+    undated("/m/cam/IMG_0101.JPG", T + 50 * D)
+    for i, shift in enumerate((0, 5 * D, 9 * D)):  # neighbours that disagree
+        dated(f"/m/mixed/b{i}x.jpg", T + i * 60 + shift, T + i * 60)
+    undated("/m/mixed/lost.jpg", T + 30)
+
+    monkeypatch.setattr(sync, "accounts", lambda: [(ACC, "")])
+    monkeypatch.setattr(sync, "_library_stamp", lambda a: ("fixed",))
+    monkeypatch.setattr(sync, "_library_rows", lambda a, sql, args=(): library)
+    sync._learned_cache[0] = None
+    found = sync.learned_dates()
+    assert found["/m/trip/shared.jpg"] == (T + 90, "like 4 dated files copied with it")
+    assert found["/m/cam/IMG_0101.JPG"] == (T + H, "between IMG_0100.JPG and IMG_0104.JPG")
+    assert "/m/mixed/lost.jpg" not in found
+    facts = sync.best_date_facts()
+    assert sync.best_date("/m/trip/shared.jpg", 1, T + 3 * D + 90, "", facts=facts) == (T + 90, "learned")

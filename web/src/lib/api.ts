@@ -397,8 +397,11 @@ export interface DateItem {
   best: number;
   /** manual = picked by the user, copy = earliest identical copy, file = the file's own time,
    * google = Google already has an earlier (better) date, filename = a date in the file name,
-   * estimated = the estimated save date of a Snapchat item. */
-  source: "manual" | "copy" | "file" | "google" | "filename" | "estimated";
+   * estimated = the estimated save date of a Snapchat item, snapchat = the Snapchat memory it is a
+   * copy of, learned = the date the dated files around it give (see `why`). */
+  source: "manual" | "copy" | "file" | "google" | "filename" | "estimated" | "snapchat" | "learned";
+  /** For a learned date: "between IMG_1203.jpg and IMG_1210.jpg", "like 12 dated files copied with it". */
+  why?: string;
   manual: number | null;
   wrong: boolean;
   fix: "" | "waiting" | "in_google" | "done" | "failed";

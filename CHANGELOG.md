@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.4
+
+- **Fix dates learns from your own files:** an undated file copied together with dated ones takes
+  the same shift from its real date as they did, and one in a numbered run (IMG_0101 between
+  IMG_0100 and IMG_0104) takes a date between its neighbours'. Used only when the files around it
+  agree, and the page says why ("like 4 dated files copied with it"). Tried on a real library, it
+  was right within an hour for 99.6% of dated files, against 67% for the file's own time.
+- **Fix dates uses every Snapchat memory a file is a copy of:** also copies Google keeps, the very
+  same bytes, and near-identical pictures, so they get the memory's moment instead of an estimate.
+  Dates from a memory now say so on the page (they showed "From undefined").
+- **Copy accounts:** "Not copied yet" counts queued items too; it said "has everything" while
+  hundreds still waited to copy.
+
 ## 1.7.3
 
 - **Free items with Google's copy, if you choose:** items Google only serves a changed copy of
