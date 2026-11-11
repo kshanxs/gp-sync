@@ -16,6 +16,7 @@ import hashlib
 import heapq
 import hmac
 import http.cookies
+import ipaddress
 import json
 import logging
 import os
@@ -112,6 +113,9 @@ PLATFORM = PLATFORM or "docker"
 HOST_NAME = os.environ.get("HOST_NAME", "").strip() or ("Umbrel" if PLATFORM == "umbrel" else "this server")
 # Optional password for the dashboard and API (any user name). Umbrel has its own login.
 PASSWORD = os.environ.get("PASSWORD", "")
+# Names the dashboard may be opened by without a password, besides home-network ones (see host_allowed):
+# "photos.example.com", ".example.com" for every name under it, or "*" for any name.
+ALLOWED_HOSTS = tuple(h.strip().lower() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip())
 
 log_lines = collections.deque(maxlen=300)  # (unix time, kind, text, file name or None)
 state = {
@@ -7302,6 +7306,33 @@ def from_other_site(headers):
     return not sender or sender not in hosts
 
 
+LOCAL_SUFFIXES = (".local", ".lan", ".home", ".internal", ".home.arpa", ".localhost", ".ts.net")
+
+
+def host_allowed(host):
+    """True when the name the browser used is one a home network uses, or listed in ALLOWED_HOSTS.
+
+    Without a password, a page on another site can point its own name at this server (DNS
+    rebinding) and then read everything as if it were the dashboard. Such a page always sends its
+    own name as Host, so only IP addresses, single-word names, home-network and Tailscale names
+    are answered. With a password (the page never has the sign-in) or on Umbrel (its own sign-in
+    sits in front) the check is off."""
+    if PASSWORD or PLATFORM == "umbrel" or "*" in ALLOWED_HOSTS:
+        return True
+    host = (host or "").strip().lower()
+    if not host:
+        return True  # HTTP/1.0 scripts
+    name = urllib.parse.urlsplit("//" + host).hostname or ""
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        pass
+    if "." not in name or name.endswith(LOCAL_SUFFIXES):
+        return True
+    return any(name == h or (h.startswith(".") and name.endswith(h)) for h in ALLOWED_HOSTS)
+
+
 SESSION_COOKIE = "gps_auth"
 
 
@@ -7487,6 +7518,16 @@ class Handler(BaseHTTPRequestHandler):
         """With PASSWORD set, every request needs the sign-in cookie (or HTTP Basic, for scripts).
 
         Pages go to the sign-in page; API calls get 401 (without a browser password popup)."""
+        if not host_allowed(self.headers.get("Host")):
+            self.send(
+                403,
+                "GP Sync answers only home-network names without a password. Set PASSWORD, or add this "
+                "name to ALLOWED_HOSTS.",
+                "text/plain; charset=utf-8",
+                "no-store",
+            )
+            self.close_connection = True
+            return False
         if not PASSWORD or signed_in(self.headers):
             return True
         path = self.path.partition("?")[0]

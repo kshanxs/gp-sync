@@ -145,3 +145,45 @@ def test_own_dashboard_and_scripts_still_work(server, media):
     for headers in same:  # a script, the dashboard, and the dashboard behind a proxy on another port
         assert _post_from(server, "/api/sync", "", headers) == 200
     assert _post_from(server, "/share", "", {"Sec-Fetch-Site": "cross-site"}) != 403  # the phone's share sheet
+
+
+def _get_as(server, host, path="/api/status", auth=None):
+    """GET with the Host a browser would send for the page's address (a rebinding page sends its own)."""
+    import http.client
+
+    c = http.client.HTTPConnection(urllib.parse.urlsplit(server).netloc)
+    headers = {"Host": host}
+    if auth:
+        headers["Authorization"] = "Basic " + base64.b64encode(auth.encode()).decode()
+    c.request("GET", path, headers=headers)
+    r = c.getresponse()
+    r.read()
+    return r.status
+
+
+def test_a_rebinding_page_cannot_read_anything(server, media):
+    """Without a password, a page on another site whose name now points at this server
+    (DNS rebinding) is same-origin to the browser: only names a home network uses get answers."""
+    for host in ("evil.example", "evil.example:8527", "photos.attacker.com"):
+        assert _get_as(server, host) == 403
+        assert _get_as(server, host, "/api/media?path=Photos/b.HEIC") == 403
+    for host in ("192.168.1.20:8527", "[fd00::1]:8527", "localhost:8527", "umbrel", "nas.local",
+                 "pi.lan", "box.home.arpa", "srv.internal", "umbrel.tail1234.ts.net", ""):  # fmt: skip
+        assert _get_as(server, host) == 200, host
+
+
+def test_allowed_hosts_adds_names_and_star_turns_the_check_off(server, media, monkeypatch):
+    monkeypatch.setattr(sync, "ALLOWED_HOSTS", ("photos.example.com", ".mydomain.net"))
+    assert _get_as(server, "photos.example.com") == 200
+    assert _get_as(server, "gp.mydomain.net:443") == 200
+    assert _get_as(server, "evil.example") == 403
+    monkeypatch.setattr(sync, "ALLOWED_HOSTS", ("*",))
+    assert _get_as(server, "evil.example") == 200
+
+
+def test_host_check_is_off_with_a_password_or_on_umbrel(server, media, monkeypatch):
+    monkeypatch.setattr(sync, "PLATFORM", "umbrel")  # Umbrel's own sign-in sits in front
+    assert _get_as(server, "evil.example") == 200
+    monkeypatch.setattr(sync, "PLATFORM", "docker")
+    monkeypatch.setattr(sync, "PASSWORD", "s3cret")  # a rebinding page never has the sign-in
+    assert _get_as(server, "photos.example.com", auth="me:s3cret") == 200

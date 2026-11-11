@@ -395,6 +395,7 @@ also skip its other folders: `EXCLUDE: "@eaDir,#recycle,encoded-video,thumbs,pro
 | `HOST_NAME` | `this server` | What the dashboard calls the machine ("Folders on My NAS") |
 | `PLATFORM` | *(any Docker host)* | `umbrel` turns on Umbrel's wording and hints (the Umbrel app sets it). Leave it out anywhere else: nothing assumes a platform |
 | `PASSWORD` | none | Shows a sign-in page before the dashboard (remembered for a year; works in the installed app). Scripts use `curl -u any:PASSWORD` |
+| `ALLOWED_HOSTS` | none | Without `PASSWORD`, the dashboard answers only home-network addresses (IP addresses, `localhost`, one-word names, `.local`, `.lan`, `.home.arpa`, `.internal`, Tailscale's `.ts.net`). Add other names here, comma-separated (`photos.example.com`, or `.example.com` for every name under it); `*` turns the check off. Not needed with `PASSWORD` or on Umbrel |
 | `FOLDERS` | `Photos,Videos` | Folders under `/media` backed up until you choose in Settings; if none exist, all are |
 | `EXCLUDE` | `@eaDir,#recycle,#snapshot,$RECYCLE.BIN,System Volume Information,lost+found,encoded-video` | Folder and file names never backed up (`*` and `?` allowed). Hidden names are always skipped |
 | `SCAN_INTERVAL_MINUTES` | `5` | How often folders are checked |
@@ -411,7 +412,8 @@ Folders:
 | `/uploads` | Optional, writable: phone uploads. Mount a folder that is also inside a backed-up folder so they get backed up too |
 
 Without `PASSWORD`, the dashboard has no login: keep it on your home network or behind a VPN
-such as Tailscale. The network speed on the page is this container's own traffic.
+such as Tailscale. It then answers only home-network addresses and refuses changes sent from other
+websites; to open it by a domain name without a password, list the name in `ALLOWED_HOSTS`. The network speed on the page is this container's own traffic.
 
 ## Development
 

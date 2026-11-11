@@ -220,6 +220,9 @@ def test_copy_keeps_googles_date(libs):
 
 
 def test_several_items_are_copied_at_once_and_timed(libs, monkeypatch):
+    # Each download holds 512 MB of headroom: four at once need ~2 GB free, more than some test
+    # machines' temp folders have. Disk space is not what this test is about.
+    monkeypatch.setattr(sync.shutil, "disk_usage", lambda p: sync.shutil._ntuple_diskusage(10**13, 0, 10**13))
     monkeypatch.setattr("requests.get", lambda url, **kw: FakeResponse({"CLIP": b"clip", "OLD": b"old photo"}.get(
         url.rsplit("/", 1)[-1], DATA)))  # fmt: skip
     sync.copy_start(SRC, DST, ["photo", "video"], None, None)
