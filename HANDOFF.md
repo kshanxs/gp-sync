@@ -1,0 +1,55 @@
+# Handoff
+
+The shared memory between agent sessions on this project. A session reads this file first and
+updates it last, so the next session (after a usage limit, a new chat or another tool) starts where
+this one stopped. The repository holds what the code does; when the two disagree, the repository
+wins, and the Work log row says so. Written by the handoff skill (`handoff.py log`) and by hand.
+
+## Now
+
+| Item | Owner | Status | Link |
+|---|---|---|---|
+| Security fixes (cross-site posts, DNS rebinding), branch fix/cross-site-posts, not pushed | Claude | Waiting on owner | backend/sync.py from_other_site, host_allowed |
+
+## Next up
+
+1. After the fixes ship: on Umbrel, change a setting in the dashboard and confirm it saves.
+2. Docker users who open GP Sync by a domain name without a password need ALLOWED_HOSTS: say so in the release notes.
+
+## Waiting on the owner
+
+Questions or a yes only the owner can give, with the options. Remove an item only when it is answered
+in their own words, and record the answer in the Work log row.
+
+- Push fix/cross-site-posts and open a PR? Release it as 1.7.5 and update the Umbrel store?
+
+## Blocked
+
+What cannot move, and why.
+
+- Nothing.
+
+## Rules
+
+- Work is plan-only unless the owner says build.
+- No deletions, merges or sends (email, chat, posts, merges) without an explicit yes.
+- Never invent numbers, prices, dates or facts; write Unknown.
+- No secrets, tokens, passwords or personal data in this file.
+
+## Page map
+
+| Page | What it holds |
+|---|---|
+| `README.md` | What the project is and how to run it |
+| `CHANGELOG.md` | Every release; `## Unreleased` holds what is not released yet |
+| `backend/sync.py` | Sync engine and the HTTP server (routes in Handler.do_GET / post) |
+| `web/src/` | The dashboard (Vite+, TypeScript) |
+
+## Work log
+
+Newest first. One row per session that changed anything; never edit another session's row.
+
+| Date | Entry | Agent | Area | What changed | Links | Next step | Status |
+|---|---|---|---|---|---|---|---|
+| 2026-11-12T02:36+05:30 | Fix all: DNS rebinding and test disk space | Claude | Dev | Without PASSWORD (not on Umbrel) only home-network Host names are answered; new ALLOWED_HOSTS setting. Copy test no longer needs 2 GB free. 320 backend tests pass | branch fix/cross-site-posts, not pushed | Owner: approve push, PR and release 1.7.5 | Waiting on owner |
+| 2026-11-11T22:53+05:30 | Shipkit launch sweep: cross-site fix | Claude | Dev | Ran shipkit /break launch on umbrel: web 53 and backend 317 tests pass. Found and fixed: with no PASSWORD, other websites could add a Google account and redirect folders (403 now) | branch fix/cross-site-posts (90f2081), not pushed | Owner: approve push/PR and a release; then on Umbrel change a setting in the dashboard to confirm it still saves | Waiting on owner |
