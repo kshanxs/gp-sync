@@ -238,6 +238,7 @@ def db():
         ("finished", "REAL"),  # when Google confirmed the free upload
         ("downloaded_at", "REAL"),  # when the download was checked (Time taken: where the time goes)
         ("uploaded_at", "REAL"),  # when the free upload finished
+        ("use_copy", "INTEGER DEFAULT 0"),  # the user chose to free it with the copy Google serves
     ):
         if col not in have:
             conn.execute(f"ALTER TABLE reclaim ADD COLUMN {col} {decl}")
@@ -3348,6 +3349,25 @@ def auto_free_step(account, make_client=None, now=None):
     return bool(n)
 
 
+def reclaim_use_copy(account, keys, keep=False):
+    """Free items Google only serves a changed copy of, with that copy: the user's choice. Each is
+    downloaded again from Google's original link and used if complete, about the original's size and
+    a photo or video that opens. Only items refused for that reason are taken."""
+    n = 0
+    for key in keys:
+        n += len(q(
+            """UPDATE reclaim SET use_copy=1, state='queued', error='', local='', local_hash='', keep=?
+               WHERE account=? AND media_key=? AND state='failed' AND error LIKE '%changed copy%'
+               RETURNING media_key""",
+            (int(bool(keep)), account, key),
+        ))  # fmt: skip
+    if n:
+        log(f"Freeing {n} item(s) with the copy Google serves, as chosen ({account})", "info")
+        reclaim_wake.set()
+        notify_change()
+    return {"queued": n}
+
+
 def reclaim_cancel(account, keys):
     """Forget items that are waiting (their downloaded copy is removed). Never touches Google."""
     n = 0
@@ -3385,6 +3405,16 @@ def _reclaim_client(account):
 
 def _download_urls(response):
     """Download links in a PhotosPrepareDownload answer, Google's original first."""
+    return [u for _, u in _download_links(response)][:3]
+
+
+def _original_url(response):
+    """The link Google labels as the original file (not the edited one), or None."""
+    return next((u for first, u in _download_links(response) if first == 0), None)
+
+
+def _download_links(response):
+    """(0 for Google's original link, 1 for any other, link), originals first."""
     found = []
 
     def walk(node, path):
@@ -3403,7 +3433,7 @@ def _download_urls(response):
                 found.append((0 if path[-4:] == ("1", "5", "2", "6") else 1, text))
 
     walk(response, ())
-    return [u for _, u in sorted(found, key=lambda x: x[0])][:3]
+    return sorted(found, key=lambda x: x[0])
 
 
 _library_locks = {}
@@ -3449,7 +3479,7 @@ def _disk_space(size):
             _disk_reserved[0] -= need
 
 
-def _download(client, account, key, dedup, name, size, taken, folder=None, track=None):
+def _download(client, account, key, dedup, name, size, taken, folder=None, track=None, use_copy=False):
     """Download one item and prove it is Google's own copy (same SHA-1). Returns (path, the file's
     dedup key).
 
@@ -3461,7 +3491,7 @@ def _download(client, account, key, dedup, name, size, taken, folder=None, track
         found = _from_local(key, dedup, name, size, taken, folder or RECLAIM_DIR / account / key, track)
         if found:
             return found
-        return _fetch(client, account, key, dedup, name, size, taken, folder, track)
+        return _fetch(client, account, key, dedup, name, size, taken, folder, track, use_copy)
 
 
 def _local_copies(dedup):
@@ -3544,7 +3574,32 @@ def _stop_check(paused):
     return check
 
 
-def _fetch(client, account, key, dedup, name, size, taken, folder, track):
+COPY_SLACK = 256 * 1024  # how far Google's copy may be from the original's size: a few changed details
+
+
+def _copy_usable(path, got_size, size):
+    """Google's copy, when the user chose to free an item with it: complete, about the original's
+    size (only details inside changed, not a smaller re-encoded file), and a photo or video that opens."""
+    if not size or abs(got_size - size) > max(COPY_SLACK, size * 0.02):
+        return False
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            im.verify()
+        return True
+    except Exception:
+        pass
+    try:
+        import av
+
+        with av.open(str(path)) as c:
+            return bool(c.streams.video)
+    except Exception:
+        return False
+
+
+def _fetch(client, account, key, dedup, name, size, taken, folder, track, use_copy=False):
     import requests
 
     folder = folder or RECLAIM_DIR / account / key
@@ -3557,6 +3612,7 @@ def _fetch(client, account, key, dedup, name, size, taken, folder, track):
     if not urls:
         raise RuntimeError("Google gave no download link")
     valid = _item_hashes(response, dedup)
+    original = _original_url(response)
     for url in urls:
         digest = hashlib.sha1()
         done = 0
@@ -3576,16 +3632,21 @@ def _fetch(client, account, key, dedup, name, size, taken, folder, track):
             tmp.unlink(missing_ok=True)  # a broken download would otherwise fill the disk
             raise
         got = _b64_hash(digest.digest())
-        if got in valid:
+        # Google's own file, or (chosen by the user) the copy from its original link, checked.
+        if got in valid or (use_copy and url == original and _copy_usable(tmp, done, size)):
             tmp.replace(target)
             if taken:
                 os.utime(target, (taken, taken))  # the upload uses the file time as its date
             return target, got
     tmp.unlink(missing_ok=True)
+    if use_copy:
+        raise RuntimeError(COPY_UNUSABLE)
     raise RuntimeError(NOT_ORIGINAL)
 
 
 NOT_ORIGINAL = "Google only gives a changed copy of this item, not its original, so it stays in Google untouched"
+COPY_UNUSABLE = ("Google's copy isn't complete, is much smaller than the original or doesn't open, "
+                 "so it stays in Google untouched")  # fmt: skip
 
 
 def _set_reclaim(account, key, state_, error="", **cols):
@@ -3687,7 +3748,8 @@ def _reclaim_item(account, row, make_client, out=None):
             track["current"] = {"key": key, "step": "downloading", "done": 0, "total": size, "name": name}
             q("UPDATE reclaim SET started=COALESCE(started, ?) WHERE account=? AND media_key=?",
               (time.time(), account, key))  # fmt: skip
-            path, got = _download(client, account, key, dedup, name, size, taken, track=track)
+            use_copy = bool(q("SELECT use_copy FROM reclaim WHERE account=? AND media_key=?", (account, key))[0][0])
+            path, got = _download(client, account, key, dedup, name, size, taken, track=track, use_copy=use_copy)
             _set_reclaim(account, key, "downloaded", local=str(path), local_hash="" if got == dedup else got,
                          downloaded_at=time.time())  # fmt: skip
             reclaim_state[account]["error"] = ""
@@ -3756,6 +3818,8 @@ def _reclaim_item(account, row, make_client, out=None):
         out["how"] = pace.outcome(e)
         msg = f"{type(e).__name__}: {e}"[:300]
         print(f"Free storage: {name}: {msg}", file=sys.stderr, flush=True)
+        if str(e) in (NOT_ORIGINAL, COPY_UNUSABLE):
+            msg = str(e)  # GP Sync's own words: no error class in front
         if st_ == "queued":
             if outage := outage_kind(e):  # no internet or Google is down: try again in a minute
                 reclaim_state[account]["error"] = outage
@@ -4449,6 +4513,8 @@ def reclaim_worker():
              OR error LIKE 'ConnectionError%' OR error LIKE 'ReadTimeout%')""")
         q("UPDATE reclaim SET error=? WHERE state='failed' AND error LIKE '%not exactly Google''s original%'",
           (NOT_ORIGINAL,))  # fmt: skip
+        q("UPDATE reclaim SET error=? WHERE state='failed' AND error=?",
+          (NOT_ORIGINAL, f"RuntimeError: {NOT_ORIGINAL}"))  # fmt: skip
     while True:
         reclaim_wake.clear()
         account_lanes.wake(dict.fromkeys([*(a for a, _ in accounts()), *list(_refresh_requests)]))
@@ -7672,6 +7738,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.json(reclaim_queue(account, keys, keep))
             elif path == "/api/storage/cancel":
                 self.json(reclaim_cancel(account, keys))
+            elif path == "/api/storage/use-copy":
+                self.json(reclaim_use_copy(account, keys, bool(req.get("keep"))))
             elif path == "/api/storage/pause":
                 meta_set(f"reclaim_paused:{account}", "1" if req.get("paused") else "0")
                 reclaim_state[account]["error"] = ""

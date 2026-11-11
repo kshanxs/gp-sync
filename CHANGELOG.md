@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.3
+
+- **Free items with Google's copy, if you choose:** items Google only serves a changed copy of
+  (not the file you uploaded) stay untouched as before, but a card on Free storage and a button on
+  each one now offer to free them with that copy. It is used only if it comes from Google's original
+  link, is complete, about the original's size, and opens as a photo or video.
+- Free storage messages no longer start with "RuntimeError:".
+
 ## 1.7.2
 
 - **Yours in Google Photos:** a card on Free storage shows how much of your data Google holds (each

@@ -953,3 +953,56 @@ def test_freed_originals_left_in_the_trash_are_emptied(library):
     # And Using storage counts the Trash, as Google One does.
     r = sync.storage_report(ACC)
     assert r["trash"] == {"count": 3, "bytes": len(DATA) + 5 + 5}  # with the fixture's TRASHED
+
+
+def _jpeg(comment=b"", quality=95):
+    import io
+    import random
+
+    from PIL import Image
+
+    rnd = random.Random(7)
+    im = Image.new("RGB", (64, 64))
+    im.putdata([(rnd.randrange(256), rnd.randrange(256), rnd.randrange(256)) for _ in range(64 * 64)])
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=quality, comment=comment)
+    return out.getvalue()
+
+
+def test_an_item_can_be_freed_with_googles_copy_when_chosen(library, monkeypatch):
+    """Google serves a changed copy (a detail inside differs): refused, untouched. Chosen by the user,
+    the copy from Google's original link is used: complete, about the same size, and it opens."""
+    monkeypatch.setattr(sync.time, "sleep", lambda s: None)
+    orig, changed = _jpeg(b"taken 2021"), _jpeg(b"taken 2022")
+    with Storage(library) as st:
+        st.update([item("PIC", data=orig)])
+    monkeypatch.setattr("requests.get", lambda url, **kw: FakeResponse(changed))
+    client = FakeClient(library, {b64(orig)})
+    sync.reclaim_queue(ACC, ["PIC"])
+    step(client)
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='PIC'")[0][0] == "failed"
+    assert not [c for c in client.api.calls if c[0] in ("trash", "delete")]  # nothing touched in Google
+    assert sync.reclaim_use_copy(ACC, ["PIC", "BIG"]) == {"queued": 1}  # only items refused for that
+    step(client)
+    state, local_hash = sync.q("SELECT state, local_hash FROM reclaim WHERE media_key='PIC'")[0]
+    assert state == "downloaded" and local_hash == b64(changed)
+    step(client)
+    assert ("delete", [b64(orig)]) in client.api.calls
+    assert client.uploads[0][0] == changed  # Google's copy goes back up, free
+    assert sync.q("SELECT state FROM reclaim WHERE media_key='PIC'")[0][0] == "checking"
+
+
+def test_a_smaller_reencoded_copy_is_never_used(library, monkeypatch):
+    orig = _jpeg(b"x" * 60_000) + b"\0" * 400_000  # big, so a re-encoded copy is far smaller
+    small = _jpeg(quality=40)
+    with Storage(library) as st:
+        st.update([item("PIC", data=orig)])
+    monkeypatch.setattr("requests.get", lambda url, **kw: FakeResponse(small))
+    client = FakeClient(library, {b64(orig)})
+    sync.reclaim_queue(ACC, ["PIC"])
+    step(client)
+    sync.reclaim_use_copy(ACC, ["PIC"])
+    step(client)
+    state, error = sync.q("SELECT state, error FROM reclaim WHERE media_key='PIC'")[0]
+    assert state == "failed" and "much smaller" in error
+    assert not [c for c in client.api.calls if c[0] in ("trash", "delete")] and not client.uploads

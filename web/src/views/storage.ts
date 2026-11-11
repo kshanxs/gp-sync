@@ -128,6 +128,11 @@ function stateOf(
   }
 }
 
+/** Refused because Google only serves a changed copy: it can be freed with that copy, if chosen. */
+function onlyCopy(i: StorageItem): boolean {
+  return i.state === "failed" && (i.error ?? "").includes("changed copy");
+}
+
 function actions(i: StorageItem, r: StorageReport, cur: ReclaimProgress | undefined): string {
   const cancel = `<button class="btn icon sm" data-cancel="${esc(i.key)}" title="Forget it (the downloaded copy is removed)" aria-label="Cancel">${icon("x")}</button>`;
   if (cur) return "";
@@ -141,7 +146,9 @@ function actions(i: StorageItem, r: StorageReport, cur: ReclaimProgress | undefi
     case "in_google":
       return cancel;
     case "failed":
-      return `<button class="btn sm" data-get="${esc(i.key)}">${icon("retry")}Try again</button>${cancel}`;
+      return onlyCopy(i)
+        ? `<button class="btn sm" data-copy="${esc(i.key)}" title="Free it with the copy Google serves">${icon("copy")}Use Google's copy</button>`
+        : `<button class="btn sm" data-get="${esc(i.key)}">${icon("retry")}Try again</button>${cancel}`;
     default:
       return "";
   }
@@ -246,6 +253,43 @@ function freeShare(part: number, whole: number): string {
   return `${p >= 99 ? Math.floor(p * 100) / 100 : Math.floor(p * 10) / 10}%`;
 }
 
+/** Items Google only serves a changed copy of: they stay untouched unless the user chooses the copy. */
+function copyNote(r: StorageReport): string {
+  const only = r.items.filter(onlyCopy);
+  if (!only.length) return "";
+  const size = only.reduce((n, i) => n + (i.quota || 0), 0);
+  return `<section class="card mb-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
+    <div class="flex min-w-0 flex-1 items-start gap-3">
+      <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-warn/15 text-warn">${icon("copy", "size-4")}</span>
+      <div class="min-w-0 flex-1 text-sm"><div class="font-medium">${num(only.length)} item${only.length === 1 ? "" : "s"} (${bytes(size)}): Google only gives a changed copy</div>
+        <div class="mt-0.5 text-ink-3">Not the file you uploaded, so they stay in Google untouched. You can free them with Google's copy instead.</div></div>
+    </div>
+    <button class="btn sm w-full shrink-0 justify-center sm:w-auto" id="st-copy-all">${icon("copy")}Use Google's copy</button>
+  </section>`;
+}
+
+/** Ask, then free items with the copy Google serves (the original isn't available). */
+async function useCopy(keys: string[]): Promise<void> {
+  if (!keys.length) return;
+  const what = keys.length === 1 ? "this item" : `${num(keys.length)} items`;
+  const r = await confirmDialog({
+    title: `Free ${what} with Google's copy?`,
+    icon: "copy",
+    body: [
+      "Google doesn't give back the exact file you uploaded for these: something inside was changed (often the date or other details). GP Sync downloads the copy Google serves from its original link and uses it only if it is complete, about the original's size, and opens as a photo or video.",
+      "That copy is then uploaded again for free, and the one in Google is deleted. What you keep is Google's copy, not the exact bytes you once uploaded.",
+    ],
+    confirm: "Use Google's copy",
+    checkbox: {
+      label: "Also keep the copy here, under Downloads",
+      hint: "Off: it is deleted from this server after the upload.",
+      checked: report?.prefs?.keep ?? false,
+    },
+  });
+  if (!r) return;
+  void act("use-copy", { keys, keep: r.checked }, `Freeing ${what} with Google's copy`);
+}
+
 /** All of yours that Google holds, and how much of it doesn't count against storage. */
 function storedCard(r: StorageReport): string {
   const s = r.stored;
@@ -305,6 +349,7 @@ function renderList(r: StorageReport): void {
     }
     ${r.error && !(oursCount && r.error.includes("own uploads")) ? `<section class="card mb-4 p-4 text-sm text-bad">${esc(r.error)}</section>` : ""}
     ${checkNote(r.check)}
+    ${copyNote(r)}
     ${oursCount ? `<section class="card mb-4 flex items-start gap-3 p-4 text-sm">${icon("warn", "size-5 shrink-0 text-warn")}<div><div class="font-medium">GP Sync's uploads count against storage in this account</div><div class="mt-0.5 text-ink-3">Re-uploading wouldn't free anything, so nothing is deleted here.</div></div></section>` : ""}
     ${
       r.prefs
@@ -702,6 +747,8 @@ function onClick(e: Event): void {
     if (confirm("Google counted a re-upload against storage last time. Try again anyway?"))
       void act("check", { unblock: true });
   } else if (b.dataset.get) void start([b.dataset.get]);
+  else if (b.dataset.copy) void useCopy([b.dataset.copy]);
+  else if (b.id === "st-copy-all") void useCopy((report?.items ?? []).filter(onlyCopy).map((i) => i.key));
   else if (b.dataset.cancel) void act("cancel", { keys: [b.dataset.cancel] });
   else if (b.id === "st-picked") {
     void start([...picked]).then((ok) => ok && picked.clear());
