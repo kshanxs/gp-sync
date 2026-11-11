@@ -6,7 +6,7 @@ import { get, post, tz, type Disk, type Processes, type Status, type UploadKind 
 import { host, setPageStatus, setPauseControl, setRefreshControl } from "../lib/store";
 import { sparkline } from "../lib/charts";
 import { $, $$, esc, html } from "../lib/dom";
-import { bytes, clock, fileName, num, pct, speed } from "../lib/format";
+import { bytes, clock, fileName, hour, num, pct, speed } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
 import { NetChart, rangeButtons, type Range } from "../lib/netchart";
 import { jobLink, jobTitle } from "../lib/jobs";
@@ -34,12 +34,12 @@ function runningWork(s: Status): WorkItem[] {
   if (s.phase !== "paused")
     for (const u of s.uploading ?? (s.current ? [s.current] : []))
       items.push({
-        key: `up:${u.name}`,
+        key: `up:${u.account}:${u.name}`,
         name: fileName(u.name),
         step: u.step,
         done: u.bytes_done,
         total: u.bytes_total,
-        label: "Backup",
+        label: u.account ? `Backup · ${u.account}` : "Backup",
         href: "#/sync",
       });
   for (const j of s.jobs ?? []) {
@@ -552,10 +552,7 @@ const overview: View = {
         "clock",
         "Upload hours",
         s.schedule.enabled
-          ? badge(
-              `${String(s.schedule.start).padStart(2, "0")}–${String(s.schedule.end).padStart(2, "0")}`,
-              s.schedule.allowed ? "good" : "warn",
-            )
+          ? badge(`${hour(s.schedule.start)}–${hour(s.schedule.end)}`, s.schedule.allowed ? "good" : "warn")
           : `<span class="text-ink-2">Any time</span>`,
       ],
       [

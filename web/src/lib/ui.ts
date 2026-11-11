@@ -4,6 +4,7 @@ import type { CheckInfo, ReclaimSummary, Status } from "./api";
 import { esc } from "./dom";
 import { ago, bytes, duration, hour, num, speed, until } from "./format";
 import { icon, type IconName } from "./icons";
+import { copiesText, uploadTitle } from "./lanes";
 
 export type Tone = "good" | "warn" | "bad" | "info" | "";
 
@@ -19,12 +20,11 @@ export function phaseInfo(s: Status): PhaseInfo {
   switch (s.phase) {
     case "uploading":
       return {
-        label: s.total ? `Uploading ${Math.min(s.done + 1, s.total)}/${s.total}` : "Uploading",
+        // Several files (and accounts) go at once, so no "file n of m": the same words as the strip.
+        label: uploadTitle(s),
         tone: "info",
         icon: "cloudUp",
-        detail: s.current
-          ? `Sending ${s.current.name.split("/").pop()}`
-          : `${s.done} of ${s.total} this round`,
+        detail: s.total ? `${s.done} of ${s.total} done this round` : "Sending files",
       };
     case "scanning":
       return { label: "Scanning", tone: "info", icon: "loader", detail: "Looking for new photos and videos" };
@@ -49,9 +49,21 @@ export function phaseInfo(s: Status): PhaseInfo {
     case "starting":
       return { label: "Starting", tone: "info", icon: "loader", detail: "Starting up" };
     default:
-      return left > 0
-        ? { label: `${left} waiting`, tone: "", icon: "hourglass", detail: "Uploading at the next scan" }
-        : { label: "Up to date", tone: "good", icon: "ok", detail: "Everything is backed up" };
+      if (left > 0)
+        return {
+          label: `${left} waiting`,
+          tone: "",
+          icon: "hourglass",
+          detail: "Uploading at the next scan",
+        };
+      if (s.copies_pending)
+        return {
+          label: "Main library in",
+          tone: "good",
+          icon: "ok",
+          detail: `Still copying to ${copiesText(s) || "your other accounts"}`,
+        };
+      return { label: "Up to date", tone: "good", icon: "ok", detail: "Everything is backed up" };
   }
 }
 

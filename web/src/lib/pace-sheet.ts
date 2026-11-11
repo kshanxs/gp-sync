@@ -113,7 +113,7 @@ export async function openUploadOptions(onSaved?: () => void, pace?: PaceNow | n
     title: "Upload settings",
     icon: "sliders",
     sub: "Backup and Snapchat · every account",
-    body: `${atOnceRow("upload", "Files at once", st.upload_workers ?? 0, "Dynamic runs more side by side while Google keeps up (up to 12; fewer for big videos) and slows down when Google asks.")}
+    body: `${atOnceRow("upload", "Files at once", st.upload_workers ?? 0, "Per account: each account uploads this many side by side with the others. Dynamic runs more while Google keeps up (up to 12; fewer for big videos) and slows down when Google asks.")}
       <div class="sheet-row flex-col items-stretch"><span class="text-sm font-medium">Speed limit</span>
         <div class="pace-pick" role="radiogroup" aria-label="Speed limit" data-pick="speed">${[
           ...new Set([...speeds, limit]),
@@ -124,7 +124,7 @@ export async function openUploadOptions(onSaved?: () => void, pace?: PaceNow | n
               `<button type="button" role="radio" aria-checked="${n === limit}" data-n="${n}">${n ? `${n} Mbps` : "No limit"}</button>`,
           )
           .join("")}</div>
-        <span class="text-xs text-ink-3">Shared by the files going up at once. Upload hours and a custom limit are in <a class="underline" href="#/settings/sync" data-sheet-close>Settings</a>.</span></div>`,
+        <span class="text-xs text-ink-3">Shared by every account and every file going up at once. Upload hours and a custom limit are in <a class="underline" href="#/settings/sync" data-sheet-close>Settings</a>.</span></div>`,
   });
   const now = sheet.el.querySelector<HTMLElement>("[data-now]");
   if (now && !st.upload_workers && pace) now.textContent = `${pace.now} now`;

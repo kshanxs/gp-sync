@@ -2,6 +2,7 @@ import {
   get,
   post,
   tz,
+  type FolderAccount,
   type FolderFiles,
   type FolderGroup,
   type FolderReport,
@@ -9,7 +10,7 @@ import {
   peek,
 } from "../lib/api";
 import { sparkline } from "../lib/charts";
-import { backupPriorityControl } from "../lib/backup-priority";
+import { backupPriorityControl, PRIORITY_MAX } from "../lib/backup-priority";
 import { $, $$, esc, html, toast, touched } from "../lib/dom";
 import { ago, bytes, clock, date, dayKey, fileName, num, pct } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
@@ -47,6 +48,22 @@ let fDay = "";
 let fRequest = 0;
 let fLoading = false;
 let observer: IntersectionObserver | null = null;
+
+/** Where a folder's files go: "Backup: me 80%", then "Also in: two 40%" per extra account. */
+function accountChips(accs: FolderAccount[] | undefined): string {
+  if (!accs?.length) return "";
+  const chip = (a: FolderAccount) => {
+    const p = percent(a.done, a.files);
+    return `<span class="badge ${p === 100 ? "good" : ""}" title="${esc(`${a.main ? "Backup" : "Also in"} ${a.account}: ${num(a.done)} of ${num(a.files)} files`)}">${esc(a.account.split("@")[0]!)} ${p}%</span>`;
+  };
+  const main = accs.filter((a) => a.main);
+  const also = accs.filter((a) => !a.main);
+  return `<span class="flex min-w-0 flex-wrap items-center gap-1 text-xs text-ink-3">${main.length ? `<span>Backup</span>${main.map(chip).join("")}` : ""}${also.length ? `<span>${main.length ? "· " : ""}Also in</span>${also.map(chip).join("")}` : ""}</span>`;
+}
+
+/** A device's folders, from the device list ("Pixel" -> Photos/Pixel, Photos/Pixel (2)), so an open
+ * device can link to its other folders. */
+const deviceFolders = new Map<string, string[]>();
 
 // ---- upload order: folders whose files go to Google first (saved in settings)
 let prio: string[] = [];
@@ -89,7 +106,7 @@ function prioBadge(p: string): string {
 function renderPrio(): void {
   const card = document.getElementById("fo-prio-card");
   if (!card) return;
-  const show = !path && prio.length > 0;
+  const show = prio.length > 0;
   card.classList.toggle("hidden", !show);
   if (!show) return;
   html(
@@ -105,7 +122,7 @@ function renderPrio(): void {
            <button class="btn icon sm" data-prio-remove="${esc(p)}" aria-label="Back to the usual order">${icon("x")}</button></li>`,
        )
        .join("")}</ol>
-     <p class="border-t border-line px-4 py-2.5 text-xs text-ink-3">Others follow in the usual order.</p>`,
+     <p class="border-t border-line px-4 py-2.5 text-xs text-ink-3">Others follow in the usual order. Up to ${PRIORITY_MAX} folders.</p>`,
   );
 }
 
@@ -156,7 +173,9 @@ function rangeText(): string {
 
 // ---- loading
 
-async function load(): Promise<void> {
+/** `background`: the 30 s refresh. A failed refresh keeps the report on screen, and new synced or
+ * failed counts reload the photos below. */
+async function load(background = false): Promise<void> {
   const mine = ++request;
   const kind = path ? "folders" : group; // inside a device it is a folder like any other
   const url = `folders?group=${kind}&path=${encodeURIComponent(path)}&days=${days}&tz=${tz}`;
@@ -168,17 +187,25 @@ async function load(): Promise<void> {
   }
   const r = await get<FolderReport>(url).catch(() => null);
   if (mine !== request) return; // the user moved on
+  if (background && !r && report) return;
+  const before = report?.total;
   report = r;
+  if (r && group === "devices" && !path)
+    for (const c of r.children) if (c.folders.length > 1) deviceFolders.set(c.name, c.folders);
   render();
+  if (background && before && r && (before.synced !== r.total.synced || before.failed !== r.total.failed))
+    void loadFiles(true, true);
 }
 
-async function loadFiles(reset: boolean): Promise<void> {
+/** `keep`: reload what is shown (as many as are loaded, up to 600) without jumping back to the top. */
+async function loadFiles(reset: boolean, keep = false): Promise<void> {
   if (!reset && (fLoading || !files || shownFiles.length >= files.total)) return;
   const mine = ++fRequest;
   fLoading = true;
   const offset = reset ? 0 : shownFiles.length;
+  const limit = keep ? Math.min(600, Math.max(60, shownFiles.length)) : 60;
   try {
-    const url = `folders/files?path=${encodeURIComponent(path)}&group=${group}&status=${fStatus}&kind=${fKind}&sort=${fSort}&offset=${offset}&limit=60&day=${encodeURIComponent(fDay)}&tz=${tz}`;
+    const url = `folders/files?path=${encodeURIComponent(path)}&group=${group}&status=${fStatus}&kind=${fKind}&sort=${fSort}&offset=${offset}&limit=${limit}&day=${encodeURIComponent(fDay)}&tz=${tz}`;
     const seen = reset && filesOpened ? peek<FolderFiles>(url) : undefined;
     if (reset) filesOpened = false;
     if (seen) {
@@ -193,7 +220,8 @@ async function loadFiles(reset: boolean): Promise<void> {
     if (reset) renderFiles();
     else appendFiles(r.items);
   } catch {
-    if (reset) html($("#fo-files"), `<div class="empty">${icon("warn")}Couldn't load the files</div>`);
+    if (reset && !keep)
+      html($("#fo-files"), `<div class="empty">${icon("warn")}Couldn't load the files</div>`);
   } finally {
     if (mine === fRequest) fLoading = false;
   }
@@ -257,7 +285,13 @@ function dayTitle(day: string, today: string, long = false): string {
 function renderSummary(r: FolderReport): void {
   const t = r.total;
   const done = percent(t.synced, t.files);
+  const failed = t.failed ?? 0;
+  const waiting = Math.max(0, t.files - t.synced - failed);
   const parts = path.split("/").filter(Boolean);
+  const siblings =
+    group === "devices" && parts.length === 2
+      ? (deviceFolders.get(deviceName(parts[1]!)) ?? []).filter((f) => f !== path)
+      : [];
   const title = !path
     ? group === "devices"
       ? "All devices"
@@ -272,13 +306,17 @@ function renderSummary(r: FolderReport): void {
        ${path ? prioBadge(path) : ""}
        <span class="ml-auto text-xs text-ink-3 tabular-nums">${done}% in Google Photos</span></div>
      <div class="bar mt-2"><i style="width:${done}%"></i></div>
-     <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+     ${t.accounts?.length ? `<div class="mt-2">${accountChips(t.accounts)}</div>` : ""}
+     ${siblings.length ? `<div class="mt-2 text-xs text-ink-3">Also from this device: ${siblings.map((f) => `<a class="link-btn" href="${folderHref(f)}">${esc(f)}</a>`).join(" · ")}</div>` : ""}
+     <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
        ${stat("Photos", num(t.photos), bytes(t.photo_bytes))}
        ${stat("Videos", num(t.videos), bytes(t.video_bytes))}
-       ${stat("Backed up", num(t.synced), `${num(t.files - t.synced)} waiting`)}
        ${stat("Last added", t.last_added ? ago(t.last_added) : "–", t.last_added ? date(t.last_added, true) : "Nothing yet")}
+       ${stat("In Google", num(t.synced), `${done}% of the files`)}
+       ${stat("Waiting", num(waiting), waiting ? "Not sent yet" : "Nothing waiting")}
+       ${stat("Failed", failed ? `<span class="text-bad">${num(failed)}</span>` : "0", failed ? '<a class="link-btn" href="#/activity/failed">See why</a>' : "None")}
      </div>
-     ${path && (t.files > t.synced || prio.includes(path)) ? backupPriorityControl(path, prio.indexOf(path), t.files > t.synced) : ""}`,
+     ${path ? backupPriorityControl(path, prio.indexOf(path), waiting + failed > 0) : ""}`,
   );
 }
 
@@ -320,7 +358,8 @@ function dayStat(label: string, value: string, sub: string, tone: string): strin
 // ---- devices and subfolders
 
 function rowTarget(c: FolderGroup): string {
-  if (group === "devices" && !path) return c.folders.length === 1 ? folderHref(c.folders[0]!) : "";
+  // A device with several folders (it paired again) opens its first; the others are linked there.
+  if (group === "devices" && !path) return c.folders.length ? folderHref(c.folders[0]!) : "";
   const to = c.folders[0] ?? path;
   // A phone's folder opens as that device, whichever way it was reached.
   if (c.device) return `#/folders/d/${to.split("/").map(encodeURIComponent).join("/")}`;
@@ -334,9 +373,7 @@ function rowHtml(c: FolderGroup): string {
   const sub = devices
     ? c.uploads
       ? "Sent from the Upload page"
-      : c.folders.length > 1
-        ? c.folders.map((f) => `<a class="link-btn" href="${folderHref(f)}">${esc(f)}</a>`).join(" · ")
-        : esc(c.folders[0] ?? "")
+      : esc(c.folders.join(" · "))
     : `${c.device ? "Device · " : ""}${num(c.photos)} photos · ${num(c.videos)} videos`;
   const href = rowTarget(c);
   const tag = href ? "a" : "div";
@@ -351,6 +388,7 @@ function rowHtml(c: FolderGroup): string {
     <div class="min-w-0 flex-1 basis-40">
       <div class="flex items-center gap-2"><span class="truncate text-sm font-medium">${esc(c.name)}</span>${c.folders.length === 1 ? prioBadge(c.folders[0]!) : ""}${c.new ? badge(`+${num(c.new)} new`, "info") : ""}</div>
       <div class="truncate text-xs text-ink-3">${sub}</div>
+      ${c.accounts?.length ? `<div class="mt-1">${accountChips(c.accounts)}</div>` : ""}
       <div class="mt-1.5 flex items-center gap-2"><div class="bar h-1.5 max-w-48 flex-1"><i style="width:${done}%"></i></div><span class="text-xs text-ink-3 tabular-nums">${done}%</span></div>
     </div>
     ${thumbs ? `<div class="hidden gap-1.5 md:flex">${thumbs}</div>` : ""}
@@ -552,7 +590,7 @@ function renderChart(r: FolderReport): void {
           `<div class="flex-1 text-center whitespace-nowrap ${!weekly && d.day === picked ? "font-semibold text-ink" : ""}">${(rows.length - 1 - i) % every === 0 ? esc(nice(d.day)) : ""}</div>`,
       )
       .join("")}</div>
-    <div class="mt-2 flex items-center gap-3 text-xs text-ink-3"><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s1"></i>Photos</span><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s2"></i>Videos</span><span class="ml-auto">${weekly ? "One bar per week" : "Tap a day to see it"}</span></div>`,
+    <div class="mt-2 flex items-center gap-3 text-xs text-ink-3"><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s1"></i>Photos</span><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s2"></i>Videos</span><span class="ml-auto">${weekly ? "One bar per week: a trend only. Pick 90 d or less to open a day" : "Tap a day to see it"}</span></div>`,
   );
   renderDay(r);
 }
@@ -615,6 +653,11 @@ function open(): void {
   html($("#fo-files-sub"), filesSub());
   void load();
   void loadFiles(true);
+  // #/folders/f/~photo (from the Sync page's Photos and videos): straight to the photos.
+  if (linkedKind !== "all")
+    requestAnimationFrame(() =>
+      document.getElementById("fo-files-card")?.scrollIntoView({ block: "start", behavior: "smooth" }),
+    );
 }
 
 const folders: View = {
@@ -675,7 +718,10 @@ const folders: View = {
             prio.filter((x) => x !== p),
             `Backup priority removed for ${prioName(p)}`,
           );
-        else void savePrio([...prio, p].slice(-10), `Backup priority set for ${prioName(p)}`);
+        else if (prio.length >= PRIORITY_MAX) {
+          toast(`Up to ${PRIORITY_MAX} folders can go first. Remove one from Backup priority first.`, "bad");
+          if (report) render(); // the switch stays off
+        } else void savePrio([...prio, p], `Backup priority set for ${prioName(p)}`);
         if (focused) document.querySelector<HTMLButtonElement>("#fo-summary [data-prio-toggle]")?.focus();
       } else if (b.dataset.prioRemove) {
         const p = b.dataset.prioRemove;
@@ -702,6 +748,11 @@ const folders: View = {
         void loadFiles(true);
       } else if (b.dataset.k) {
         fKind = b.dataset.k;
+        // Kept in the address (#/folders/f/Photos/~video), so a link or reload opens the same.
+        const base = location.hash.replace(/\/~(photo|video)$/, "");
+        const next = fKind === "all" ? base : `${base}/~${fKind}`;
+        if (next !== location.hash) history.replaceState(history.state, "", next);
+        linkedKind = fKind;
         void loadFiles(true);
       }
     });
@@ -713,12 +764,12 @@ const folders: View = {
       }
     });
     open();
-    refreshTimer = window.setInterval(() => void load(), 30000);
+    refreshTimer = window.setInterval(() => void load(true), 30000);
   },
   route(args) {
     parse(args);
     open();
-    document.getElementById("view")?.scrollTo({ top: 0 });
+    if (linkedKind === "all") document.getElementById("view")?.scrollTo({ top: 0 });
   },
   unmount() {
     clearInterval(refreshTimer);

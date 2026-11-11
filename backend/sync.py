@@ -128,6 +128,9 @@ state = {
     "library": {"files": 0, "bytes": 0, "synced_files": 0, "synced_bytes": 0, "types": {}},
     "folders": {},  # top folder -> {"files", "bytes", "synced_files", "synced_bytes"}
     "pending": [],  # names waiting to upload (first 500)
+    # Folder backup per account this round: {"phase": waiting|uploading|done|stopped, "done", "total",
+    # "copies", "copies_done"}. Each account uploads on its own threads, side by side (run_round).
+    "lanes": {},
     "index": [],  # every media file from the last scan: (rel path, is video, size, added, backed up)
     "session": {"started": STARTED, "uploaded_files": 0, "uploaded_bytes": 0},
     "login_failed": set(),  # accounts Google rejected; cleared on success or a new login
@@ -1483,21 +1486,34 @@ def next_window(st=None, now=None):
 
 
 class Throttle:
-    """Sleeps inside gpmc's progress callback so the upload stays under the speed limit."""
+    """Sleeps inside gpmc's progress callback so the upload stays under the speed limit.
+
+    `mbps`: a number, or a function returning this file's share now (it changes when another
+    account starts or stops uploading, so the accounts together stay under the one limit)."""
 
     def __init__(self, mbps):
-        self.rate = mbps * 1e6 / 8 if mbps else 0  # bytes per second
-        self.start = None
+        self.mbps = mbps if callable(mbps) else (lambda: mbps)
+        self.due = None  # when the bytes sent so far may have finished at the allowed rate
+        self.sent = 0
 
     def __call__(self, bytes_done):
-        if not self.rate:
+        mbps = self.mbps()
+        rate = mbps * 1e6 / 8 if mbps else 0  # bytes per second
+        if not rate:
+            self.due = None
+            self.sent = bytes_done
             return
-        if self.start is None:
-            self.start = time.monotonic()
+        if self.due is None:
+            self.due = time.monotonic()
+            self.sent = bytes_done
             return
-        ahead = bytes_done / self.rate - (time.monotonic() - self.start)
+        self.due += max(0, bytes_done - self.sent) / rate
+        self.sent = bytes_done
+        ahead = self.due - time.monotonic()
         if ahead > 0:
             time.sleep(min(ahead, 2.0))
+        elif ahead < -2:
+            self.due = time.monotonic() - 2  # a slow spell doesn't buy a long burst later
 
 
 # ---------------------------------------------------------------- sync
@@ -1646,6 +1662,7 @@ def scan(st=None):
     state["index"] = index
     state["pending"] = [rel(p) for p, *_ in todo[:500]]
     state["copies_pending"] = len(copies_todo)
+    state["copies_pending_by"] = dict(collections.Counter(i[3] for i in copies_todo))  # per extra account
     return todo + copies_todo
 
 
@@ -1700,7 +1717,22 @@ def _device_name(folder):
 
 
 def _blank():
-    return {"photos": 0, "videos": 0, "photo_bytes": 0, "video_bytes": 0, "synced": 0, "new": 0, "last_added": 0}
+    return {
+        "photos": 0,
+        "videos": 0,
+        "photo_bytes": 0,
+        "video_bytes": 0,
+        "synced": 0,
+        "failed": 0,
+        "new": 0,
+        "last_added": 0,
+        "accounts": {},  # account -> [files it should have, files in it]; the folder's backup first
+    }
+
+
+def _account_list(accs):
+    """[{"account", "main", "files", "done"}] in the order the accounts were met (backup first)."""
+    return [{"account": a, "main": main, "files": n, "done": d} for a, (n, d, main) in accs.items()]
 
 
 def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
@@ -1717,6 +1749,8 @@ def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
     daily = {}  # day number -> [photos, videos, backed up, waiting, failed]
     groups = {}
     file_states = {rel(p): st for p, st in q("SELECT path, status FROM files")}
+    targets = folder_targets()
+    copied = {(rel(p), a) for p, a in q("SELECT path, account FROM copies WHERE status IN ('uploaded','exists')")}
     backed = backed_folders()
     skipped_tops = {}  # top folder not backed up -> files in it (shown as a note, not counted)
     uploads = upload_folder_name()
@@ -1758,18 +1792,26 @@ def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
         if label and name.count("/") > folder.count("/") + 1:
             g["sub"] = True  # has folders inside: the dashboard can open it
             g["subs"].add(name[len(folder) + 1 :].split("/", 1)[0])
+        st = file_states.get(name)
+        failed = not synced and st == "failed"
+        accs = targets.get(name.split("/", 1)[0]) or []
         for d in (total, g):
             d["videos" if video else "photos"] += 1
             d["video_bytes" if video else "photo_bytes"] += size
             d["synced"] += synced
+            d["failed"] += failed
             d["last_added"] = max(d["last_added"], added)
+            for i, a in enumerate(accs):  # the backup, then each account it is also in
+                row = d["accounts"].setdefault(a, [0, 0, False])
+                row[0] += 1
+                row[1] += bool(synced) if i == 0 else (name, a) in copied
+                row[2] = row[2] or i == 0
         day = int((added + shift) // 86400)
         if first <= day <= today:
             total["new"] += 1
             g["new"] += 1
             counts = daily.setdefault(day, [0, 0, 0, 0, 0])
             counts[int(bool(video))] += 1
-            st = file_states.get(name)
             counts[2 if synced or st in DONE else 4 if st == "failed" else 3] += 1
             g["daily"][day] = g["daily"].get(day, 0) + 1
 
@@ -1792,6 +1834,8 @@ def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
                 "videos": g["videos"],
                 "bytes": g["photo_bytes"] + g["video_bytes"],
                 "synced": g["synced"],
+                "failed": g["failed"],
+                "accounts": _account_list(g["accounts"]),
                 "new": g["new"],
                 "new_week": week(g["daily"]),
                 "last_added": g["last_added"],
@@ -1814,7 +1858,8 @@ def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
         "days": days,
         "today": day_str(today),
         "total": {
-            **{k: total[k] for k in ("photos", "videos", "photo_bytes", "video_bytes", "synced", "new")},
+            **{k: total[k] for k in ("photos", "videos", "photo_bytes", "video_bytes", "synced", "failed", "new")},
+            "accounts": _account_list(total["accounts"]),
             "files": total["photos"] + total["videos"],
             "bytes": total["photo_bytes"] + total["video_bytes"],
             "new_week": sum(c[0] + c[1] for day, c in daily.items() if day > today - 7),
@@ -2101,14 +2146,42 @@ def _alert_result(title, result):
         log(f"Alert '{title}' failed: {bad}", "error")
 
 
-def upload_all(client, todo, account="", st=None):
-    """Upload files for one account. Stops early for pause, schedule or outages."""
+_round_lock = threading.Lock()  # the round's counters, shared by every account's uploads
+
+
+def _new_lane(todo, phase):
+    copies = sum(1 for i in todo if len(i) > 4 and i[4])
+    return {"phase": phase, "done": 0, "total": len(todo), "copies": copies, "copies_done": 0}
+
+
+def uploading_now():
+    """Every file uploading now, across accounts (a copy taken while the workers change it)."""
+    with _round_lock:
+        return list(state.get("uploading", {}).values())
+
+
+def uploading_lanes():
+    """How many accounts are uploading now: they share the one speed limit."""
+    return max(1, sum(1 for lane in list(state["lanes"].values()) if lane.get("phase") == "uploading"))
+
+
+def upload_all(client, todo, account="", st=None, lane=False):
+    """Upload files for one account. Stops early for pause, schedule or outages.
+
+    `lane`: run_round set up the round (totals, every account's lane) and other accounts may be
+    uploading at the same time; otherwise this call is the whole round."""
     from rich.progress import Progress
 
     st = st or get_settings()
     if not account and todo and len(todo[0]) > 3:
         account = todo[0][3]  # every item in one call belongs to the same account
-    state.update(phase="uploading", done=0, total=len(todo))
+    if not lane:
+        state.update(phase="uploading", done=0, total=len(todo))
+        state["uploading"] = {}
+        state["lanes"] = {}
+    info = state["lanes"].get(account) or _new_lane(todo, "waiting")
+    state["lanes"][account] = info
+    info["phase"] = "uploading"
     queued = collections.defaultdict(list)
     rnd = {"files": 0, "bytes": 0}
     fixed = pace.clamp(st.get("upload_workers"))
@@ -2118,7 +2191,6 @@ def upload_all(client, todo, account="", st=None):
     retried = collections.Counter()  # files put back after Google asked to slow down
     lock = threading.RLock()  # counters, the queue and album batches are shared by the workers
     stop = threading.Event()  # pause, upload window or an outage: no new file starts
-    state["uploading"] = {}
 
     def next_item():
         with lock:
@@ -2158,11 +2230,13 @@ def upload_all(client, todo, account="", st=None):
             "kind": "video" if ext(name) in VIDEO_EXTS else "photo",
             "account": account,
         }
-        with lock:
+        key_ = (account, name)  # two accounts may send the same file at once
+        with _round_lock:
             state["current"] = cur
-            state["uploading"][name] = cur
+            state["uploading"][key_] = cur
         phases = []
-        throttle = Throttle(st["speed_limit_mbps"] / gate.allowed(fixed))  # the limit is shared by the workers
+        # The limit is shared by this account's workers and by every account uploading now.
+        throttle = Throttle(lambda: st["speed_limit_mbps"] / (gate.allowed(fixed) * uploading_lanes()))
         started = time.monotonic()
         how = "ok"  # how it went, for the pace: ok, slow (Google asked to slow down) or error
 
@@ -2204,6 +2278,10 @@ def upload_all(client, todo, account="", st=None):
                        VALUES (?,?,?,?,?,?,'',0,?)""",
                     (path, account, size, mtime, status, key, time.time()),
                 )
+                with _round_lock:
+                    copied = state["folders"].get(name.split("/", 1)[0], {}).get("copies")
+                    if copied is not None and account in copied:
+                        copied[account] += 1
             else:
                 q(
                     """INSERT OR REPLACE INTO files
@@ -2211,9 +2289,11 @@ def upload_all(client, todo, account="", st=None):
                        VALUES (?,?,?,?,?,'',0,?,?,?)""",
                     (path, size, mtime, status, key, time.time(), account, digest.hex()),
                 )
-                with lock:
-                    state["library"]["synced_files"] += 1
-                    state["library"]["synced_bytes"] += size
+                with _round_lock:
+                    for d in (state["library"], state["folders"].get(name.split("/", 1)[0])):
+                        if d is not None and "synced_files" in d:
+                            d["synced_files"] += 1
+                            d["synced_bytes"] += size
                 if when is not None and status == "uploaded":
                     sq("UPDATE media_dates SET sent=? WHERE path=?", (int(when), path))
             state["login_failed"].discard(account)
@@ -2225,7 +2305,7 @@ def upload_all(client, todo, account="", st=None):
             ms = int((time.monotonic() - started) * 1000)
             save_upload(name, cur["kind"], size, ms, status, account)
             if status == "uploaded":
-                with lock:
+                with _round_lock:  # the session is counted across accounts
                     state["session"]["uploaded_files"] += 1
                     state["session"]["uploaded_bytes"] += size
                     rnd["files"] += 1
@@ -2290,11 +2370,17 @@ def upload_all(client, todo, account="", st=None):
             if attempts >= MAX_ATTEMPTS:
                 alert("GP Sync: gave up on a file", f"{name}\n{err}", "x", "on_gave_up")
         finally:
-            with lock:
-                state["uploading"].pop(name, None)
+            with _round_lock:
+                state["uploading"].pop(key_, None)
                 state["current"] = next(iter(state["uploading"].values()), None)
-        with lock:
+        with _round_lock:
             state["done"] += 1
+            info["done"] += 1
+            if copy:
+                info["copies_done"] += 1
+                state["copies_pending"] = max(0, state.get("copies_pending", 0) - 1)
+                by = state.setdefault("copies_pending_by", {})
+                by[account] = max(0, by.get(account, 0) - 1)
         return how
 
     try:
@@ -2307,7 +2393,11 @@ def upload_all(client, todo, account="", st=None):
             for t in threads:
                 t.join()
     finally:
-        state["uploading"] = {}
+        with _round_lock:
+            for k in [k for k in state["uploading"] if k[0] == account]:
+                state["uploading"].pop(k, None)
+            state["current"] = next(iter(state["uploading"].values()), None)
+        info["phase"] = "stopped" if stop.is_set() else "done"
         flush_albums(client, account, queued)
         if rnd["files"] and rnd["files"] >= st["notify"]["round_min"]:
             alert(
@@ -2343,6 +2433,7 @@ def run_round():
     notify_change()
     todo = scan(st)
     state["last_scan"] = time.time()
+    state["lanes"] = {}
     if not accs or PAUSE_FILE.exists():
         # Counted the library, but nothing is uploaded until an account is connected or uploads resume.
         state.update(phase="setup" if not accs else "paused")
@@ -2359,14 +2450,38 @@ def run_round():
         state["error"] = ""
         by_account = collections.defaultdict(list)
         for item in todo:
-            by_account[item[3]].append(item)
-        for account, items in by_account.items():
-            if account in accs:
-                # The account's one login, shared with its other work (gpmc renews it when due),
-                # instead of signing in to Google again every round.
-                upload_all(_reclaim_client(account), items, account, st)
-            if PAUSE_FILE.exists() or not upload_allowed(st):
-                break
+            if item[3] in accs:
+                by_account[item[3]].append(item)
+        state.update(phase="uploading", done=0, total=sum(len(v) for v in by_account.values()))
+        state["uploading"] = {}
+        state["lanes"] = {a: _new_lane(items, "waiting") for a, items in by_account.items()}
+        notify_change()
+
+        def lane(account, items):
+            # The account's one login, shared with its other work (gpmc renews it when due),
+            # instead of signing in to Google again every round.
+            upload_all(_reclaim_client(account), items, account, st, lane=True)
+
+        def lane_thread(account, items):
+            try:
+                lane(account, items)
+            except Exception as e:  # one account's trouble doesn't stop the others
+                state["lanes"][account]["phase"] = "stopped"
+                state["error"] = f"{account}: {type(e).__name__}: {e}"
+                traceback.print_exc()
+                log(f"Backup to {account} stopped: {type(e).__name__}: {e}", "error")
+
+        if len(by_account) == 1:
+            lane(*next(iter(by_account.items())))
+        else:  # each account on its own threads, side by side, sharing the speed limit
+            threads = [
+                threading.Thread(target=lane_thread, args=(a, items), daemon=True, name=f"backup {a}")
+                for a, items in by_account.items()
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
     state["phase"] = "paused" if PAUSE_FILE.exists() else "scheduled" if not upload_allowed(st) else "idle"
     if todo:
         background_work.set()
@@ -2952,7 +3067,9 @@ def status_json():
         "schedule": {**st["schedule"], "allowed": upload_allowed(st), "next_window": next_window(st)},
         "speed_limit_mbps": st["speed_limit_mbps"],
         "current": state["current"],
-        "uploading": list(state.get("uploading", {}).values()),
+        "uploading": uploading_now(),
+        # Folder backup per account this round (each account uploads side by side).
+        "lanes": {a: dict(lane) for a, lane in list(state.get("lanes", {}).items())},
         "upload_workers": st["upload_workers"],
         # How many run at once now, per account (dynamic changes it as it goes).
         "pace": {
@@ -2974,6 +3091,7 @@ def status_json():
             )
         },
         "copies_pending": state.get("copies_pending", 0),
+        "copies_pending_by": {a: n for a, n in list(state.get("copies_pending_by", {}).items()) if n},
         "jobs": background_jobs(),
         "reclaim": reclaim_summary(),
         "copying": copy_summary(),

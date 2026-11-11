@@ -11,6 +11,14 @@ import { ago, bytes, duration, fileName, ms, num, pct, speed } from "../lib/form
 import { icon } from "../lib/icons";
 import { host, setPageStatus, setPauseControl, setRefreshControl } from "../lib/store";
 import { badge, cardHead, etaText, openAttrs, phaseInfo, spaceTone, thumb, tile } from "../lib/ui";
+import {
+  accountLanes,
+  copiesLeft,
+  copiesText,
+  lanePhaseText,
+  uploadTitle,
+  type AccountLane,
+} from "../lib/lanes";
 import type { View } from "./view";
 
 let hist: History | null = null;
@@ -287,7 +295,11 @@ function nowTitle(s: Status): string {
     case "starting":
       return "Starting up";
     default:
-      return s.library.files > s.library.synced_files ? "Next files go at the next scan" : "All caught up";
+      return s.library.files > s.library.synced_files
+        ? "Next files go at the next scan"
+        : s.copies_pending
+          ? "Main library is in; copies still going"
+          : "All caught up";
   }
 }
 
@@ -301,20 +313,21 @@ function nowAction(s: Status): string {
 /** The control strip: uploads (status, Pause/Resume) and scanning the folders. */
 function controls(s: Status): void {
   const left = s.library.files - s.library.synced_files;
-  const n = s.uploading?.length ?? (s.current ? 1 : 0);
   setPageStatus(
     s.phase === "uploading"
       ? {
           tone: "run",
-          title: `Uploading · ${num(Math.max(1, n))} at once`,
-          detail: s.total
-            ? `File ${num(Math.min(s.done + Math.max(1, n), s.total))} of ${num(s.total)} this round`
-            : "",
+          title: uploadTitle(s),
+          detail: s.total ? `${num(s.done)} of ${num(s.total)} done this round` : "",
         }
       : s.phase === "scanning"
         ? { tone: "run", title: "Scanning your folders" }
         : s.paused
-          ? { tone: "warn", title: "Uploads are paused", detail: left ? `${num(left)} files waiting` : "" }
+          ? {
+              tone: "warn",
+              title: "Folder uploads are paused",
+              detail: left ? `${num(left)} files waiting` : "",
+            }
           : s.phase === "scheduled"
             ? { tone: "idle", title: "Waiting for upload hours", detail: phaseInfo(s).detail }
             : s.phase === "setup"
@@ -323,19 +336,25 @@ function controls(s: Status): void {
                 ? { tone: "warn", title: "Something went wrong", detail: s.error }
                 : left
                   ? { tone: "idle", title: `${num(left)} files waiting`, detail: "They go at the next scan" }
-                  : {
-                      tone: "good",
-                      title: "All backed up",
-                      detail: `Next scan ${s.interval ? `within ${num(s.interval)} min` : "soon"}`,
-                    },
+                  : s.copies_pending
+                    ? {
+                        tone: "idle",
+                        title: "Main library is in",
+                        detail: `Still copying to ${copiesText(s) || "your other accounts"}`,
+                      }
+                    : {
+                        tone: "good",
+                        title: "All backed up",
+                        detail: `Next scan ${s.interval ? `within ${num(s.interval)} min` : "soon"}`,
+                      },
   );
   setPauseControl({
     paused: !!s.paused,
     working: s.phase === "uploading",
-    label: s.paused ? "Resume uploads" : "Pause uploads",
+    label: s.paused ? "Resume folder uploads" : "Pause folder uploads",
     toggle: async () => {
       await post("pause");
-      return s.paused ? "Uploads resumed" : "Uploads paused: files under way finish first";
+      return s.paused ? "Folder uploads resumed" : "Folder uploads paused: files under way finish first";
     },
   });
   setRefreshControl({
@@ -348,21 +367,51 @@ function controls(s: Status): void {
   });
 }
 
-/** The other files uploading at the same time (Settings › Sync, Files at once), in the shared work
- * panel: how many on each step, then a list that scrolls in its own box. */
-function alsoUploading(s: Status, shown: string): string {
-  const others = (s.uploading ?? []).filter((u) => u.name !== shown);
-  if (!others.length) return "";
-  return `<div class="-mx-4 mt-3 border-y border-line">${workBox(
-    others.map((u) => ({
-      key: u.name,
+/** Files in flight, in the shared work panel: how many on each step, then a list that scrolls. */
+function flight(list: NonNullable<Status["uploading"]>): string {
+  return workBox(
+    list.map((u) => ({
+      key: `${u.account}:${u.name}`,
       name: fileName(u.name),
       step: u.step,
       done: u.bytes_done,
       total: u.bytes_total,
       label: STEPS[u.step],
     })),
-  )}</div>`;
+  );
+}
+
+/** One account's folder backup: what it is doing, its files in flight and how far it is. */
+function laneCard(l: AccountLane, s: Status): string {
+  const tone =
+    l.phase === "uploading" ? "info" : l.phase === "stopped" ? "warn" : l.phase === "caught_up" ? "good" : "";
+  const p = pct(l.done, l.total);
+  const what = [
+    l.backup.length ? `Backup: ${l.backup.join(", ")}` : "",
+    l.also.length ? `Also in: ${l.also.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const pace = paceButton("upload", s.upload_workers ?? 0, s.pace?.[l.account]?.upload);
+  return `<div class="min-w-0 border-b border-line md:odd:border-r" data-lane="${esc(l.account)}">
+    <div class="p-4">
+      <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate text-sm font-medium" title="${esc(l.account)}">${esc(l.account)}</span>${badge(lanePhaseText(l, s), tone)}</div>
+      <div class="mt-1 truncate text-xs text-ink-3" title="${esc(what)}">${esc(what)}</div>
+      <span class="bar mt-2.5 block h-1.5"><i style="width:${p}%"></i></span>
+      <div class="mt-1 flex items-center justify-between gap-2 text-xs text-ink-3 tabular-nums"><span>${num(l.done)} of ${num(l.total)} in this account${l.roundTotal ? ` · ${num(l.roundDone)} of ${num(l.roundTotal)} this round` : ""}</span>${pace}</div>
+    </div>
+    ${l.uploading.length ? `<div class="border-t border-line">${flight(l.uploading)}</div>` : ""}
+  </div>`;
+}
+
+function lanesCard(s: Status): string {
+  const lanes = accountLanes(s);
+  if (!lanes.length) return "";
+  return `${cardHead(
+    "Accounts",
+    "users",
+    `<span class="text-xs text-ink-3">${lanes.length > 1 ? "Each account uploads side by side; the speed limit is shared" : "Folder backup"}</span>`,
+  )}<div class="grid md:grid-cols-2">${lanes.map((l) => laneCard(l, s)).join("")}</div>`;
 }
 
 function upNext(s: Status, current: string): string {
@@ -382,11 +431,11 @@ function nowCard(s: Status): string {
   if (c)
     return `<div class="flex items-center gap-3">${thumb(c.name, "thumb size-14")}
         <div class="min-w-0 flex-1"><div class="truncate font-medium" title="${esc(c.name)}">${esc(fileName(c.name))}</div>
-        <div class="mt-1 flex flex-wrap gap-1">${badge(c.kind === "video" ? "Video" : "Photo", "", c.kind === "video" ? "video" : "photo")}${stepBadge(c)}</div></div></div>
+        <div class="mt-1 flex flex-wrap gap-1">${badge(c.kind === "video" ? "Video" : "Photo", "", c.kind === "video" ? "video" : "photo")}${stepBadge(c)}</div>
+        ${c.account ? `<div class="mt-1 truncate text-xs text-ink-3">To ${esc(c.account)}</div>` : ""}</div></div>
       <div class="bar active mt-3"><i style="width:${pct(c.bytes_done, c.bytes_total)}%"></i></div>
       <div class="mt-1.5 flex justify-between text-xs text-ink-3 tabular-nums"><span>${bytes(c.bytes_done)} of ${bytes(c.bytes_total)}</span><span>${speed(s.net.up_now)}</span></div>
-      ${alsoUploading(s, c.name)}
-      ${s.total ? `<div class="mt-3 text-xs text-ink-3">File ${num(Math.min(s.done + (s.uploading?.length || 1), s.total))} of ${num(s.total)} this round${(s.uploading?.length ?? 0) > 1 ? ` · ${num(s.uploading!.length)} at once` : ""}</div>` : ""}
+      ${s.total ? `<div class="mt-3 text-xs text-ink-3">${num(s.done)} of ${num(s.total)} done this round${(s.uploading?.length ?? 0) > 1 ? ` · ${esc(uploadTitle(s).replace("Uploading · ", ""))}; see Accounts below` : ""}</div>` : ""}
       ${upNext(s, c.name)}`;
   return `<div class="flex items-center gap-3"><span class="grid size-12 shrink-0 place-items-center rounded-xl bg-panel-2 ${s.phase === "paused" ? "text-warn" : s.phase === "scanning" ? "text-accent" : "text-ink-3"}">${icon(phaseInfo(s).icon, `size-6 ${s.phase === "scanning" ? "spin" : ""}`)}</span>
       <div class="min-w-0 flex-1"><div class="font-medium">${esc(nowTitle(s))}</div><div class="truncate text-xs text-ink-3">${esc(phaseInfo(s).detail)}</div></div>${nowAction(s)}</div>
@@ -408,11 +457,13 @@ function heroBadges(s: Status): string {
           "hourglass",
           s.paused ? "Waiting until uploads resume" : "Waiting for upload",
         )
-      : badge("All backed up", "good", "ok"),
+      : s.copies_pending
+        ? badge("Main library in", "good", "ok", "Every file is in its backup account")
+        : badge("All backed up", "good", "ok"),
     eta ? badge(`~${eta} left`, "info", "clock", "At the current upload speed") : "",
-    s.copies_pending
-      ? badge(`${num(s.copies_pending)} copies to go`, "", "copy", "Waiting for your other Google accounts")
-      : "",
+    ...copiesLeft(s).map(([a, n]) =>
+      badge(`${num(n)} to ${a.split("@")[0]}`, "", "copy", `Still copying to ${a} (Also in)`),
+    ),
     s.counts.failed
       ? `<a href="#/activity/failed">${badge(`${num(s.counts.failed)} failed`, "bad", "error")}</a>`
       : "",
@@ -430,11 +481,18 @@ function folderList(s: Status): string {
     .sort((a, b) => b[1].files - a[1].files)
     .map(([name, f]) => {
       const fp = pct(f.synced_files, f.files);
+      const extra = (f.accounts ?? []).slice(1);
+      const chips = extra
+        .map(
+          (a) =>
+            `<span class="badge" title="Also in ${esc(a)}: ${num(f.copies?.[a] ?? 0)} of ${num(f.files)} files">${esc(a.split("@")[0])} ${num(f.copies?.[a] ?? 0)}/${num(f.files)}</span>`,
+        )
+        .join("");
       return `<li><a href="#/folders/f/${encodeURIComponent(name)}" class="block px-4 py-3 hover:bg-panel-2">
         <span class="mb-1.5 flex items-center gap-2 text-sm"><span class="flex min-w-0 items-center gap-1.5 font-medium">${icon("folder", "size-4 shrink-0 text-ink-3")}<span class="truncate">${esc(name)}</span></span>
         <span class="ml-auto shrink-0 text-xs text-ink-3 tabular-nums">${num(f.synced_files)} / ${num(f.files)}</span></span>
         <span class="bar block"><i style="width:${fp}%"></i></span>
-        <span class="mt-1 block truncate text-xs text-ink-3">${esc(f.account)}</span></a></li>`;
+        <span class="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-xs text-ink-3"><span class="truncate">Backup: ${esc(f.account)}</span>${extra.length ? `<span>· Also in</span>${chips}` : ""}</span></a></li>`;
     })
     .join("")}</ul>`;
 }
@@ -466,6 +524,8 @@ const sync: View = {
         <div class="card-b" id="sy-now"><div class="skeleton h-24"></div></div>
       </section>
 
+      <section class="card order-2 min-w-0 overflow-hidden lg:order-none lg:col-span-12" id="sy-lanes" hidden></section>
+
       <section class="card order-4 self-start lg:order-none lg:col-span-7">
         ${cardHead("Folders", "folder", '<a href="#/folders" class="hover:text-ink">All folders ›</a>')}
         <div id="sy-folders"><div class="card-b"><div class="skeleton h-24"></div></div></div>
@@ -486,8 +546,14 @@ const sync: View = {
       </section>
     </div>`;
     el.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).closest('[data-pace="upload"]')) {
-        const acc = last?.accounts?.[0] ?? "";
+      const t = e.target as HTMLElement;
+      if (t.closest('[data-pace="upload"]')) {
+        // Each account's own pace: the lane's, or the file on show's account in the Now card.
+        const acc =
+          t.closest<HTMLElement>("[data-lane]")?.dataset.lane ??
+          last?.current?.account ??
+          last?.accounts?.[0] ??
+          "";
         void openUploadOptions(undefined, last?.pace?.[acc]?.upload);
       }
     });
@@ -513,8 +579,10 @@ const sync: View = {
   update(s) {
     last = s;
     controls(s);
+    // With one account the pace is in the Now card; with several, each lane has its own.
     const acc = s.accounts?.[0] ?? "";
-    const pace = paceButton("upload", s.upload_workers ?? 0, s.pace?.[acc]?.upload);
+    const pace =
+      (s.accounts?.length ?? 0) > 1 ? "" : paceButton("upload", s.upload_workers ?? 0, s.pace?.[acc]?.upload);
     const slot = document.getElementById("sy-pace");
     if (slot && slot.innerHTML !== pace) slot.innerHTML = pace;
     // New uploads: refresh the heat map and streak now instead of waiting for the minute timer.
@@ -543,6 +611,10 @@ const sync: View = {
     );
     html($("#sy-badges"), heroBadges(s));
     html($("#sy-now"), nowCard(s));
+    const lanes = $("#sy-lanes");
+    const lanesHtml = lanesCard(s);
+    lanes.hidden = !lanesHtml;
+    html(lanes, lanesHtml);
     html($("#sy-folders"), folderList(s));
     // Room left on the disk the photos are on, read from the system (any host).
     const space = $("#sy-space");

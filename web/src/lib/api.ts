@@ -38,6 +38,15 @@ export interface Current {
   kind: "photo" | "video";
   account: string;
 }
+/** Folder backup for one account this round: each account uploads side by side. */
+export interface Lane {
+  phase: "waiting" | "uploading" | "done" | "stopped";
+  done: number;
+  total: number;
+  /** Of those, copies for folders where this account is an extra ("Also in"). */
+  copies: number;
+  copies_done: number;
+}
 export interface LogItem {
   time: number;
   kind: string;
@@ -94,6 +103,8 @@ export interface Status {
   max_accounts?: number;
   copies?: Record<string, { done: number; failed: number }>;
   copies_pending?: number;
+  /** Folder copies still to go, per extra account ("Also in"). */
+  copies_pending_by?: Record<string, number>;
   /** Background work right now, per account (and copy pair). */
   jobs?: Job[];
   /** Free storage per account: items waiting or under way, items freed, and whether it is paused. */
@@ -111,6 +122,8 @@ export interface Status {
   uploading?: Current[];
   /** 0: dynamic (see lib/pace.ts). */
   upload_workers?: number;
+  /** Folder backup per account this round (main backups and "Also in" copies). */
+  lanes?: Record<string, Lane>;
   /** How many run at once now, per account. */
   pace?: Record<string, { upload: PaceNow; storage: PaceNow }>;
   library: Library;
@@ -521,6 +534,13 @@ export interface FileItem {
   /** No capture date inside the file. */
   undated?: boolean;
 }
+/** One account a folder goes to: its backup (main) or an account it is also in, and how far. */
+export interface FolderAccount {
+  account: string;
+  main: boolean;
+  files: number;
+  done: number;
+}
 export interface FolderGroup {
   /** Subfolder or device name; "" = files sitting in the folder itself. */
   name: string;
@@ -532,6 +552,10 @@ export interface FolderGroup {
   videos: number;
   bytes: number;
   synced: number;
+  /** Not in Google, and the last try failed (not counted as waiting). */
+  failed?: number;
+  /** Accounts its files go to, backup first. */
+  accounts?: FolderAccount[];
   /** Files added in the chosen range. */
   new: number;
   new_week: number;
@@ -559,6 +583,8 @@ export interface FolderReport {
     photo_bytes: number;
     video_bytes: number;
     synced: number;
+    failed?: number;
+    accounts?: FolderAccount[];
     new: number;
     new_week: number;
     new_day: number;

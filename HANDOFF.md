@@ -22,6 +22,7 @@ Questions or a yes only the owner can give, with the options. Remove an item onl
 in their own words, and record the answer in the Work log row.
 
 - Push fix/cross-site-posts and open a PR? Release it as 1.7.5 and update the Umbrel store?
+- Push the parallel folder backup commit (local on main)? Ship it in the same release?
 
 ## Blocked
 
@@ -51,5 +52,6 @@ Newest first. One row per session that changed anything; never edit another sess
 
 | Date | Entry | Agent | Area | What changed | Links | Next step | Status |
 |---|---|---|---|---|---|---|---|
+| 2026-11-12T03:05+05:30 | Parallel folder backup per account | Claude | Dev | Folder backup now uploads to each account side by side (shared speed limit, per-account lanes in status). Make main in Settings → Folders; per-account cards on Sync; per-account percent, failed split, priority cap on Folders. 324 backend + 58 web tests pass on umbrel | local commit on main, not pushed | Owner: try with two accounts on Umbrel, then approve push and a release | Waiting on owner |
 | 2026-11-12T02:36+05:30 | Fix all: DNS rebinding and test disk space | Claude | Dev | Without PASSWORD (not on Umbrel) only home-network Host names are answered; new ALLOWED_HOSTS setting. Copy test no longer needs 2 GB free. 320 backend tests pass | branch fix/cross-site-posts, not pushed | Owner: approve push, PR and release 1.7.5 | Waiting on owner |
 | 2026-11-11T22:53+05:30 | Shipkit launch sweep: cross-site fix | Claude | Dev | Ran shipkit /break launch on umbrel: web 53 and backend 317 tests pass. Found and fixed: with no PASSWORD, other websites could add a Google account and redirect folders (403 now) | branch fix/cross-site-posts (90f2081), not pushed | Owner: approve push/PR and a release; then on Umbrel change a setting in the dashboard to confirm it still saves | Waiting on owner |

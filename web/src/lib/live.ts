@@ -65,7 +65,7 @@ export function liveProcesses(s: Status): Live[] {
   const up = s.uploading ?? (s.current ? [s.current] : []);
   const upRunning = s.phase !== "paused" && (s.phase === "uploading" || up.length > 0);
   const left = Math.max(0, s.library.files - s.library.synced_files);
-  const roundDone = Math.min(s.done + up.length, s.total);
+  const roundDone = Math.min(s.done, s.total); // several go at once: count finished files only
   out.push({
     key: "uploads",
     running: upRunning,
@@ -79,7 +79,7 @@ export function liveProcesses(s: Status): Live[] {
             upRunning,
             !!s.paused,
             left,
-            s.total ? `${num(roundDone)} of ${num(s.total)} this round` : "Uploading",
+            s.total ? `${num(roundDone)} of ${num(s.total)} done this round` : "Uploading",
             "All backed up",
           ),
     verb: VERB.uploads,

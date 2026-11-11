@@ -9,6 +9,7 @@ import { setTheme, theme as currentTheme } from "../lib/theme";
 import { avatar } from "../lib/account-menu";
 import { badge, cardHead, syncChips } from "../lib/ui";
 import { atOnceOptions } from "../lib/pace";
+import { accountLanes, folderOrder, lanePhaseText } from "../lib/lanes";
 import type { View } from "./view";
 
 // [key, title, icon, short line for the menu, icon tile color (iOS system colors), page intro, group]
@@ -186,6 +187,27 @@ function hoursBar(): string {
   <p class="mt-2 text-xs ${draft.enabled ? "text-ink-2" : "text-ink-3"}">${draft.enabled ? `Uploads run ${draft.start === draft.end ? "all day" : `from ${hour(draft.start)} until ${hour(draft.end)}`}.` : "Off: uploads run at any hour. Turn it on to use the hours below."}</p>`;
 }
 
+/** Each connected account's folder backup: its pace now and whether it is uploading. */
+function laneRows(s: Status): string {
+  const lanes = accountLanes(s);
+  if (!lanes.length) return "";
+  return `<ul class="divide-y divide-line border-t border-line">${lanes
+    .map((l) => {
+      const p = s.pace?.[l.account]?.upload;
+      const pace = p ? `${p.running} of ${p.now} at once${p.dynamic ? " (dynamic)" : ""}` : "";
+      const tone =
+        l.phase === "uploading"
+          ? "info"
+          : l.phase === "stopped"
+            ? "warn"
+            : l.phase === "caught_up"
+              ? "good"
+              : "";
+      return `<li class="flex items-center gap-3 px-4 py-2.5 text-sm"><span class="min-w-0 flex-1"><span class="block truncate font-medium">${esc(l.account)}</span><span class="block truncate text-xs text-ink-3">${pace}</span></span>${badge(lanePhaseText(l, s), tone)}</li>`;
+    })
+    .join("")}</ul>`;
+}
+
 function sectionSync(s: Status | null): string {
   const presets = [0, 2, 5, 10, 20, 50];
   return `<div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -193,11 +215,13 @@ function sectionSync(s: Status | null): string {
       <div class="card-b flex flex-col gap-4 md:flex-row md:items-center">
         <div class="min-w-0 flex-1"><div class="flex flex-wrap gap-1.5" id="set-chips">${s ? syncChips(s) : ""}</div></div>
         <div class="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
-          <span class="col-span-2 flex items-center justify-between gap-3 rounded-xl border border-line px-3 py-1.5 text-sm">Pause uploads ${sw("set-pause", !!s?.paused)}</span>
+          <span class="col-span-2 flex items-center justify-between gap-3 rounded-xl border border-line px-3 py-1.5 text-sm" title="Folder backup only. Overview's Pause everything also stops Free storage, copies and date fixes.">Pause folder uploads ${sw("set-pause", !!s?.paused)}</span>
           <button class="btn" id="set-scan">${icon("refresh")}Scan now</button>
           <button class="btn" id="set-retry">${icon("retry")}Retry failed${s?.counts.failed ? ` <span class="count bad">${s.counts.failed}</span>` : ""}</button>
         </div>
-      </div></section>
+      </div>
+      <p class="border-t border-line px-4 py-3 text-xs text-ink-3">Upload hours, the speed limit and files at once apply to every account.</p>
+      <div id="set-lanes">${s ? laneRows(s) : ""}</div></section>
     <section class="card">${cardHead("Upload hours", "clock", sw("set-sch", draft.enabled))}
       <div class="card-b space-y-4">
         <div id="set-bar">${hoursBar()}</div>
@@ -212,7 +236,7 @@ function sectionSync(s: Status | null): string {
         <div class="@container"><div class="seg grid w-full grid-cols-3 @[34rem]:grid-cols-6" id="set-speed">${presets.map((p) => `<button data-mbps="${p}" aria-pressed="${p === draft.speed}">${p ? `${p} Mbps` : "No limit"}</button>`).join("")}</div></div>
         ${field("Custom (Mbps)", `<input class="input" id="set-mbps" type="number" min="0" step="0.5" value="${draft.speed || ""}" placeholder="No limit">`, "Leave room for video calls and streaming at home. Limits the upload to Google only.")}
         <div class="flex items-center gap-2 text-sm text-ink-2" id="set-speed-note"></div>
-        ${field("Files at once", `<select class="input" id="set-workers">${atOnceOptions(draft.workers)}</select>`, "Per account. Dynamic runs more side by side while Google keeps up (up to 12; fewer for big videos) and slows down when Google asks. The speed limit is shared between them.")}
+        ${field("Files at once", `<select class="input" id="set-workers">${atOnceOptions(draft.workers)}</select>`, "Each account uploads this many files at once, side by side with the other accounts; the speed limit is shared across all of them. Dynamic runs more while Google keeps up (up to 12; fewer for big videos) and slows down when Google asks.")}
       </div></section>
     <section class="card xl:col-span-2">${cardHead("How syncing works", "info")}
       <div class="card-b grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
@@ -338,6 +362,19 @@ function sectionAccounts(s: Status | null): string {
   </div>`;
 }
 
+/** A folder's account chips. `order`: the accounts it goes to, main (the backup) first: picked with
+ * Make main, never from the chips' order on the page. */
+function folderChips(accs: string[], order: string[]): string {
+  if (!accs.length) return '<span class="text-xs text-ink-3">Connect a Google account first</span>';
+  return accs
+    .map((a) => {
+      const i = order.indexOf(a);
+      const main = i === 0 && order.length > 1;
+      return `<span class="inline-flex items-center gap-1"><button type="button" class="chip" data-acc="${esc(a)}" aria-pressed="${i >= 0}">${icon("ok", "size-3.5")}${esc(a)}${main ? '<span class="opacity-70">· main</span>' : ""}</button>${i > 0 ? `<button type="button" class="btn sm" data-main="${esc(a)}" title="Make ${esc(a)} the backup; the others get copies">Make main</button>` : ""}</span>`;
+    })
+    .join("");
+}
+
 function sectionFolders(s: Status | null): string {
   const accs = s?.accounts ?? [];
   const folders = Object.entries(s?.folders ?? {});
@@ -350,24 +387,18 @@ function sectionFolders(s: Status | null): string {
               const on = f.accounts ?? (f.account ? [f.account] : []);
               const extra = on.slice(1);
               const copied = extra.length
-                ? ` · copies ${extra.map((a) => `${num(f.copies?.[a] ?? 0)} in ${esc(a.split("@")[0])}`).join(", ")}`
+                ? ` · also in ${extra.map((a) => `${esc(a.split("@")[0])} ${num(f.copies?.[a] ?? 0)}/${num(f.files)}`).join(", ")}`
                 : "";
               return `<div class="border-b border-line px-4 py-3 last:border-b-0">
                 <div class="flex items-center gap-3"><span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2 text-ink-2">${icon("folder")}</span>
                   <div class="min-w-0 flex-1"><div class="truncate text-sm font-medium">${esc(name)}</div><div class="truncate text-xs text-ink-3">${num(f.files)} files · ${bytes(f.bytes)}${on.length ? ` · ${num(f.synced_files)} backed up${copied}` : " · not backed up"}</div></div></div>
-                <div class="mt-2.5 flex flex-wrap gap-1.5 pl-12" data-folder="${esc(name)}">${
-                  accs.length
-                    ? accs
-                        .map(
-                          (a) =>
-                            `<button type="button" class="chip" data-acc="${esc(a)}" aria-pressed="${on.includes(a)}">${icon("ok", "size-3.5")}${esc(a)}${on[0] === a && on.length > 1 ? '<span class="opacity-70">· main</span>' : ""}</button>`,
-                        )
-                        .join("")
-                    : '<span class="text-xs text-ink-3">Connect a Google account first</span>'
-                }</div></div>`;
+                <div class="mt-2.5 flex flex-wrap gap-1.5 pl-12" data-folder="${esc(name)}" data-order="${esc(JSON.stringify(on.filter((a) => accs.includes(a))))}">${folderChips(
+                  accs,
+                  on.filter((a) => accs.includes(a)),
+                )}</div></div>`;
             })
             .join("")}</div>
-          <div class="flex flex-wrap items-center justify-between gap-2 border-t border-line p-4"><span class="text-xs text-ink-3">${many ? "The first account turned on is the main one; the others get copies. " : ""}Files are only read, never changed or deleted.</span><button class="btn primary" id="set-save-folders">${icon("ok")}Save folders</button></div>`
+          <div class="flex flex-wrap items-center justify-between gap-2 border-t border-line p-4"><span class="text-xs text-ink-3">${many ? "The main account is the backup; every other account you pick gets a copy of the same files. Make main changes which one is the backup. " : ""}Files are only read, never changed or deleted.</span><button class="btn primary" id="set-save-folders">${icon("ok")}Save folders</button></div>`
         : `<div class="empty">${icon("folderOpen")}No folders found. Mount folders under /media.</div>`
     }</section>`;
 }
@@ -904,20 +935,32 @@ function wire(): void {
   );
 
   // folders
-  // Folder account chips: tap to turn an account on or off for that folder.
-  document
-    .querySelectorAll<HTMLButtonElement>("[data-folder] .chip[data-acc]")
-    .forEach((chip) =>
-      chip.addEventListener("click", () =>
-        chip.setAttribute("aria-pressed", String(chip.getAttribute("aria-pressed") !== "true")),
-      ),
-    );
+  // Folder account chips: tap to turn an account on or off for that folder; Make main puts it first
+  // (the backup). The order is kept on the row and saved as it is, main first.
+  const orderOf = (row: HTMLElement): string[] => {
+    try {
+      return JSON.parse(row.dataset.order || "[]") as string[];
+    } catch {
+      return [];
+    }
+  };
+  $$<HTMLElement>("[data-folder]").forEach((row) =>
+    row.addEventListener("click", (e) => {
+      const t = e.target as HTMLElement;
+      const main = t.closest<HTMLElement>("[data-main]");
+      const chip = t.closest<HTMLElement>(".chip[data-acc]");
+      if (!main && !chip) return;
+      const order = main
+        ? folderOrder(orderOf(row), main.dataset.main ?? "", "main")
+        : folderOrder(orderOf(row), chip!.dataset.acc ?? "", "toggle");
+      row.dataset.order = JSON.stringify(order);
+      html(row, folderChips(status()?.accounts ?? [], order));
+    }),
+  );
   on("set-save-folders", "click", () => {
     const folders: Record<string, string[]> = {};
     $$<HTMLElement>("[data-folder]").forEach((row) => {
-      folders[row.dataset.folder ?? ""] = $$<HTMLButtonElement>('.chip[aria-pressed="true"]', row).map(
-        (c) => c.dataset.acc ?? "",
-      );
+      folders[row.dataset.folder ?? ""] = orderOf(row);
     });
     void save({ folders }, "Folders saved. Scanning now.");
   });
@@ -1072,6 +1115,8 @@ const settings: View = {
     if (cfg && !drawnWithStatus) renderSection();
     const chips = document.getElementById("set-chips");
     if (chips) html(chips, syncChips(s));
+    const lanes = document.getElementById("set-lanes");
+    if (lanes) html(lanes, laneRows(s));
     const p = document.getElementById("set-pause");
     if (p && document.activeElement !== p) p.setAttribute("aria-checked", String(s.paused));
   },

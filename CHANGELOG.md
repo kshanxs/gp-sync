@@ -13,6 +13,22 @@
   by a domain name without a password, add it to the new `ALLOWED_HOSTS` setting (`*` turns the
   check off). Nothing changes with a password or on Umbrel.
 - Tests no longer need 2 GB free in the temp folder.
+- **Folder backup uploads to every account at once.** A folder backed up to several Google
+  accounts used to upload to one account after the other; now each account uploads on its own,
+  side by side, like Free storage and Copy accounts. Upload hours, the speed limit and files at
+  once apply to every account; the speed limit is shared, so two accounts never take twice the
+  limit. One account's login trouble no longer stops the others. With one account nothing changes.
+- **Settings → Folders: Make main.** The main account (the backup) is chosen with Make main, not
+  by the order the accounts were tapped; every other account gets a copy of the same files.
+- **Sync page: one card per account** with what it is doing, its files in flight, how far it is
+  and its own pace. Folder rows show the backup account and how far each "Also in" account is.
+  "All backed up" waits until the copies are in too.
+- **Folders page:** each folder and device shows the accounts it goes to with a percent each; the
+  summary splits In Google, Waiting and Failed; a device with several folders opens; backup
+  priority is on every folder (up to 10, an 11th is refused instead of dropping one); the photo
+  grid reloads when new files land; the photo/video filter is kept in the address.
+- Settings → Sync lists each account's pace and state, and its pause is now "Pause folder uploads".
+  Overview names the account on backup rows, and upload hours read the same everywhere.
 
 ## 1.7.4
 

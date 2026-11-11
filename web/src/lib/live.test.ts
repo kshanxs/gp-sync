@@ -35,7 +35,10 @@ describe("live processes", () => {
     } as never);
     const u = by(s).uploads!;
     expect(u.running && u.pct).toBe(7.5);
-    expect(u.detail).toBe("3 of 40 this round");
+    expect(u.detail).toBe("3 of 40 done this round");
+    // Files in flight are not counted as done: several go at once, across accounts.
+    const busy = by({ ...s, uploading: [{}, {}] } as never).uploads!;
+    expect(busy.detail).toBe("3 of 40 done this round");
     expect(tabLive(s)).toBeNull(); // uploads have the Sync tab
   });
 
