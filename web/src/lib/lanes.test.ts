@@ -95,6 +95,7 @@ describe("account lanes", () => {
     expect(lanes.map((l) => l.phase)).toEqual(["caught_up", "behind"]);
     expect(copiesText(s)).toBe("two (6)");
     expect(phaseInfo(s).label).toBe("Main library in");
+    expect(phaseInfo(s).tone).toBe("info");
     expect(phaseInfo(s).detail).toContain("two (6)");
   });
 });

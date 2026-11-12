@@ -142,6 +142,29 @@ def test_shared_speed_limit_follows_the_accounts(monkeypatch):
     assert slept == [pytest.approx(0.5)]
 
 
+def test_failed_copy_stays_pending(two, monkeypatch):
+    """A copy that fails is still owed. The count must not drop to zero until it actually lands."""
+    sync.update_settings({"folders": {"Photos": two}, "upload_workers": 1})
+    monkeypatch.setattr(
+        sync, "_reclaim_client", lambda account: FakeClient({"a.jpg": "uploading", "b.HEIC": KeyError("bad")})
+    )
+    sync.run_round()
+    assert sync.state["copies_pending"] == 1
+    assert sync.state["copies_pending_by"] == {"two@example.com": 1}
+
+
+def test_folder_report_skips_snap_holds_for_extra_accounts(two):
+    sync.update_settings({"folders": {"Photos": two}})
+    sync.scan()
+    name = sync.state["index"][0][0]
+    sync.state["skip_copy"].add((name, "two@example.com"))
+    photos = {c["name"]: c for c in sync.folder_report("", "folders", 30)["children"]}["Photos"]
+    extra = next(a for a in photos["accounts"] if not a["main"])
+    main = next(a for a in photos["accounts"] if a["main"])
+    assert extra["files"] == photos["files"] - 1
+    assert main["files"] == photos["files"]
+
+
 def test_folder_report_shows_each_account(two):
     sync.update_settings({"folders": {"Photos": two}})
     todo = sync.scan()

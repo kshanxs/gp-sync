@@ -132,6 +132,11 @@ state = {
     # "copies", "copies_done"}. Each account uploads on its own threads, side by side (run_round).
     "lanes": {},
     "index": [],  # every media file from the last scan: (rel path, is video, size, added, backed up)
+    # Filled by scan and updated as copies finish, so the Folders page does not re-read the copies
+    # table on every refresh. skip_copy: (path, extra account) that is not a folder copy (Snapchat
+    # holds, and copies that gave up).
+    "copied_ok": set(),
+    "skip_copy": set(),
     "session": {"started": STARTED, "uploaded_files": 0, "uploaded_bytes": 0},
     "login_failed": set(),  # accounts Google rejected; cleared on success or a new login
     "next_window": 0,
@@ -1495,25 +1500,37 @@ class Throttle:
         self.mbps = mbps if callable(mbps) else (lambda: mbps)
         self.due = None  # when the bytes sent so far may have finished at the allowed rate
         self.sent = 0
+        self.share = 0.0
+        self.share_at = 0.0  # last time the share was read; progress calls reuse it for a quarter second
 
     def __call__(self, bytes_done):
-        mbps = self.mbps()
+        # Progress fires per chunk. Reading the lane count that often, on every file, is pure overhead.
+        # No limit: don't read the clock (callers that fake time hand out one tick per read).
+        now = None
+        if self.share_at == 0.0 or (now := time.monotonic()) - self.share_at >= 0.25:
+            self.share = self.mbps()
+            if not self.share:
+                self.due = None
+                self.sent = bytes_done
+                return
+            if now is None:
+                now = time.monotonic()
+            self.share_at = now
+        mbps = self.share
         rate = mbps * 1e6 / 8 if mbps else 0  # bytes per second
-        if not rate:
-            self.due = None
-            self.sent = bytes_done
-            return
+        if now is None:
+            now = time.monotonic()
         if self.due is None:
-            self.due = time.monotonic()
+            self.due = now
             self.sent = bytes_done
             return
         self.due += max(0, bytes_done - self.sent) / rate
         self.sent = bytes_done
-        ahead = self.due - time.monotonic()
+        ahead = self.due - now
         if ahead > 0:
             time.sleep(min(ahead, 2.0))
         elif ahead < -2:
-            self.due = time.monotonic() - 2  # a slow spell doesn't buy a long burst later
+            self.due = now - 2  # a slow spell doesn't buy a long burst later
 
 
 # ---------------------------------------------------------------- sync
@@ -1538,6 +1555,8 @@ def scan(st=None):
     todo = []
     index = []
     copies_todo = []  # the same files for a folder's other accounts, after the main backup
+    copied_ok = set()  # (relative path, extra account) already in that account
+    skip_copy = set()  # (relative path, extra account) left out of the "Also in" percent
     lib = {
         "files": 0,
         "bytes": 0,
@@ -1620,6 +1639,9 @@ def scan(st=None):
                 t[1] += fst.st_size
                 if path in snap_paths or path in snap_skip or in_export:
                     held += in_export and path not in snap_paths
+                    # Not a folder copy: Snapchat sends these itself. Leave them out of "Also in".
+                    for extra in tmap[top][1:]:
+                        skip_copy.add((rel(path), extra))
                     if row and row[2] in DONE:
                         for d in (lib, f):
                             d["synced_files"] += 1
@@ -1631,8 +1653,10 @@ def scan(st=None):
                     if c and c[0] == fst.st_size and c[1] == fst.st_mtime:
                         if c[2] in DONE:
                             f["copies"][extra] += 1
+                            copied_ok.add((rel(path), extra))
                             continue
                         if c[3] >= MAX_ATTEMPTS:
+                            skip_copy.add((rel(path), extra))  # gave up: not a hole in the percent
                             continue
                     elif c:  # file changed: copy it again
                         q("UPDATE copies SET attempts=0 WHERE path=? AND account=?", (path, extra))
@@ -1663,6 +1687,8 @@ def scan(st=None):
     state["pending"] = [rel(p) for p, *_ in todo[:500]]
     state["copies_pending"] = len(copies_todo)
     state["copies_pending_by"] = dict(collections.Counter(i[3] for i in copies_todo))  # per extra account
+    state["copied_ok"] = copied_ok
+    state["skip_copy"] = skip_copy
     return todo + copies_todo
 
 
@@ -1750,7 +1776,9 @@ def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
     groups = {}
     file_states = {rel(p): st for p, st in q("SELECT path, status FROM files")}
     targets = folder_targets()
-    copied = {(rel(p), a) for p, a in q("SELECT path, account FROM copies WHERE status IN ('uploaded','exists')")}
+    # From the last scan (and copies that finished since): no full copies-table read on each refresh.
+    copied = set(state.get("copied_ok") or ())
+    skip_copy = state.get("skip_copy") or ()
     backed = backed_folders()
     skipped_tops = {}  # top folder not backed up -> files in it (shown as a note, not counted)
     uploads = upload_folder_name()
@@ -1802,6 +1830,8 @@ def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
             d["failed"] += failed
             d["last_added"] = max(d["last_added"], added)
             for i, a in enumerate(accs):  # the backup, then each account it is also in
+                if i and (name, a) in skip_copy:
+                    continue  # Snapchat hold or a copy that gave up: not part of this percent
                 row = d["accounts"].setdefault(a, [0, 0, False])
                 row[0] += 1
                 row[1] += bool(synced) if i == 0 else (name, a) in copied
@@ -2282,6 +2312,9 @@ def upload_all(client, todo, account="", st=None, lane=False):
                     copied = state["folders"].get(name.split("/", 1)[0], {}).get("copies")
                     if copied is not None and account in copied:
                         copied[account] += 1
+                    ok_set = state.get("copied_ok")
+                    if ok_set is not None:
+                        ok_set.add((name, account))
             else:
                 q(
                     """INSERT OR REPLACE INTO files
@@ -2376,7 +2409,9 @@ def upload_all(client, todo, account="", st=None, lane=False):
         with _round_lock:
             state["done"] += 1
             info["done"] += 1
-            if copy:
+            # A failed copy is still owed. Counting it down here made "copies left" hit zero
+            # until the next scan put it back.
+            if copy and how == "ok":
                 info["copies_done"] += 1
                 state["copies_pending"] = max(0, state.get("copies_pending", 0) - 1)
                 by = state.setdefault("copies_pending_by", {})
@@ -3162,11 +3197,14 @@ _status_memo = {"at": 0.0, "key": None, "body": b""}
 
 
 def status_body():
-    """status_json() as bytes, shared by every open dashboard for up to a second."""
+    """status_json() as bytes, shared by every open dashboard (1 s idle, 0.4 s while uploading)."""
     key = (cache.generation(), changes[0])
     now = time.monotonic()
     m = _status_memo
-    if m["body"] and m["key"] == key and now - m["at"] < 1:
+    # While files are moving, the byte counts change without a notify. Refresh those often.
+    # Idle keeps the one-second memo so open dashboards share one build.
+    ttl = 0.4 if state["phase"] == "uploading" else 1
+    if m["body"] and m["key"] == key and now - m["at"] < ttl:
         return m["body"]
     body = json.dumps(status_json()).encode()
     m.update(at=now, key=key, body=body)
@@ -7589,8 +7627,9 @@ class Handler(BaseHTTPRequestHandler):
             while True:
                 self.wfile.write(b"data: " + status_body() + b"\n\n")
                 self.wfile.flush()
+                # Uploads: about twice a second, so the bars move. Otherwise at least every 2 s.
                 with changed:
-                    changed.wait(timeout=2)
+                    changed.wait(timeout=0.5 if state["phase"] == "uploading" else 2)
                 time.sleep(0.25)  # bursts of events become one update
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass

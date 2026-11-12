@@ -370,7 +370,7 @@ function folderChips(accs: string[], order: string[]): string {
     .map((a) => {
       const i = order.indexOf(a);
       const main = i === 0 && order.length > 1;
-      return `<span class="inline-flex items-center gap-1"><button type="button" class="chip" data-acc="${esc(a)}" aria-pressed="${i >= 0}">${icon("ok", "size-3.5")}${esc(a)}${main ? '<span class="opacity-70">· main</span>' : ""}</button>${i > 0 ? `<button type="button" class="btn sm" data-main="${esc(a)}" title="Make ${esc(a)} the backup; the others get copies">Make main</button>` : ""}</span>`;
+      return `<span class="inline-flex items-center gap-1"><button type="button" class="chip" data-acc="${esc(a)}" aria-pressed="${i >= 0}">${icon("ok", "size-3.5")}${esc(a)}${main ? '<span class="opacity-70">· main</span>' : ""}</button>${i > 0 ? `<button type="button" class="link-btn" data-main="${esc(a)}" title="Make ${esc(a)} the backup. The others get copies of the same files.">Make main</button>` : ""}</span>`;
     })
     .join("");
 }

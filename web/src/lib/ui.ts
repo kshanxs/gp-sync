@@ -59,8 +59,8 @@ export function phaseInfo(s: Status): PhaseInfo {
       if (s.copies_pending)
         return {
           label: "Main library in",
-          tone: "good",
-          icon: "ok",
+          tone: "info",
+          icon: "copy",
           detail: `Still copying to ${copiesText(s) || "your other accounts"}`,
         };
       return { label: "Up to date", tone: "good", icon: "ok", detail: "Everything is backed up" };

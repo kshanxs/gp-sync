@@ -62,8 +62,27 @@ function accountChips(accs: FolderAccount[] | undefined): string {
 }
 
 /** A device's folders, from the device list ("Pixel" -> Photos/Pixel, Photos/Pixel (2)), so an open
- * device can link to its other folders. */
+ * device can link to its other folders. Kept for this tab, so a refresh still has them. */
+const DEVICE_KEY = "gp.deviceFolders";
 const deviceFolders = new Map<string, string[]>();
+
+function rememberDevices(children: { name: string; folders: string[] }[]): void {
+  for (const c of children) if (c.folders.length > 1) deviceFolders.set(c.name, c.folders);
+  try {
+    sessionStorage.setItem(DEVICE_KEY, JSON.stringify(Object.fromEntries(deviceFolders)));
+  } catch {
+    /* private mode, or storage full */
+  }
+}
+
+try {
+  const saved = JSON.parse(sessionStorage.getItem(DEVICE_KEY) || "{}") as Record<string, unknown>;
+  for (const [name, folders] of Object.entries(saved))
+    if (Array.isArray(folders) && folders.every((f) => typeof f === "string") && folders.length > 1)
+      deviceFolders.set(name, folders);
+} catch {
+  /* ignore a bad saved list */
+}
 
 // ---- upload order: folders whose files go to Google first (saved in settings)
 let prio: string[] = [];
@@ -190,8 +209,7 @@ async function load(background = false): Promise<void> {
   if (background && !r && report) return;
   const before = report?.total;
   report = r;
-  if (r && group === "devices" && !path)
-    for (const c of r.children) if (c.folders.length > 1) deviceFolders.set(c.name, c.folders);
+  if (r && group === "devices" && !path) rememberDevices(r.children);
   render();
   if (background && before && r && (before.synced !== r.total.synced || before.failed !== r.total.failed))
     void loadFiles(true, true);
@@ -358,8 +376,8 @@ function dayStat(label: string, value: string, sub: string, tone: string): strin
 // ---- devices and subfolders
 
 function rowTarget(c: FolderGroup): string {
-  // A device with several folders (it paired again) opens its first; the others are linked there.
-  if (group === "devices" && !path) return c.folders.length ? folderHref(c.folders[0]!) : "";
+  // Several folders (the phone paired again): each one is its own link, not a jump to the first.
+  if (group === "devices" && !path) return c.folders.length === 1 ? folderHref(c.folders[0]!) : "";
   const to = c.folders[0] ?? path;
   // A phone's folder opens as that device, whichever way it was reached.
   if (c.device) return `#/folders/d/${to.split("/").map(encodeURIComponent).join("/")}`;
@@ -373,7 +391,14 @@ function rowHtml(c: FolderGroup): string {
   const sub = devices
     ? c.uploads
       ? "Sent from the Upload page"
-      : esc(c.folders.join(" · "))
+      : c.folders.length > 1
+        ? c.folders
+            .map(
+              (f) =>
+                `<a class="link-btn" href="${folderHref(f)}" title="${esc(f)}">${esc(f.split("/").pop() ?? f)}</a>`,
+            )
+            .join(" · ")
+        : esc(c.folders[0] ?? "")
     : `${c.device ? "Device · " : ""}${num(c.photos)} photos · ${num(c.videos)} videos`;
   const href = rowTarget(c);
   const tag = href ? "a" : "div";

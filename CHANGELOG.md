@@ -29,6 +29,13 @@
   grid reloads when new files land; the photo/video filter is kept in the address.
 - Settings → Sync lists each account's pace and state, and its pause is now "Pause folder uploads".
   Overview names the account on backup rows, and upload hours read the same everywhere.
+- **Sync and Folders, after the multi-account upload.** "Main library in" stays a progress state
+  while other accounts are still copying, and the ring says so. With several accounts uploading,
+  Now is the round, and each account's card has the files; its bar is this round, not the whole
+  library. A device with several folders lists each one. A failed copy stays in "copies left".
+  Snapchat holds and copies that gave up are left out of an extra account's percent. Progress
+  bars update about twice a second while uploading, and the speed limit is not recalculated on
+  every chunk.
 
 ## 1.7.4
 

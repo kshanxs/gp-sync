@@ -385,7 +385,9 @@ function flight(list: NonNullable<Status["uploading"]>): string {
 function laneCard(l: AccountLane, s: Status): string {
   const tone =
     l.phase === "uploading" ? "info" : l.phase === "stopped" ? "warn" : l.phase === "caught_up" ? "good" : "";
-  const p = pct(l.done, l.total);
+  // While a round is running, the bar is that round. The library total barely moves on a big folder.
+  const round = l.phase === "uploading" && l.roundTotal > 0;
+  const p = round ? pct(l.roundDone, l.roundTotal) : pct(l.done, l.total);
   const what = [
     l.backup.length ? `Backup: ${l.backup.join(", ")}` : "",
     l.also.length ? `Also in: ${l.also.join(", ")}` : "",
@@ -397,7 +399,7 @@ function laneCard(l: AccountLane, s: Status): string {
     <div class="p-4">
       <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate text-sm font-medium" title="${esc(l.account)}">${esc(l.account)}</span>${badge(lanePhaseText(l, s), tone)}</div>
       <div class="mt-1 truncate text-xs text-ink-3" title="${esc(what)}">${esc(what)}</div>
-      <span class="bar mt-2.5 block h-1.5"><i style="width:${p}%"></i></span>
+      <span class="bar mt-2.5 block h-1.5" title="${round ? "This round" : "In this account"}"><i style="width:${p}%"></i></span>
       <div class="mt-1 flex items-center justify-between gap-2 text-xs text-ink-3 tabular-nums"><span>${num(l.done)} of ${num(l.total)} in this account${l.roundTotal ? ` · ${num(l.roundDone)} of ${num(l.roundTotal)} this round` : ""}</span>${pace}</div>
     </div>
     ${l.uploading.length ? `<div class="border-t border-line">${flight(l.uploading)}</div>` : ""}
@@ -426,8 +428,15 @@ function upNext(s: Status, current: string): string {
 }
 
 function nowCard(s: Status): string {
-  const c = s.current;
   const left = s.library.files - s.library.synced_files;
+  const summary = uploadSummary(s);
+  // One featured file jumps between accounts. With several uploading, the account cards are the list.
+  if (summary.accounts > 1)
+    return `<div class="flex items-center gap-3"><span class="grid size-12 shrink-0 place-items-center rounded-xl bg-panel-2 text-accent">${icon("cloudUp", "size-6 bob")}</span>
+      <div class="min-w-0 flex-1"><div class="font-medium">${esc(uploadTitle(s))}</div>
+      <div class="truncate text-xs text-ink-3">${s.total ? `${num(s.done)} of ${num(s.total)} done this round` : "Sending files"} · ${speed(s.net.up_now)}</div></div></div>
+      <p class="mt-3 text-xs text-ink-3">Each account's files are in the cards below. They share one speed limit.</p>`;
+  const c = s.current;
   if (c)
     return `<div class="flex items-center gap-3">${thumb(c.name, "thumb size-14")}
         <div class="min-w-0 flex-1"><div class="truncate font-medium" title="${esc(c.name)}">${esc(fileName(c.name))}</div>
@@ -458,7 +467,7 @@ function heroBadges(s: Status): string {
           s.paused ? "Waiting until uploads resume" : "Waiting for upload",
         )
       : s.copies_pending
-        ? badge("Main library in", "good", "ok", "Every file is in its backup account")
+        ? badge("Main library in", "info", "copy", "The backup account has every file. Other accounts are still catching up.")
         : badge("All backed up", "good", "ok"),
     eta ? badge(`~${eta} left`, "info", "clock", "At the current upload speed") : "",
     ...copiesLeft(s).map(([a, n]) =>
@@ -507,7 +516,7 @@ const sync: View = {
       <section class="card overview-hero relative order-1 overflow-hidden p-5 lg:order-none" id="sy-hero">
         <div class="flex items-center justify-between gap-2"><div><span class="label">Your library</span><h2 class="mt-1 text-lg font-semibold tracking-tight">Backup progress</h2></div><span id="sy-rate" class="text-xs text-ink-3 tabular-nums"></span></div>
         <div class="mt-4 flex items-center gap-4 sm:gap-5">
-          <div class="ring-box relative shrink-0">${ring(0, 148, 12)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-3xl" id="sy-pct">–</div><div class="text-[11px] text-ink-3">of files</div></div></div></div>
+          <div class="ring-box relative shrink-0">${ring(0, 148, 12)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-3xl" id="sy-pct">–</div><div class="text-[11px] text-ink-3" id="sy-pct-sub">of files</div></div></div></div>
           <div class="min-w-0 space-y-1.5" id="sy-hero-text"></div>
         </div>
         <div class="even mt-4" id="sy-badges"></div>
@@ -603,11 +612,13 @@ const sync: View = {
         ? `${icon("up", "inline size-3 -mt-0.5")} ${speed(s.net.up_avg)}`
         : "",
     );
+    const copying = copiesText(s);
+    $("#sy-pct-sub").textContent = copying ? "main library" : "of files";
     html(
       $("#sy-hero-text"),
       `<div class="num text-xl">${num(lib.synced_files)} <span class="text-sm font-normal text-ink-3">of ${num(lib.files)} files</span></div>
        <div class="text-sm text-ink-2">${bytes(lib.synced_bytes)} of ${bytes(lib.bytes)} <span class="text-ink-3">(${pctText(lib.synced_bytes, lib.bytes)} of the space)</span></div>
-       <div class="text-xs text-ink-3">${left ? `${bytes(lib.bytes - lib.synced_bytes)} still to back up` : "Every file is in Google Photos"}</div>`,
+       <div class="text-xs text-ink-3">${left ? `${bytes(lib.bytes - lib.synced_bytes)} still to back up` : copying ? `Main library is in. Still copying to ${esc(copying)}` : "Every file is in Google Photos"}</div>`,
     );
     html($("#sy-badges"), heroBadges(s));
     html($("#sy-now"), nowCard(s));
