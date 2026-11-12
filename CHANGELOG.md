@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.7.5
+
 - **Security: other websites can no longer change GP Sync.** Without a password, a page on any
   site you visited could send a hidden form to GP Sync and add its own Google account, point your
   folders at it, or remove yours. Changes are now accepted only from GP Sync's own dashboard (and
