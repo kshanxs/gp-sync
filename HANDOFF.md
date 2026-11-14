@@ -29,7 +29,7 @@ in their own words, and record the answer in the Work log row.
 
 What cannot move, and why.
 
-- GP Sync 1.8.0 is on main (8405e81) but not published: GitHub Actions won't start jobs ("account is locked due to a billing issue"), so CI can't build, tag or update the store. Building on umbrel works, but pushing the 165 MB Python layer to Docker Hub keeps dropping over umbrel's Wi-Fi (3 tries). No v1.8.0 tag, no GitHub release, store still on 1.7.5. 1.7.5 itself was also published by hand (no v1.7.5 tag).
+- GP Sync 1.8.0 is on main (8405e81) but not published: GitHub Actions won't start jobs ("account is locked due to a billing issue"), so CI can't build, tag or update the store. Building on umbrel works, but pushing the 165 MB Python layer to Docker Hub keeps dropping over umbrel's Wi-Fi (3 tries). No v1.8.0 tag, no GitHub release, store still on 1.7.5. 1.7.5 itself was also published by hand (no v1.7.5 tag). A push from homelab01 (owner-approved, image file built on umbrel at /home/umbrel/gp-sync-1.8.0.oci.tar, index sha256:7e19c2f0…) was refused: Docker Hub rejected umbrel's saved kshanxs token (it worked from umbrel earlier the same day) and then locked logins for a while. Needs a new Docker Hub access token, or GitHub billing fixed so CI uses its own secrets.
 
 ## Rules
 
