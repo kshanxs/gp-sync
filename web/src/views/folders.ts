@@ -9,6 +9,7 @@ import {
   type Settings,
   peek,
 } from "../lib/api";
+import { accountBreakdown, PICK_KEY, SEGMENTS } from "../lib/account-breakdown";
 import { backupPriorityControl, PRIORITY_MAX } from "../lib/backup-priority";
 import { $, esc, html, toast, touched } from "../lib/dom";
 import { ago, bytes, clock, date, dayKey, fileName, num, pct } from "../lib/format";
@@ -18,8 +19,9 @@ import { openAttrs, thumb, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
 // A two-pane browser: the navigator on the left (one tree of the backed-up folders, the "Back up
-// first" folders pinned on top), the open folder on the right (its header, four numbers, then
-// tabs: Photos, Folders inside, Added).
+// first" folders pinned on top), the open folder on the right (its header with what each account
+// has, five numbers, then tabs: Photos, Folders inside, Added). With two or more accounts, the
+// navigator's account switch makes every percentage that account's.
 //
 // #/folders                → everything on this server
 // #/folders/f/Photos/x     → a folder (#/folders/d/… from older links opens the same)
@@ -58,16 +60,58 @@ let observer: IntersectionObserver | null = null;
 const lastPart = (p: string) => p.split("/").at(-1) ?? p;
 const enc = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 
-/** Where a folder's files go: "Backup: me 80%", then "Also in: two 40%" per extra account. */
-function accountChips(accs: FolderAccount[] | undefined): string {
-  if (!accs?.length) return "";
-  const chip = (a: FolderAccount) => {
-    const p = percent(a.done, a.files);
-    return `<span class="badge ${p === 100 ? "good" : ""}" title="${esc(`${a.main ? "Backup" : "Also in"} ${a.account}: ${num(a.done)} of ${num(a.files)} files`)}">${esc(a.account.split("@")[0]!)} <span class="meta">${p}%</span></span>`;
-  };
-  const main = accs.filter((a) => a.main);
-  const also = accs.filter((a) => !a.main);
-  return `<span class="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-ink-3">${main.length ? `<span>Backup</span>${main.map(chip).join("")}` : ""}${also.length ? `<span class="${main.length ? "ml-1" : ""}">Also in</span>${also.map(chip).join("")}` : ""}</span>`;
+// ---- the account the percentages are for ("" = each folder's backup), kept on this device
+
+const ACC_KEY = "gp.foldersAccount";
+let fAcc = "";
+try {
+  fAcc = localStorage.getItem(ACC_KEY) ?? "";
+} catch {
+  /* private mode */
+}
+function setAcc(next: string): void {
+  fAcc = next;
+  try {
+    if (next) localStorage.setItem(ACC_KEY, next);
+    else localStorage.removeItem(ACC_KEY);
+  } catch {
+    /* private mode */
+  }
+}
+/** Accounts that get any folder, the main one first (from the top level's totals). */
+const knownAccounts = () => (rootTotal?.accounts ?? []).map((a) => a.account);
+const accOf = (accs: FolderAccount[] | undefined) =>
+  fAcc ? accs?.find((a) => a.account === fAcc) : undefined;
+const short = (account: string) => account.split("@")[0] ?? account;
+
+/** Done, all and failed for a folder: its backup's, or the picked account's (null: not in it). */
+function progressOf(c: {
+  synced: number;
+  files: number;
+  failed?: number;
+  accounts?: FolderAccount[];
+}): { done: number; files: number; failed: number } | null {
+  if (!fAcc) return { done: c.synced, files: c.files, failed: c.failed ?? 0 };
+  const a = accOf(c.accounts);
+  if (!a) return null;
+  return { done: a.done, files: a.files + (a.main ? 0 : a.failed), failed: a.failed };
+}
+
+/** "now", "12m", "3h", "2d", "5w", "8mo", "2y": how long ago files last arrived, for a row. */
+function shortAgo(unix: number, now = Date.now() / 1000): string {
+  const d = Math.max(0, now - unix);
+  if (d < 60) return "now";
+  if (d < 3600) return `${Math.floor(d / 60)}m`;
+  if (d < 86400) return `${Math.floor(d / 3600)}h`;
+  if (d < 14 * 86400) return `${Math.floor(d / 86400)}d`;
+  if (d < 60 * 86400) return `${Math.floor(d / (7 * 86400))}w`;
+  if (d < 365 * 86400) return `${Math.floor(d / (30 * 86400))}mo`;
+  return `${Math.floor(d / (365 * 86400))}y`;
+}
+function agoTag(unix: number | undefined): string {
+  if (!unix) return "";
+  const old = Date.now() / 1000 - unix > 30 * 86400;
+  return `<span class="fo-ago ${old ? "old" : ""}" title="${esc(`Last added ${ago(unix)} · ${date(unix, true)} ${clock(unix)}`)}">${shortAgo(unix)}</span>`;
 }
 
 // ---- the navigator: one tree, loaded a level at a time
@@ -101,6 +145,8 @@ interface NavNode {
   failed: number;
   uploads: boolean;
   hasSub: boolean;
+  accounts: FolderAccount[];
+  lastAdded: number;
 }
 
 /** A level of the tree as navigator entries. */
@@ -116,6 +162,8 @@ function nodesOf(parent: string): NavNode[] {
       uploads: c.uploads,
       // A backup app spreads some folders over 00..ff: those inner folders aren't listed.
       hasSub: c.has_sub && !c.device,
+      accounts: c.accounts ?? [],
+      lastAdded: c.last_added,
     }));
 }
 
@@ -137,6 +185,8 @@ function storeLevel(parent: string, r: FolderReport): void {
   if (!parent) {
     notBackedUp = r.not_backed_up ?? [];
     rootTotal = r.total;
+    // An account removed since, or folders no longer sent to it: back to each folder's backup.
+    if (fAcc && r.ready && !knownAccounts().includes(fAcc)) setAcc("");
   }
 }
 
@@ -154,9 +204,11 @@ function hrefOf(p: string): string {
   return `#/folders/f/${enc(p)}`;
 }
 
-function pctBadge(synced: number, files: number, failed: number): string {
-  const p = percent(synced, files);
-  return `${failed ? `<i class="fo-fail" title="${num(failed)} failed"></i>` : ""}<span class="fo-pct ${p === 100 ? "done" : ""}">${files ? `${p}%` : "–"}</span>`;
+function pctBadge(c: Parameters<typeof progressOf>[0]): string {
+  const g = progressOf(c);
+  if (!g) return `<span class="fo-pct" title="${esc(`Not sent to ${fAcc}`)}">–</span>`;
+  const p = percent(g.done, g.files);
+  return `${g.failed ? `<i class="fo-fail" title="${num(g.failed)} failed"></i>` : ""}<span class="fo-pct ${p === 100 ? "done" : ""}">${g.files ? `${p}%` : "–"}</span>`;
 }
 
 function navRow(n: NavNode, depth: number): string {
@@ -171,7 +223,7 @@ function navRow(n: NavNode, depth: number): string {
       : `<div class="fo-empty" style="--d:${depth + 1}"><span class="skeleton h-3 w-24"></span></div>`;
   return `<div class="fo-node" style="--d:${depth}">
     ${n.hasSub ? `<button type="button" class="fo-twisty" data-twisty="${esc(n.path)}" aria-expanded="${open}" aria-label="${open ? "Fold" : "Unfold"} ${esc(n.name)}">${icon("chevron", "size-3.5")}</button>` : `<span class="fo-twisty-gap"></span>`}
-    <a class="fo-row" href="${hrefOf(n.path)}"${n.path === path ? ' aria-current="page"' : ""} title="${esc(n.path)}">${icon(ic)}<span class="min-w-0 flex-1 truncate">${esc(n.name)}</span>${n.files ? pctBadge(n.synced, n.files, n.failed) : ""}</a>
+    <a class="fo-row" href="${hrefOf(n.path)}"${n.path === path ? ' aria-current="page"' : ""} title="${esc(n.path)}">${icon(ic)}<span class="min-w-0 flex-1 truncate">${esc(n.name)}</span>${agoTag(n.lastAdded)}${n.files ? pctBadge(n) : ""}</a>
   </div>${kids}`;
 }
 
@@ -191,9 +243,19 @@ function renderNav(): void {
         </span></li>`,
     )
     .join("");
+  const accs = knownAccounts();
+  const accSwitch =
+    accs.length > 1
+      ? `<label class="fo-acc"><span class="sr-only">Percentages for</span><select class="input sm" id="fo-acc">${[
+          ["", "Each folder's backup"],
+          ...accs.map((a) => [a, a]),
+        ]
+          .map(([v, l]) => `<option value="${esc(v!)}" ${v === fAcc ? "selected" : ""}>${esc(l!)}</option>`)
+          .join("")}</select></label>`
+      : "";
   html(
     nav,
-    `<a class="fo-row fo-all" href="#/folders"${path ? "" : ' aria-current="page"'}>${icon("library")}<span class="min-w-0 flex-1 truncate">Everything</span>${rootTotal ? pctBadge(rootTotal.synced, rootTotal.files, rootTotal.failed ?? 0) : ""}</a>
+    `${accSwitch}<a class="fo-row fo-all" href="#/folders"${path ? "" : ' aria-current="page"'}>${icon("library")}<span class="min-w-0 flex-1 truncate">Everything</span>${rootTotal ? agoTag(rootTotal.last_added) + pctBadge(rootTotal) : ""}</a>
      ${
        prio.length
          ? `<div class="fo-sec"><span>Back up first</span><span class="meta">${prio.length}/${PRIORITY_MAX}</span></div><ol class="fo-prios">${prioRows}</ol>`
@@ -333,7 +395,7 @@ async function loadFiles(reset: boolean, keep = false): Promise<void> {
   const offset = reset ? 0 : shownFiles.length;
   const limit = keep ? Math.min(600, Math.max(60, shownFiles.length)) : 60;
   try {
-    const url = `folders/files?path=${encodeURIComponent(path)}&group=folders&status=${fStatus}&kind=${fKind}&sort=${fSort}&offset=${offset}&limit=${limit}&day=${encodeURIComponent(fDay)}&tz=${tz}`;
+    const url = `folders/files?path=${encodeURIComponent(path)}&group=folders&status=${fStatus}&kind=${fKind}&sort=${fSort}&offset=${offset}&limit=${limit}&day=${encodeURIComponent(fDay)}&tz=${tz}${fAcc ? `&account=${encodeURIComponent(fAcc)}` : ""}`;
     const seen = reset && filesOpened ? peek<FolderFiles>(url) : undefined;
     if (reset) filesOpened = false;
     if (seen) {
@@ -371,9 +433,9 @@ function crumbs(): string {
 
 function renderHead(r: FolderReport): void {
   const t = r.total;
-  const done = percent(t.synced, t.files);
-  const failed = t.failed ?? 0;
-  const waiting = Math.max(0, t.files - t.synced - failed);
+  const g = progressOf(t);
+  const done = g ? percent(g.done, g.files) : 0;
+  const [waiting, failed] = waitingFailed(r);
   const title = !path ? "Everything" : lastPart(path);
   const ic: IconName = !path ? "library" : "folder";
   html(
@@ -386,17 +448,17 @@ function renderHead(r: FolderReport): void {
        <span class="grid size-10 shrink-0 place-items-center rounded-[10px] bg-panel-2 text-ink-2">${icon(ic, "size-5")}</span>
        <div class="min-w-0 flex-1">
          <h2 class="truncate text-xl leading-7 font-medium">${esc(title)}</h2>
-         <p class="mt-0.5 text-xs text-ink-3">${num(t.files)} files · ${bytes(t.bytes)}${t.last_added ? ` · last added ${ago(t.last_added)}` : ""}${!path ? ` · every backed-up folder on ${esc(host())}` : ""}</p>
+         <p class="mt-0.5 text-xs text-ink-3">${num(t.files)} files · ${bytes(t.bytes)}${!path ? ` · every backed-up folder on ${esc(host())}` : ""}</p>
        </div>
        ${path ? backupPriorityControl(path, prio.indexOf(path), waiting + failed > 0) : ""}
      </div>
-     <div class="mt-4 flex items-center gap-3"><div class="bar flex-1"><i style="width:${done}%"></i></div><span class="meta shrink-0">${done}% in Google Photos</span></div>
-     ${t.accounts?.length ? `<div class="mt-3">${accountChips(t.accounts)}</div>` : ""}`,
+     <div class="mt-4 flex items-center gap-3"><div class="bar flex-1"><i style="width:${done}%"></i></div><span class="meta shrink-0">${g ? `${done}% in ${fAcc ? esc(short(fAcc)) : "Google Photos"}` : `Not sent to ${esc(short(fAcc))}`}</span></div>
+     ${t.accounts?.length ? `<div class="mt-3 border-t border-line">${accountBreakdown(t.accounts, { pick: fAcc && SEGMENTS.some(([k]) => k === fStatus) ? { account: fAcc, part: fStatus } : null })}</div>` : ""}`,
   );
   renderStats(r, waiting, failed);
 }
 
-/** The four numbers. Each one is a filter for the photos below. */
+/** The five numbers. The first four filter the photos below; Last added opens the Added tab. */
 function renderStats(r: FolderReport, waiting: number, failed: number): void {
   const t = r.total;
   const cell = (key: string, label: string, ic: IconName, value: string, sub: string, on: boolean) =>
@@ -413,7 +475,7 @@ function renderStats(r: FolderReport, waiting: number, failed: number): void {
         "Waiting",
         "hourglass",
         num(waiting),
-        waiting ? "Not in Google yet" : "Nothing waiting",
+        waiting ? (fAcc ? `Not in ${esc(short(fAcc))} yet` : "Not in Google yet") : "Nothing waiting",
         fStatus === "waiting",
       ) +
       cell(
@@ -423,6 +485,14 @@ function renderStats(r: FolderReport, waiting: number, failed: number): void {
         failed ? `<span class="text-bad">${num(failed)}</span>` : "0",
         failed ? "Tap to see them" : "None",
         fStatus === "failed",
+      ) +
+      cell(
+        "added",
+        "Last added",
+        "clock",
+        t.last_added ? esc(ago(t.last_added)) : "–",
+        t.last_added ? `${esc(date(t.last_added))} · ${num(t.new_day)} today` : "Nothing yet",
+        false,
       ),
   );
 }
@@ -453,7 +523,8 @@ function renderTabs(r: FolderReport | null): void {
 // ---- tab: folders inside
 
 function rowHtml(c: FolderGroup): string {
-  const done = percent(c.synced, c.files);
+  const g = progressOf(c);
+  const done = g ? percent(g.done, g.files) : 0;
   const to = c.folders[0] ?? (path ? `${path}/${c.name}` : c.name);
   const href = hrefOf(to);
   const ic: IconName = c.uploads ? "upload" : "folder";
@@ -466,9 +537,13 @@ function rowHtml(c: FolderGroup): string {
   return `<a href="${href}" class="row clickable flex-wrap gap-y-2">
     <span class="grid size-10 shrink-0 place-items-center rounded-[10px] bg-panel-2 text-ink-2">${icon(ic, "size-5")}</span>
     <div class="min-w-0 flex-1 basis-40">
-      <div class="flex items-center gap-2"><span class="truncate text-sm font-medium">${esc(c.name)}</span>${c.new ? `<span class="meta" title="Added in ${rangeText()}">+${num(c.new)}</span>` : ""}</div>
+      <div class="flex items-center gap-2"><span class="truncate text-sm font-medium">${esc(c.name)}</span>${c.new ? `<span class="meta" title="Added in ${rangeText()}">+${num(c.new)}</span>` : ""}${c.last_added ? `<span class="fo-ago ml-auto ${Date.now() / 1000 - c.last_added > 30 * 86400 ? "old" : ""}" title="${esc(`${date(c.last_added, true)} ${clock(c.last_added)}`)}">${esc(ago(c.last_added))}</span>` : ""}</div>
       <div class="truncate text-xs text-ink-3">${c.uploads ? "Sent from the Upload page" : `${num(c.photos)} photos · ${num(c.videos)} videos`}</div>
-      <div class="mt-2 flex items-center gap-2"><div class="bar max-w-48 flex-1"><i style="width:${done}%"></i></div><span class="meta">${done}%</span>${c.failed ? `<span class="text-xs text-bad">${num(c.failed)} failed</span>` : ""}</div>
+      ${
+        g
+          ? `<div class="mt-2 flex items-center gap-2"><div class="bar max-w-48 flex-1"><i style="width:${done}%"></i></div><span class="meta">${done}%${fAcc ? ` in ${esc(short(fAcc))}` : ""}</span>${g.failed ? `<span class="text-xs text-bad">${num(g.failed)} failed</span>` : ""}</div>`
+          : `<div class="mt-2 text-xs text-ink-3">Not sent to ${esc(short(fAcc))}</div>`
+      }
     </div>
     ${thumbs ? `<div class="hidden gap-2 md:flex">${thumbs}</div>` : ""}
     <div class="hidden w-24 text-right sm:block"><div class="text-sm tabular-nums">${num(c.files)}</div><div class="text-xs text-ink-3">${bytes(c.bytes)}</div></div>
@@ -476,9 +551,31 @@ function rowHtml(c: FolderGroup): string {
   </a>`;
 }
 
+// How Folders inside is sorted, kept on this device.
+const SORT_KEY = "gp.foldersInsideSort";
+const INSIDE_SORTS: [string, string][] = [
+  ["files", "Most files"],
+  ["recent", "Recently added"],
+  ["name", "Name"],
+];
+let insideSort = "files";
+try {
+  insideSort = localStorage.getItem(SORT_KEY) ?? "files";
+} catch {
+  /* private mode */
+}
+
 function renderInside(r: FolderReport): void {
   const rows = r.children.filter((c) => c.name);
-  html($("#fo-inside"), rows.map(rowHtml).join(""));
+  if (insideSort === "recent") rows.sort((a, b) => b.last_added - a.last_added);
+  else if (insideSort === "name")
+    rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  html(
+    $("#fo-inside"),
+    `<div class="flex items-center gap-2 border-b border-line px-4 py-2.5"><span class="meta">${num(rows.length)} folders</span>
+       <select class="input sm ml-auto w-auto" id="fo-isort" aria-label="Sort folders">${INSIDE_SORTS.map(([k, l]) => `<option value="${k}" ${k === insideSort ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+     ${rows.map(rowHtml).join("")}`,
+  );
 }
 
 // ---- tab: photos
@@ -525,12 +622,21 @@ function renderFilesTools(): void {
   const n = (k: keyof NonNullable<typeof c>) => (c ? ` <span class="meta">${num(c[k])}</span>` : "");
   html(
     $("#fo-files-tools"),
-    `<div class="seg" id="fo-fstatus">${[
-      ["all", "All", n("all")],
-      ["backed_up", "In Google", n("backed_up")],
-      ["waiting", "Waiting", n("waiting")],
-      ["failed", "Failed", n("failed")],
-    ]
+    `<div class="seg" id="fo-fstatus">${(fAcc && c?.uploaded != null
+      ? [
+          ["all", "All", n("all")],
+          ["uploaded", "Uploaded", n("uploaded")],
+          ["exists", "Already in Google", n("exists")],
+          ["waiting", "New to sync", n("waiting")],
+          ["failed", "Failed", n("failed")],
+        ]
+      : [
+          ["all", "All", n("all")],
+          ["backed_up", "In Google", n("backed_up")],
+          ["waiting", "Waiting", n("waiting")],
+          ["failed", "Failed", n("failed")],
+        ]
+    )
       .filter(([k]) => k !== "failed" || !c || c.failed || fStatus === "failed")
       .map(([k, l, x]) => `<button data-s="${k}" aria-pressed="${k === fStatus}">${l}${x}</button>`)
       .join("")}</div>
@@ -560,17 +666,25 @@ function renderFiles(): void {
   const body = document.getElementById("fo-files");
   if (!body) return;
   const filtered = fStatus !== "all" || fKind !== "all" || fDay;
+  const label = fAcc
+    ? `<p class="mb-3 text-xs text-ink-3">The files ${esc(fAcc)} should get, and where each one is in it. <button type="button" class="link-btn" data-acc-clear>Show every file</button></p>`
+    : "";
   html(
     body,
-    shownFiles.length
-      ? `<div class="ph-grid" id="fo-grid" data-gallery>${tilesHtml(shownFiles)}</div>
+    label +
+      (shownFiles.length
+        ? `<div class="ph-grid" id="fo-grid" data-gallery>${tilesHtml(shownFiles)}</div>
        <div class="mt-4 flex min-h-10 justify-center" id="fo-sentinel">${moreHtml()}</div>`
-      : `<div class="empty">${icon("library")}${filtered ? "Nothing matches these filters" : "No photos or videos here"}${filtered ? '<button type="button" class="btn sm mt-2" id="fo-reset">Show everything</button>' : ""}</div>`,
+        : `<div class="empty">${icon("library")}${filtered ? "Nothing matches these filters" : "No photos or videos here"}${filtered ? '<button type="button" class="btn sm mt-2" id="fo-reset">Show everything</button>' : ""}</div>`),
   );
   watchEnd();
 }
 
 function waitingFailed(r: FolderReport): [number, number] {
+  if (fAcc) {
+    const a = accOf(r.total.accounts);
+    return a ? [a.waiting, a.failed] : [0, 0];
+  }
   const failed = r.total.failed ?? 0;
   return [Math.max(0, r.total.files - r.total.synced - failed), failed];
 }
@@ -702,7 +816,7 @@ function skeleton(): void {
     $("#fo-head"),
     '<div class="skeleton h-4 w-40"></div><div class="skeleton mt-4 h-7 w-56"></div><div class="skeleton mt-4 h-2"></div>',
   );
-  html($("#fo-stats"), '<div class="card skeleton h-28"></div>'.repeat(4));
+  html($("#fo-stats"), '<div class="card skeleton h-28"></div>'.repeat(5));
   html($("#fo-files-tools"), "");
   html(
     $("#fo-files"),
@@ -722,6 +836,17 @@ function open(): void {
   files = null;
   shownFiles = [];
   fStatus = "all";
+  // Sent here from Sync with an account's part picked ("New to sync" for two@…).
+  try {
+    const pick = sessionStorage.getItem(PICK_KEY);
+    if (pick) {
+      sessionStorage.removeItem(PICK_KEY);
+      fAcc = localStorage.getItem(ACC_KEY) ?? "";
+      if (fAcc) fStatus = pick;
+    }
+  } catch {
+    /* private mode */
+  }
   fKind = linkedKind;
   fDay = "";
   if (linkedKind !== "all") tab = "photos";
@@ -736,6 +861,25 @@ function open(): void {
   void loadFiles(true);
   // Unfolded folders the navigator hasn't read yet (after a reload).
   for (const p of expanded) if (!tree.has(p) && p !== path) void loadLevel(p, true);
+}
+
+/** Every percentage for this account ("" = each folder's backup). status: also filter the photos to
+ * that part (null: keep the filter where it still means something). */
+function pickAccount(acc: string, status: string | null): void {
+  setAcc(acc);
+  const accountOnly = fStatus === "uploaded" || fStatus === "exists";
+  if (status !== null) fStatus = status;
+  else if ((!acc && accountOnly) || (acc && fStatus === "backed_up")) fStatus = "all";
+  renderNav();
+  if (report) {
+    renderHead(report);
+    renderInside(report);
+  }
+  if (status !== null) {
+    tab = "photos";
+    renderTabs(report);
+  }
+  void loadFiles(true);
 }
 
 /** Switch to the Photos tab with a filter (from a number or the Added tab). */
@@ -797,10 +941,24 @@ const folders: View = {
       const st = t.closest<HTMLElement>("[data-stat]");
       if (st) {
         const k = st.dataset.stat!;
+        if (k === "added") {
+          tab = "added";
+          renderTabs(report);
+          return;
+        }
         if (k === "photo" || k === "video") filterPhotos({ kind: fKind === k ? "all" : k });
         else filterPhotos({ status: fStatus === k ? "all" : k });
         return;
       }
+      // what each account has: a part shows those files, for that account
+      const seg = t.closest<HTMLElement>("[data-seg]");
+      if (seg) {
+        const [acc = "", part = "all"] = seg.dataset.seg!.split("|");
+        const same = fAcc === acc && fStatus === part;
+        pickAccount(acc, same ? "all" : part);
+        return;
+      }
+      if (t.closest("[data-acc-clear]")) return pickAccount("", "all");
       // photos
       if (t.closest("#fo-more")) return void loadFiles(false);
       if (t.closest("#fo-reset")) return filterPhotos({ status: "all", kind: "all", day: "" });
@@ -872,6 +1030,16 @@ const folders: View = {
       if (t.id === "fo-fsort") {
         fSort = t.value;
         void loadFiles(true);
+      } else if (t.id === "fo-acc") {
+        pickAccount(t.value, null);
+      } else if (t.id === "fo-isort") {
+        insideSort = t.value;
+        try {
+          localStorage.setItem(SORT_KEY, insideSort);
+        } catch {
+          /* private mode */
+        }
+        if (report) renderInside(report);
       }
     });
     if (!tree.has("")) void loadLevel("");

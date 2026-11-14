@@ -39,6 +39,7 @@ import dates from "./views/dates";
 import sources from "./views/sources";
 import snapchat from "./views/snapchat";
 import { askUndated } from "./lib/undated";
+import { noteVisit } from "./lib/since-visit";
 import { watchSegs } from "./lib/fit-segs";
 import storage from "./views/storage";
 import downloads from "./views/downloads";
@@ -142,16 +143,21 @@ function shell(): string {
 
   <div id="sheet" class="fixed inset-0 z-50 hidden lg:hidden" role="dialog" aria-label="More pages">
     <div class="sheet-bg absolute inset-0 bg-black/50" data-close></div>
-    <div class="sheet-panel app-sheet absolute inset-x-0 bottom-0 rounded-t-2xl border-t border-line p-4" style="padding-bottom:calc(1rem + env(safe-area-inset-bottom))">
+    <div class="sheet-panel app-sheet scroll-thin absolute inset-x-0 bottom-0 max-h-[85dvh] overflow-y-auto rounded-t-2xl border-t border-line p-4" style="padding-bottom:calc(1rem + env(safe-area-inset-bottom))">
       <div class="mx-auto mb-3 h-1 w-10 rounded-full bg-panel-2"></div>
-      <div class="grid grid-cols-3 gap-2">
-        ${ROUTES.filter((r) => !TABS.includes(r.id))
-          .map(
-            (r) =>
-              `<a href="#/${r.id}" class="card relative flex flex-col items-center gap-2 py-4 text-sm">${icon(r.ic, "size-6 text-ink-2")}${r.title}<span class="count absolute top-2 right-2 hidden" data-count="${r.id}"></span></a>`,
-          )
-          .join("")}
-      </div>
+      ${groups
+        .map((g) => {
+          const pages = ROUTES.filter((r) => r.group === g && !TABS.includes(r.id));
+          if (!pages.length) return "";
+          return `<div class="sheet-sec">${g}</div>
+      <div class="grid grid-cols-3 gap-2">${pages
+        .map(
+          (r) =>
+            `<a href="#/${r.id}" class="card relative flex flex-col items-center gap-2 py-4 text-sm">${icon(r.ic, "size-6 text-ink-2")}${r.title}<span class="count absolute top-2 right-2 hidden" data-count="${r.id}"></span></a>`,
+        )
+        .join("")}</div>`;
+        })
+        .join("")}
     </div>
   </div>`;
 }
@@ -419,6 +425,7 @@ function boot(): void {
     paintTabs();
   }, 4000);
   onStatus(askUndated);
+  onStatus((s) => noteVisit(s));
   onMode((live) => $("#live").classList.toggle("hidden", !live));
   route();
   startPolling();

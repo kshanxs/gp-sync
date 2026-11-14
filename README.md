@@ -128,11 +128,16 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   a link to each item in Google Photos. A duplicates tab lists identical files.
 - **Folders:** a browser for everything that is backed up. On the left, one tree of the backed-up
   folders with each one's share in Google Photos, and the folders set to **Back up first** pinned
-  on top, in order. Folders a backup app spreads over `00`…`ff` show as one folder. On the right, the open folder: its accounts,
-  a **Back up first** switch, and four numbers (photos, videos, waiting, failed) that filter its
-  photos when tapped. Tabs: **Photos** (by day, filtered by state, kind or a picked day), **Folders
-  inside**, and **Added** (arrivals per day; pick a day to see its photos). On small screens the
-  tree is the first screen and folds away when a folder opens. Arrival dates are inferred from filesystem
+  on top, in order; each row says how long ago files last arrived ("3h", "2d", faded after a
+  month). Folders a backup app spreads over `00`…`ff` show as one folder. On the right, the open
+  folder: a **Back up first** switch, what each account has of it (**Uploaded**, **Already in
+  Google**, **New to sync**, **Failed**; tap one to see those files for that account), and five
+  numbers (photos, videos, waiting and failed filter its photos; **Last added** opens Added). Tabs:
+  **Photos** (by day, filtered by state, kind or a picked day), **Folders inside** (sorted by most
+  files, recently added or name, each with its last arrival), and **Added** (arrivals per day;
+  pick a day to see its photos). With two or more accounts, a switch above the tree makes every
+  percentage that account's, so you see which folders it still lacks. On small screens the tree is
+  the first screen and folds away when a folder opens. Arrival dates are inferred from filesystem
   timestamps, which can change.
 - **Free storage:** lists what counts against your Google storage, biggest first, photos and videos
   apart. Free single items, the 10 biggest, or everything of a kind (photos only, videos only, or
@@ -202,7 +207,12 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   did today and the last 14 days; tap one for its page. Below: live upload/download, today,
   streak, CPU and memory, health badges and recent activity.
 - **Sync:** normal backup on its own page: what uploads now (and next), backup progress of the
-  whole library, and each folder's progress.
+  whole library, and each folder's progress. Each account's card splits its files into
+  **Uploaded** (sent by GP Sync), **Already in Google** (Google had them, often from your phone, so
+  nothing was sent), **New to sync** and **Failed**, with the time left at the pace of its last
+  hour; tap a part to open those files on Folders.
+- **Since your last visit:** Overview opens with what changed while the dashboard was closed
+  (files added, backed up, failed). Remembered on each device; **Got it** hides it.
 - **Auto free storage:** turn on "Free new items automatically" on Free storage, and what your
   phones' Google Photos app backs up is freed as it arrives (checked every 15 minutes, in every
   account): downloaded, checked, deleted in Google and uploaded again free.
@@ -262,6 +272,7 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/history?days=365&tz=330` | Per-day totals; `tz` is minutes east of UTC (India = 330) |
 | `GET /api/totals` | All-time totals and fastest upload |
 | `GET /api/files?q=&status=all&folder=&sort=new&limit=60&offset=0` | Search backed-up files |
+| `GET /api/folders/files?path=Photos&status=all&kind=all&sort=new&account=` | A folder's photos and videos with their state; with `account`, only the files that account should get, and `status` can also be `uploaded` or `exists` |
 | `GET /api/folders?group=folders&path=Photos&days=30&tz=330` | Counts and files added per day for a folder, or `group=devices` for the folders one level inside each backed-up folder |
 | `GET /api/copy?src=&dst=` | What one account has that another lacks, copying progress, the checker and Keep in sync |
 | `POST /api/copy/mirror` | Keep in sync: `{"src", "dst", "mode": "off"\|"one"\|"both"}` |

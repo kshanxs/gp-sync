@@ -173,8 +173,55 @@ def test_folder_report_shows_each_account(two):
     sync.scan()
     photos = {c["name"]: c for c in sync.folder_report("", "folders", 30)["children"]}["Photos"]
     assert photos["accounts"] == [
-        {"account": "test@example.com", "main": True, "files": 2, "done": 1},
-        {"account": "two@example.com", "main": False, "files": 2, "done": 2},
-    ]
+        {"account": "test@example.com", "main": True, "files": 2, "done": 1,
+         "uploaded": 1, "exists": 0, "failed": 1, "waiting": 0},
+        {"account": "two@example.com", "main": False, "files": 2, "done": 2,
+         "uploaded": 2, "exists": 0, "failed": 0, "waiting": 0},
+    ]  # fmt: skip
     assert photos["failed"] == 1 and photos["synced"] == 1  # failed is not counted as waiting
     assert sync.folder_report("", "folders", 30)["total"]["failed"] == 1
+
+
+def test_each_account_splits_uploaded_and_already_in_google(two):
+    """Per account: sent by GP Sync, found already in Google, still to send, failed."""
+    sync.update_settings({"folders": {"Photos": two}})
+    todo = sync.scan()
+    sync.upload_all(FakeClient({"a.jpg": "skipped", "b.HEIC": "uploading"}), [t for t in todo if len(t) == 4])
+    sync.upload_all(FakeClient({"a.jpg": "skipped"}), [t for t in todo if len(t) == 5 and t[0].endswith("a.jpg")])
+    sync.scan()
+    r = sync.folder_report("", "folders", 30)
+    accs = {a["account"]: a for a in r["total"]["accounts"]}
+    main, extra = accs["test@example.com"], accs["two@example.com"]
+    assert (main["uploaded"], main["exists"], main["waiting"], main["failed"]) == (1, 1, 0, 0)
+    assert (extra["uploaded"], extra["exists"], extra["waiting"], extra["failed"]) == (0, 1, 1, 0)
+    assert main["per_hour"] == 2 and extra["per_hour"] == 1  # done in the last hour: the pace
+    # Children carry the split too, but no pace (that is per account, not per folder).
+    photos = {c["name"]: c for c in r["children"]}["Photos"]
+    assert "per_hour" not in photos["accounts"][0] and photos["accounts"][1]["exists"] == 1
+
+
+def test_a_copy_that_gave_up_counts_as_failed_not_waiting(two):
+    sync.update_settings({"folders": {"Photos": two}})
+    todo = sync.scan()
+    sync.upload_all(FakeClient({"a.jpg": "uploading", "b.HEIC": "uploading"}), [t for t in todo if len(t) == 4])
+    sync.upload_all(FakeClient({"a.jpg": "uploading", "b.HEIC": KeyError("bad")}), [t for t in todo if len(t) == 5])
+    sync.q("UPDATE copies SET attempts=? WHERE account='two@example.com' AND status='failed'", (sync.MAX_ATTEMPTS,))
+    sync.scan()
+    extra = next(a for a in sync.folder_report("", "folders", 30)["total"]["accounts"] if not a["main"])
+    assert (extra["files"], extra["done"], extra["failed"], extra["waiting"]) == (1, 1, 1, 0)
+
+
+def test_folder_files_for_one_account(two):
+    sync.update_settings({"folders": {"Photos": two, "Videos": ["test@example.com"]}})
+    todo = sync.scan()
+    sync.upload_all(FakeClient({"a.jpg": "skipped", "b.HEIC": "uploading"}), [t for t in todo if len(t) == 4])
+    sync.scan()
+    # The second account only gets Photos, and nothing is in it yet.
+    r = sync.folder_files("", account="two@example.com")
+    assert r["counts"]["all"] == 2 and r["counts"]["waiting"] == 2 and r["counts"]["uploaded"] == 0
+    assert {i["state"] for i in r["items"]} == {"waiting"}
+    main = sync.folder_files("Photos", account="test@example.com")
+    assert (main["counts"]["exists"], main["counts"]["uploaded"]) == (1, 1)
+    only = sync.folder_files("Photos", status="exists", account="test@example.com")
+    assert [i["name"].rsplit("/", 1)[-1] for i in only["items"]] == ["a.jpg"]
+    assert sync.folder_files("", account="")["counts"].get("uploaded") is None  # unchanged without one

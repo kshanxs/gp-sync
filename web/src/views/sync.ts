@@ -3,6 +3,7 @@
 // The Overview shows only what runs now, for every process, and links here.
 
 import { workBox } from "../lib/work-panel";
+import { accountBreakdown, openInFolders } from "../lib/account-breakdown";
 import { openUploadOptions, paceButton } from "../lib/pace-sheet";
 import { get, post, tz, type FolderReport, type History, type Insights, type Status } from "../lib/api";
 import { donut, heatLegend, heatmap, ring, setRing, sparkline, type Slice } from "../lib/charts";
@@ -37,6 +38,29 @@ let shareMetric: "files" | "bytes" = "files";
 let shareAt = 0;
 let shareRequest = 0;
 let shareError = false;
+// What each account has (uploaded, already in Google, new to sync, failed): the whole library's
+// folder report, read every 30 s (the server keeps it cached that long anyway).
+let accReport: FolderReport | null = null;
+let accAt = 0;
+let accRequest = 0;
+
+async function loadAccounts(): Promise<void> {
+  accAt = Date.now();
+  const mine = ++accRequest;
+  const r = await get<FolderReport>(`folders?group=folders&days=30&tz=${tz}`).catch(() => null);
+  if (mine !== accRequest || !r) return;
+  accReport = r;
+  if (last) drawLanes(last);
+}
+
+function drawLanes(s: Status): void {
+  const lanes = document.getElementById("sy-lanes");
+  if (!lanes) return;
+  const lanesHtml = lanesCard(s);
+  lanes.hidden = !lanesHtml;
+  html(lanes, lanesHtml);
+}
+
 let kindsDrawn = false; // the photos/videos donut needs the status, which can come later
 const SLICE_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)"];
 const OTHER = "var(--ink-3)";
@@ -397,12 +421,17 @@ function laneCard(l: AccountLane, s: Status): string {
     .filter(Boolean)
     .join(" · ");
   const pace = paceButton("upload", s.upload_workers ?? 0, s.pace?.[l.account]?.upload);
+  // Uploaded, already in Google, new to sync and failed, once the folder report is in.
+  const has = accReport?.total.accounts?.find((a) => a.account === l.account);
+  const parts = has
+    ? `<div class="-mb-3">${accountBreakdown([has], { eta: !s.paused && s.schedule.allowed, bare: true, pick: null })}</div>`
+    : `<span class="bar mt-2.5 block h-1.5" title="${round ? "This round" : "In this account"}"><i style="width:${p}%"></i></span>`;
   return `<div class="min-w-0 border-b border-line md:odd:border-r" data-lane="${esc(l.account)}">
     <div class="p-4">
       <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate text-sm font-medium" title="${esc(l.account)}">${esc(l.account)}</span>${badge(lanePhaseText(l, s), tone)}</div>
       <div class="mt-1 truncate text-xs text-ink-3" title="${esc(what)}">${esc(what)}</div>
-      <span class="bar mt-2.5 block h-1.5" title="${round ? "This round" : "In this account"}"><i style="width:${p}%"></i></span>
-      <div class="mt-1 flex items-center justify-between gap-2 text-xs text-ink-3 tabular-nums"><span>${num(l.done)} of ${num(l.total)} in this account${l.roundTotal ? ` · ${num(l.roundDone)} of ${num(l.roundTotal)} this round` : ""}</span>${pace}</div>
+      ${parts}
+      <div class="mt-1 flex items-center justify-between gap-2 text-xs text-ink-3 tabular-nums"><span>${has ? (l.roundTotal ? `This round: ${num(l.roundDone)} of ${num(l.roundTotal)}` : "") : `${num(l.done)} of ${num(l.total)} in this account${l.roundTotal ? ` · ${num(l.roundDone)} of ${num(l.roundTotal)} this round` : ""}`}</span>${pace}</div>
     </div>
     ${l.uploading.length ? `<div class="border-t border-line">${flight(l.uploading)}</div>` : ""}
   </div>`;
@@ -563,6 +592,11 @@ const sync: View = {
     </div>`;
     el.addEventListener("click", (e) => {
       const t = e.target as HTMLElement;
+      const seg = t.closest<HTMLElement>("[data-seg]");
+      if (seg) {
+        const [acc = "", part = "all"] = seg.dataset.seg!.split("|");
+        return openInFolders(acc, part);
+      }
       if (t.closest('[data-pace="upload"]')) {
         // Each account's own pace: the lane's, or the file on show's account in the Now card.
         const acc =
@@ -587,6 +621,7 @@ const sync: View = {
       animateChange(document.getElementById("sy-share-body"));
     });
     kindsDrawn = false;
+    accAt = 0;
     void loadShare();
     slowSynced = -1;
     void loadSlow();
@@ -629,10 +664,8 @@ const sync: View = {
     );
     html($("#sy-badges"), heroBadges(s));
     html($("#sy-now"), nowCard(s));
-    const lanes = $("#sy-lanes");
-    const lanesHtml = lanesCard(s);
-    lanes.hidden = !lanesHtml;
-    html(lanes, lanesHtml);
+    if (Date.now() - accAt > 30_000) void loadAccounts();
+    drawLanes(s);
     html($("#sy-folders"), folderList(s));
     // Room left on the disk the photos are on, read from the system (any host).
     const space = $("#sy-space");
@@ -656,6 +689,7 @@ const sync: View = {
   unmount() {
     clearInterval(slowTimer);
     shareRequest++;
+    accRequest++;
   },
 };
 

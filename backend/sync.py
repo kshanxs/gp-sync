@@ -137,6 +137,9 @@ state = {
     # holds, and copies that gave up).
     "copied_ok": set(),
     "skip_copy": set(),
+    # Of those: copies Google already had (nothing uploaded), and copies that gave up (failed).
+    "copied_exists": set(),
+    "copy_gave_up": set(),
     "session": {"started": STARTED, "uploaded_files": 0, "uploaded_bytes": 0},
     "login_failed": set(),  # accounts Google rejected; cleared on success or a new login
     "next_window": 0,
@@ -1557,6 +1560,8 @@ def scan(st=None):
     copies_todo = []  # the same files for a folder's other accounts, after the main backup
     copied_ok = set()  # (relative path, extra account) already in that account
     skip_copy = set()  # (relative path, extra account) left out of the "Also in" percent
+    copied_exists = set()  # of copied_ok: Google already had it
+    copy_gave_up = set()  # of skip_copy: the copy failed too often
     lib = {
         "files": 0,
         "bytes": 0,
@@ -1654,9 +1659,12 @@ def scan(st=None):
                         if c[2] in DONE:
                             f["copies"][extra] += 1
                             copied_ok.add((rel(path), extra))
+                            if c[2] == "exists":
+                                copied_exists.add((rel(path), extra))
                             continue
                         if c[3] >= MAX_ATTEMPTS:
                             skip_copy.add((rel(path), extra))  # gave up: not a hole in the percent
+                            copy_gave_up.add((rel(path), extra))
                             continue
                     elif c:  # file changed: copy it again
                         q("UPDATE copies SET attempts=0 WHERE path=? AND account=?", (path, extra))
@@ -1689,6 +1697,8 @@ def scan(st=None):
     state["copies_pending_by"] = dict(collections.Counter(i[3] for i in copies_todo))  # per extra account
     state["copied_ok"] = copied_ok
     state["skip_copy"] = skip_copy
+    state["copied_exists"] = copied_exists
+    state["copy_gave_up"] = copy_gave_up
     return todo + copies_todo
 
 
@@ -1752,13 +1762,41 @@ def _blank():
         "failed": 0,
         "new": 0,
         "last_added": 0,
-        "accounts": {},  # account -> [files it should have, files in it]; the folder's backup first
+        # account -> [files it should have, files in it, is the backup, uploaded, already in Google,
+        # failed]; the folder's backup first
+        "accounts": {},
     }
 
 
-def _account_list(accs):
-    """[{"account", "main", "files", "done"}] in the order the accounts were met (backup first)."""
-    return [{"account": a, "main": main, "files": n, "done": d} for a, (n, d, main) in accs.items()]
+def _account_list(accs, speeds=None):
+    """[{"account", "main", "files", "done", "uploaded", "exists", "failed", "waiting"}] in the order
+    the accounts were met (backup first). done = uploaded + exists. For the backup, failed files are
+    part of files; a copy that gave up is not (it isn't a hole in the "Also in" percent), so waiting
+    is what is left to send in both cases. speeds: account -> files done in the last hour."""
+    out = []
+    for a, (n, d, main, up, ex, bad) in accs.items():
+        row = {"account": a, "main": main, "files": n, "done": d, "uploaded": up, "exists": ex, "failed": bad}
+        row["waiting"] = max(0, n - d - (bad if main else 0))
+        if speeds is not None:
+            row["per_hour"] = speeds.get(a, 0)
+        out.append(row)
+    return out
+
+
+def account_speeds(now=None, window=3600):
+    """Files each account finished (uploaded, or found already in Google) in the last hour, the
+    backup and folder copies together: the pace its "time left" is worked out from."""
+    since = (now or time.time()) - window
+    out = {}
+    for table in ("files", "copies"):
+        for acc, n in q(
+            f"SELECT account, COUNT(*) FROM {table} WHERE updated > ? AND status IN ('uploaded','exists') "
+            "GROUP BY account",
+            (since,),
+        ):
+            if acc:
+                out[acc] = out.get(acc, 0) + n
+    return out
 
 
 def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
@@ -1779,6 +1817,8 @@ def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
     # From the last scan (and copies that finished since): no full copies-table read on each refresh.
     copied = set(state.get("copied_ok") or ())
     skip_copy = state.get("skip_copy") or ()
+    copied_exists = state.get("copied_exists") or ()
+    gave_up = state.get("copy_gave_up") or ()
     backed = backed_folders()
     skipped_tops = {}  # top folder not backed up -> files in it (shown as a note, not counted)
     uploads = upload_folder_name()
@@ -1831,10 +1871,18 @@ def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
             d["last_added"] = max(d["last_added"], added)
             for i, a in enumerate(accs):  # the backup, then each account it is also in
                 if i and (name, a) in skip_copy:
+                    if (name, a) in gave_up:  # counted as failed, but not part of this percent
+                        d["accounts"].setdefault(a, [0, 0, False, 0, 0, 0])[5] += 1
                     continue  # Snapchat hold or a copy that gave up: not part of this percent
-                row = d["accounts"].setdefault(a, [0, 0, False])
+                row = d["accounts"].setdefault(a, [0, 0, False, 0, 0, 0])
                 row[0] += 1
-                row[1] += bool(synced) if i == 0 else (name, a) in copied
+                if i == 0:
+                    row[1] += bool(synced)
+                    row[3 if st != "exists" else 4] += bool(synced)
+                    row[5] += failed
+                elif (name, a) in copied:
+                    row[1] += 1
+                    row[3 if (name, a) not in copied_exists else 4] += 1
                 row[2] = row[2] or i == 0
         day = int((added + shift) // 86400)
         if first <= day <= today:
@@ -1889,7 +1937,7 @@ def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
         "today": day_str(today),
         "total": {
             **{k: total[k] for k in ("photos", "videos", "photo_bytes", "video_bytes", "synced", "failed", "new")},
-            "accounts": _account_list(total["accounts"]),
+            "accounts": _account_list(total["accounts"], account_speeds(now)),
             "files": total["photos"] + total["videos"],
             "bytes": total["photo_bytes"] + total["video_bytes"],
             "new_week": sum(c[0] + c[1] for day, c in daily.items() if day > today - 7),
@@ -1928,9 +1976,22 @@ FILE_SORTS = {
 
 
 def folder_files(
-    path="", status="all", kind="all", sort="new", offset=0, limit=60, day="", tz_offset_min=0, group="folders"
+    path="",
+    status="all",
+    kind="all",
+    sort="new",
+    offset=0,
+    limit=60,
+    day="",
+    tz_offset_min=0,
+    group="folders",
+    account="",
 ):
-    """Every photo and video in a folder and the folders inside it, backed up yet or not."""
+    """Every photo and video in a folder and the folders inside it, backed up yet or not.
+
+    With an account: only the files that account should have (its folders, as the backup or a
+    copy), each one's state in that account. Status can then also be "uploaded" or "exists" (the
+    two kinds of backed up: sent by GP Sync, or found already in Google)."""
     prefix = path + "/" if path else ""
     backed = None if path else backed_folders()
     entries = [
@@ -1960,15 +2021,49 @@ def folder_files(
             return "backed_up"
         return "failed" if st == "failed" else "waiting"
 
+    detail = {}  # with an account: name -> uploaded | exists | waiting | failed, in that account
+    if account:
+        targets = folder_targets()
+        copied, copied_exists = state.get("copied_ok") or (), state.get("copied_exists") or ()
+        gave_up, skip_copy = state.get("copy_gave_up") or (), state.get("skip_copy") or ()
+        for e in entries:
+            accs = targets.get(e[0].split("/", 1)[0]) or []
+            if account not in accs:
+                continue
+            k = (e[0], account)
+            if accs[0] == account:
+                main = state_of(e)
+                st = states.get(e[0], (None, ""))[0]
+                detail[e[0]] = ("exists" if st == "exists" else "uploaded") if main == "backed_up" else main
+            elif k in copied:
+                detail[e[0]] = "exists" if k in copied_exists else "uploaded"
+            elif k in gave_up:
+                detail[e[0]] = "failed"
+            elif k not in skip_copy:  # a Snapchat hold is not a copy this account waits for
+                detail[e[0]] = "waiting"
+        entries = [e for e in entries if e[0] in detail]
+
+        def state_of(e):  # the same question, for this account
+            d = detail[e[0]]
+            return "backed_up" if d in ("uploaded", "exists") else d
+
     counts = {"all": len(entries), "backed_up": 0, "waiting": 0, "failed": 0, "photo": 0, "video": 0}
+    if account:
+        counts |= {"uploaded": 0, "exists": 0}
     for e in entries:
         counts[state_of(e)] += 1
         counts["video" if e[1] else "photo"] += 1
-    picked = [
-        e
-        for e in entries
-        if (status == "all" or state_of(e) == status) and (kind == "all" or (kind == "video") == e[1])
-    ]
+        if account and detail[e[0]] in ("uploaded", "exists"):
+            counts[detail[e[0]]] += 1
+
+    def wanted(e):
+        if status == "all":
+            return True
+        if status in ("uploaded", "exists"):
+            return detail.get(e[0]) == status
+        return state_of(e) == status
+
+    picked = [e for e in entries if wanted(e) and (kind == "all" or (kind == "video") == e[1])]
     key, reverse = FILE_SORTS.get(sort, FILE_SORTS["new"])
     picked.sort(key=key, reverse=reverse)
     return {
@@ -2315,6 +2410,8 @@ def upload_all(client, todo, account="", st=None, lane=False):
                     ok_set = state.get("copied_ok")
                     if ok_set is not None:
                         ok_set.add((name, account))
+                    if status == "exists" and state.get("copied_exists") is not None:
+                        state["copied_exists"].add((name, account))
             else:
                 q(
                     """INSERT OR REPLACE INTO files
@@ -7843,7 +7940,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             args = (folder, arg("status", "all"), arg("kind", "all"), arg("sort", "new"),
                     arg("offset", 0, 0, 10**9), arg("limit", 60, 1, 500),
-                    arg("day", ""), arg("tz", 0, -840, 840), arg("group", "folders"))  # fmt: skip
+                    arg("day", ""), arg("tz", 0, -840, 840), arg("group", "folders"), arg("account", ""))  # fmt: skip
             try:
                 self.cached(f"ffiles:{json.dumps(args)}:{state['last_scan']}", 30, lambda: folder_files(*args))
             except ValueError as e:
