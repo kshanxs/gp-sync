@@ -449,7 +449,7 @@ const upload: View = {
       </section>
 
       <section class="card lg:col-span-4">
-        ${cardHead("Tips", "phone")}
+        ${cardHead("Tips", "info")}
         <div class="card-b space-y-3 text-sm text-ink-2">
           <p class="flex gap-2">${icon("ok", "mt-0.5 size-4 shrink-0 text-good")}<span>Files are stored on ${esc(host())} first, then backed up to Google Photos in original quality.</span></p>
           <p class="flex gap-2">${icon("refresh", "mt-0.5 size-4 shrink-0 text-ink-3")}<span>Big videos go up in pieces. If Wi-Fi drops, the upload continues where it stopped.</span></p>

@@ -33,7 +33,7 @@ Back up any folder on your server, NAS, Immich library or Umbrel in original qua
     <td width="33%" valign="top"><b>🔒 Read-only by design</b><br>Your folders are mounted read-only: nothing on your server is ever changed or deleted.</td>
   </tr>
   <tr>
-    <td valign="top"><b>📱 A real phone app</b><br>Install it on iPhone or Android, upload from the gallery or camera, and pick up where you left off if Wi-Fi drops.</td>
+    <td valign="top"><b>📱 Works on your phone</b><br>Upload from the gallery or camera, and pick up where you left off if Wi-Fi drops. Add it to the home screen from the browser's menu.</td>
     <td valign="top"><b>📊 Beautiful insights</b><br>Live progress, network and resource charts, history, upload times, duplicates, in dark and light.</td>
     <td valign="top"><b>🖥️ Runs anywhere</b><br>One small Docker image for Linux, Windows, macOS, NAS boxes, Raspberry Pi, Immich setups and Umbrel.</td>
   </tr>
@@ -262,7 +262,7 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/history?days=365&tz=330` | Per-day totals; `tz` is minutes east of UTC (India = 330) |
 | `GET /api/totals` | All-time totals and fastest upload |
 | `GET /api/files?q=&status=all&folder=&sort=new&limit=60&offset=0` | Search backed-up files |
-| `GET /api/folders?group=folders&path=Photos&days=30&tz=330` | Counts and files added per day for a folder, or `group=devices` |
+| `GET /api/folders?group=folders&path=Photos&days=30&tz=330` | Counts and files added per day for a folder, or `group=devices` for the folders one level inside each backed-up folder |
 | `GET /api/copy?src=&dst=` | What one account has that another lacks, copying progress, the checker and Keep in sync |
 | `POST /api/copy/mirror` | Keep in sync: `{"src", "dst", "mode": "off"\|"one"\|"both"}` |
 | `GET /api/storage?account=` | What counts against Google storage, biggest first, progress of moving it, each account's status and the checker |
@@ -285,7 +285,7 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/logs?level=all&q=&before=&limit=200` | App log (`level` = all, info or error; error includes warnings) |
 | `GET /api/about` | Release, backend, build and package versions |
 | `GET /api/processes?days=371&tz=330` | Each process's items per day, by hour and by weekday |
-| `GET /api/upload` | Whether phone uploads are possible, and free space |
+| `GET /api/upload` | Whether the Upload page can save files, and free space |
 | `POST /api/upload?name=IMG_1.jpg&mtime=<ms>` | Upload one photo or video (raw file as the body) |
 
 Each day has `photos`, `videos`, `photo_bytes`, `video_bytes`, `existing`, `failed`,
@@ -362,7 +362,7 @@ services:
       - ./gp-sync-data:/data            # app data: accounts, state, statistics
       - /path/to/photos:/media/Photos:ro
       - /path/to/videos:/media/Videos:ro
-      - /path/to/photos/Uploads:/uploads   # optional: where phone uploads are saved
+      - /path/to/photos/Uploads:/uploads   # optional: where the Upload page saves files
 ```
 
 Run `docker compose up -d`, open `http://<server>:8527` and connect your Google account.
@@ -411,7 +411,7 @@ also skip its other folders: `EXCLUDE: "@eaDir,#recycle,encoded-video,thumbs,pro
 | `EXCLUDE` | `@eaDir,#recycle,#snapshot,$RECYCLE.BIN,System Volume Information,lost+found,encoded-video` | Folder and file names never backed up (`*` and `?` allowed). Hidden names are always skipped |
 | `SCAN_INTERVAL_MINUTES` | `5` | How often folders are checked |
 | `SETTLE_SECONDS` | `120` | A file must be unchanged this long before it's sent (skips half-copied files) |
-| `PUID` / `PGID` | `1000` | Owner of files saved from phone uploads |
+| `PUID` / `PGID` | `1000` | Owner of files saved from the Upload page |
 | `REDIS_URL` | none | Use a Redis or Valkey server as the cache (normally the app's own memory is used) |
 
 Folders:
@@ -420,7 +420,7 @@ Folders:
 |---|---|
 | `/data` | App data (writable): Google logins, upload state, statistics, thumbnails |
 | `/media/<name>` | Each folder to back up, read-only. The name is what the dashboard shows |
-| `/uploads` | Optional, writable: phone uploads. Mount a folder that is also inside a backed-up folder so they get backed up too |
+| `/uploads` | Optional, writable: files sent from the Upload page. Mount a folder that is also inside a backed-up folder so they get backed up too |
 
 Without `PASSWORD`, the dashboard has no login: keep it on your home network or behind a VPN
 such as Tailscale. It then answers only home-network addresses and refuses changes sent from other

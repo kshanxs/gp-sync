@@ -40,6 +40,11 @@
   **Folders inside** and **Added** (arrivals per day, with "Show these" for a picked day). On small
   screens the tree is the first screen and folds away when a folder opens. Old links still open
   the same folder.
+- **"Phone" only where it means a phone.** Files sent from the Upload page (from any phone or
+  computer) show in Activity as "Uploaded here" with the message "Received … from the Upload
+  page", not "from a phone". About and Health call it the Upload folder, and Sync's link to the
+  Upload page says "Add files", like the header. The README's phone highlight no longer promises
+  an install button.
 - **Install as an app is gone from the dashboard:** no Install buttons in the sidebar or header,
   and no install card in Settings → Appearance. The browser can still add GP Sync to the home
   screen from its own menu, and sharing from the gallery to an installed GP Sync still works.

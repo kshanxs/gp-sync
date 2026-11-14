@@ -158,7 +158,7 @@ const about: View = {
         ["Scans every", `${a.interval_min} min`],
         ["Statistics", a.stats_engine],
         ["Media folder", a.media],
-        ["Phone uploads", a.upload_dir],
+        ["Upload folder", a.upload_dir],
       ];
       html(
         $("#ab-version"),

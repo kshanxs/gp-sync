@@ -536,7 +536,7 @@ const sync: View = {
       </section>
       </div>
       <section class="card order-2 lg:order-none lg:col-span-7">
-        ${cardHead("Now", "cloudUp", '<span id="sy-pace"></span><a href="#/upload" class="ml-2 hover:text-ink">Upload from phone ›</a>')}
+        ${cardHead("Now", "cloudUp", '<span id="sy-pace"></span><a href="#/upload" class="ml-2 hover:text-ink">Add files ›</a>')}
         <div class="card-b" id="sy-now"><div class="skeleton h-24"></div></div>
       </section>
 

@@ -542,9 +542,9 @@ export interface FolderAccount {
   done: number;
 }
 export interface FolderGroup {
-  /** Subfolder or device name; "" = files sitting in the folder itself. */
+  /** Subfolder name; "" = files sitting in the folder itself. */
   name: string;
-  /** Folders it covers (a device can have several, e.g. "Photos/Pixel" and "Photos/Pixel (2)"). */
+  /** Folders it covers (group=devices merges "Photos/Trip" and "Photos/Trip (2)"). */
   folders: string[];
   has_sub: boolean;
   files: number;
@@ -566,7 +566,7 @@ export interface FolderGroup {
   uploads: boolean;
   /** Its newest files (up to 4), for thumbnails. */
   recent?: string[];
-  /** A phone's folder (filled by a backup app with folders 00..ff): opens as a device. */
+  /** Filled by a backup app with folders 00..ff: those inner folders aren't listed. */
   device?: boolean;
 }
 export interface FolderReport {

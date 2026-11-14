@@ -185,7 +185,7 @@ export const eventMeta: Record<string, { tone: Tone; icon: IconName; label: stri
   resume: { tone: "good", icon: "play", label: "Resumed" },
   account: { tone: "", icon: "users", label: "Account" },
   album: { tone: "", icon: "library", label: "Album" },
-  received: { tone: "info", icon: "phone", label: "From phone" },
+  received: { tone: "info", icon: "upload", label: "Uploaded here" },
   info: { tone: "", icon: "info", label: "Info" },
 };
 

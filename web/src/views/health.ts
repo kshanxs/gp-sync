@@ -53,7 +53,7 @@ function render(): void {
   const c = h.checks;
   const checks: [string, boolean, string][] = [
     ["Media folders readable (read-only)", c.media_readable, c.media_readable ? "OK" : "Not found"],
-    ["Phone upload folder", c.upload_folder, c.upload_folder ? "Writable" : "Not mounted"],
+    ["Upload folder", c.upload_folder, c.upload_folder ? "Writable" : "Not mounted"],
     ["Statistics database", c.turso, c.turso ? "Turso" : "SQLite fallback"],
     ["Errors in the last 24 h", c.errors_24h === 0, c.errors_24h ? String(c.errors_24h) : "None"],
   ];
