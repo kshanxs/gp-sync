@@ -29,7 +29,7 @@ Back up any folder on your server, NAS, Immich library or Umbrel in original qua
 <table>
   <tr>
     <td width="33%" valign="top"><b>☁️ Set and forget</b><br>Checks your folders every 5 minutes and sends new photos and videos in original quality. Files already in Google Photos are skipped.</td>
-    <td width="33%" valign="top"><b>👥 Up to 5 accounts</b><br>Back each folder up to one Google account or several at once. Every copy is tracked and retried on its own.</td>
+    <td width="33%" valign="top"><b>👥 Up to 5 accounts</b><br>Back each folder up to one Google account or several at once. See for each account what was uploaded, what Google already had and what is still to sync.</td>
     <td width="33%" valign="top"><b>🔒 Read-only by design</b><br>Your folders are mounted read-only: nothing on your server is ever changed or deleted.</td>
   </tr>
   <tr>
@@ -245,12 +245,13 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
 - **Time zone:** choose any time zone in **Settings → Appearance**, or keep the system default
   (for example India Standard Time). History, Insights, upload hours, the weekly summary and every
   time shown follow it, daylight saving included.
-- **Labs:** Snapchat, Sources and Fix dates sit in their own Labs group in the menu. They work;
-  how they work may still change.
+- **Labs:** Snapchat, Sources and Fix dates sit in their own Labs group, in the sidebar and in
+  the phone's **More** sheet. They work; how they work may still change.
 - Every page opens the same way: a line saying what it is for (with a Labs tag on Labs pages and
   a folded **How it works** where a page needs explaining), then its summary numbers, then a
   toolbar with its filters, a count and search.
-- Sidebar on desktop, bottom tabs and a "More" menu on phones; dark and light themes. The
+- Sidebar on desktop, bottom tabs and a **More** sheet on phones (grouped like the sidebar:
+  Backup, Insights, Labs, System); dark and light themes. The
   dashboard keeps its own chrome quiet (graphite at night, near-neutral paper by day) so your
   photos and the backup's progress carry the colour, with one accent: moonlight blue at night,
   amber by day. The phone tabs show what's running: Sync gets a progress ring while files upload, and Overview turns into
@@ -273,7 +274,7 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/totals` | All-time totals and fastest upload |
 | `GET /api/files?q=&status=all&folder=&sort=new&limit=60&offset=0` | Search backed-up files |
 | `GET /api/folders/files?path=Photos&status=all&kind=all&sort=new&account=` | A folder's photos and videos with their state; with `account`, only the files that account should get, and `status` can also be `uploaded` or `exists` |
-| `GET /api/folders?group=folders&path=Photos&days=30&tz=330` | Counts and files added per day for a folder, or `group=devices` for the folders one level inside each backed-up folder |
+| `GET /api/folders?group=folders&path=Photos&days=30&tz=330` | Counts and files added per day for a folder, or `group=devices` for the folders one level inside each backed-up folder. Each account row has `files`, `done`, `uploaded`, `exists`, `waiting` and `failed`; the folder's own total adds `per_hour` (files done in the last hour) |
 | `GET /api/copy?src=&dst=` | What one account has that another lacks, copying progress, the checker and Keep in sync |
 | `POST /api/copy/mirror` | Keep in sync: `{"src", "dst", "mode": "off"\|"one"\|"both"}` |
 | `GET /api/storage?account=` | What counts against Google storage, biggest first, progress of moving it, each account's status and the checker |
@@ -479,6 +480,10 @@ Design rules for the dashboard (colours and components are in `web/src/style.css
   `subtitle` and `how` (main.ts draws it, with the Labs tag for routes in the Labs group), the
   summary numbers from `statRow()` and `setTile()`, the filter bar from `toolbar()` or the
   `.toolbar` classes. A new page uses these before adding its own.
+- What each account has (uploaded, already in Google, new to sync, failed) is drawn by
+  `accountBreakdown()` in `web/src/lib/account-breakdown.ts`, from the account rows of
+  `/api/folders`; Sync and Folders both use it. The Overview's "Since your last visit" line is
+  `web/src/lib/since-visit.ts` (kept in the browser's storage, no backend).
 
 In `web/`:
 
