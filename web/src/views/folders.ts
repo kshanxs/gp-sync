@@ -9,19 +9,22 @@ import {
   type Settings,
   peek,
 } from "../lib/api";
-import { sparkline } from "../lib/charts";
 import { backupPriorityControl, PRIORITY_MAX } from "../lib/backup-priority";
-import { $, $$, esc, html, toast, touched } from "../lib/dom";
+import { $, esc, html, toast, touched } from "../lib/dom";
 import { ago, bytes, clock, date, dayKey, fileName, num, pct } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
 import { host } from "../lib/store";
-import { badge, cardHead, openAttrs, thumb, type Tone } from "../lib/ui";
+import { openAttrs, thumb, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
-// #/folders              → one row per device (the folders phone backup apps make)
-// #/folders/d/Photos/x   → one device: its photos and videos (and folders, if it has real ones)
-// #/folders/f            → every top folder
-// #/folders/f/Photos/x   → any folder: what's inside it, and its photos and videos
+// A two-pane browser: the navigator on the left (one tree of the backed-up folders, phones shown
+// as devices, the "Back up first" folders pinned on top), the open folder on the right (its
+// header, four numbers, then tabs: Photos, Folders inside, Added).
+//
+// #/folders                → everything on this server
+// #/folders/f/Photos/x     → a folder
+// #/folders/d/Photos/Pixel → a phone's folder (the same page; it opens as that device)
+// A trailing /~photo or /~video opens the Photos tab filtered to that kind.
 
 /** Whole percent; 99 until the very last file is in, so "100%" always means done. */
 const percent = (part: number, whole: number) => {
@@ -29,14 +32,19 @@ const percent = (part: number, whole: number) => {
   return p === 100 && part < whole ? 99 : p;
 };
 
-let group: "folders" | "devices" = "devices";
+type Tab = "photos" | "folders" | "added";
+
 let path = "";
+let deviceRoute = false;
 let days = 30;
+let tab: Tab = "photos";
 let report: FolderReport | null = null;
 let opened = false;
-let filesOpened = false; // the same for the photos below
+let filesOpened = false;
 let request = 0;
 let refreshTimer = 0;
+/** Phones and tablets: the navigator is folded away while a folder is open. */
+let navOpen = false;
 
 // the photos and videos of the open folder
 let files: FolderFiles | null = null;
@@ -49,56 +57,244 @@ let fRequest = 0;
 let fLoading = false;
 let observer: IntersectionObserver | null = null;
 
+/** "I2220 (2)" -> "I2220": a phone that paired again is still the same device. */
+const deviceName = (folder: string) => folder.replace(/ \(\d+\)$/, "");
+const lastPart = (p: string) => p.split("/").at(-1) ?? p;
+const enc = (p: string) => p.split("/").map(encodeURIComponent).join("/");
+
 /** Where a folder's files go: "Backup: me 80%", then "Also in: two 40%" per extra account. */
 function accountChips(accs: FolderAccount[] | undefined): string {
   if (!accs?.length) return "";
   const chip = (a: FolderAccount) => {
     const p = percent(a.done, a.files);
-    return `<span class="badge ${p === 100 ? "good" : ""}" title="${esc(`${a.main ? "Backup" : "Also in"} ${a.account}: ${num(a.done)} of ${num(a.files)} files`)}">${esc(a.account.split("@")[0]!)} ${p}%</span>`;
+    return `<span class="badge ${p === 100 ? "good" : ""}" title="${esc(`${a.main ? "Backup" : "Also in"} ${a.account}: ${num(a.done)} of ${num(a.files)} files`)}">${esc(a.account.split("@")[0]!)} <span class="meta">${p}%</span></span>`;
   };
   const main = accs.filter((a) => a.main);
   const also = accs.filter((a) => !a.main);
-  return `<span class="flex min-w-0 flex-wrap items-center gap-1 text-xs text-ink-3">${main.length ? `<span>Backup</span>${main.map(chip).join("")}` : ""}${also.length ? `<span>${main.length ? "· " : ""}Also in</span>${also.map(chip).join("")}` : ""}</span>`;
+  return `<span class="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-ink-3">${main.length ? `<span>Backup</span>${main.map(chip).join("")}` : ""}${also.length ? `<span class="${main.length ? "ml-1" : ""}">Also in</span>${also.map(chip).join("")}` : ""}</span>`;
 }
 
-/** A device's folders, from the device list ("Pixel" -> Photos/Pixel, Photos/Pixel (2)), so an open
- * device can link to its other folders. Kept for this tab, so a refresh still has them. */
-const DEVICE_KEY = "gp.deviceFolders";
-const deviceFolders = new Map<string, string[]>();
+// ---- the navigator: one tree, loaded a level at a time
 
-function rememberDevices(children: { name: string; folders: string[] }[]): void {
-  for (const c of children) if (c.folders.length > 1) deviceFolders.set(c.name, c.folders);
+/** Each opened folder's children, by path ("" = the top folders). */
+const tree = new Map<string, FolderGroup[]>();
+let notBackedUp: { name: string; files: number }[] = [];
+let rootTotal: FolderReport["total"] | null = null;
+const EXPANDED_KEY = "gp.foldersOpen";
+const expanded = new Set<string>();
+try {
+  for (const p of JSON.parse(sessionStorage.getItem(EXPANDED_KEY) || "[]") as unknown[])
+    if (typeof p === "string") expanded.add(p);
+} catch {
+  /* a bad saved list: start folded */
+}
+function saveExpanded(): void {
   try {
-    sessionStorage.setItem(DEVICE_KEY, JSON.stringify(Object.fromEntries(deviceFolders)));
+    sessionStorage.setItem(EXPANDED_KEY, JSON.stringify([...expanded]));
   } catch {
-    /* private mode, or storage full */
+    /* private mode */
   }
 }
 
-try {
-  const saved = JSON.parse(sessionStorage.getItem(DEVICE_KEY) || "{}") as Record<string, unknown>;
-  for (const [name, folders] of Object.entries(saved))
-    if (Array.isArray(folders) && folders.every((f) => typeof f === "string") && folders.length > 1)
-      deviceFolders.set(name, folders);
-} catch {
-  /* ignore a bad saved list */
+/** One navigator entry: a folder, or a phone whose folders were numbered when it paired again. */
+interface NavNode {
+  name: string;
+  /** The folder it opens (a device opens its first folder). */
+  path: string;
+  /** Every folder it stands for (a device can have several). */
+  folders: string[];
+  files: number;
+  synced: number;
+  failed: number;
+  device: boolean;
+  uploads: boolean;
+  hasSub: boolean;
 }
 
-// ---- upload order: folders whose files go to Google first (saved in settings)
+/** A level of the tree as navigator entries: a phone's numbered folders become one device. */
+function nodesOf(parent: string): NavNode[] {
+  const out: NavNode[] = [];
+  const devices = new Map<string, NavNode>();
+  for (const c of tree.get(parent) ?? []) {
+    if (!c.name) continue; // loose files: they are in the folder's own photos
+    const p = c.folders[0] ?? (parent ? `${parent}/${c.name}` : c.name);
+    if (c.device) {
+      const key = deviceName(c.name);
+      const d = devices.get(key);
+      if (d) {
+        d.folders.push(p);
+        d.files += c.files;
+        d.synced += c.synced;
+        d.failed += c.failed ?? 0;
+        continue;
+      }
+      const n: NavNode = {
+        name: key,
+        path: p,
+        folders: [p],
+        files: c.files,
+        synced: c.synced,
+        failed: c.failed ?? 0,
+        device: true,
+        uploads: c.uploads,
+        hasSub: false, // a phone's 00..ff folders mean nothing to a person
+      };
+      devices.set(key, n);
+      out.push(n);
+      continue;
+    }
+    out.push({
+      name: c.name,
+      path: p,
+      folders: [p],
+      files: c.files,
+      synced: c.synced,
+      failed: c.failed ?? 0,
+      device: false,
+      uploads: c.uploads,
+      hasSub: c.has_sub,
+    });
+  }
+  // A device with several folders opens like a folder: its folders are its children.
+  for (const d of devices.values()) d.folders.sort();
+  for (const d of devices.values()) d.path = d.folders[0]!;
+  return out;
+}
+
+/** One of a device's folders, with its own numbers from the level it sits in. */
+function folderNode(f: string, device: NavNode): NavNode {
+  const c = tree.get(f.split("/").slice(0, -1).join("/"))?.find((x) => x.folders.includes(f));
+  return {
+    ...device,
+    name: lastPart(f),
+    path: f,
+    folders: [f],
+    hasSub: false,
+    files: c?.files ?? 0,
+    synced: c?.synced ?? 0,
+    failed: c?.failed ?? 0,
+  };
+}
+
+async function loadLevel(parent: string, background = false): Promise<void> {
+  const url = `folders?group=folders&path=${encodeURIComponent(parent)}&days=30&tz=${tz}`;
+  if (!tree.has(parent)) {
+    const seen = peek<FolderReport>(url);
+    if (seen) storeLevel(parent, seen);
+  }
+  const r = await get<FolderReport>(url).catch(() => null);
+  if (!r) {
+    if (!background && !tree.has(parent)) tree.set(parent, []);
+  } else storeLevel(parent, r);
+  renderNav();
+}
+
+function storeLevel(parent: string, r: FolderReport): void {
+  tree.set(parent, r.children);
+  if (!parent) {
+    notBackedUp = r.not_backed_up ?? [];
+    rootTotal = r.total;
+  }
+}
+
+/** The open folder's ancestors stay unfolded, so the navigator shows where you are. */
+function revealPath(): void {
+  const parts = path.split("/").filter(Boolean);
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts.slice(0, i).join("/");
+    if (!expanded.has(p)) expanded.add(p);
+  }
+  saveExpanded();
+}
+
+function hrefOf(n: { path: string; device?: boolean }): string {
+  return `#/folders/${n.device ? "d" : "f"}/${enc(n.path)}`;
+}
+
+function pctBadge(synced: number, files: number, failed: number): string {
+  const p = percent(synced, files);
+  return `${failed ? `<i class="fo-fail" title="${num(failed)} failed"></i>` : ""}<span class="fo-pct ${p === 100 ? "done" : ""}">${files ? `${p}%` : "–"}</span>`;
+}
+
+function navRow(n: NavNode, depth: number): string {
+  const open = expanded.has(n.path);
+  const many = n.device && n.folders.length > 1;
+  const twisty = n.hasSub || many;
+  // A device with several folders: its row is "here" while folded, its folder's row when unfolded.
+  const here = n.folders.includes(path) && (!many || !open);
+  const ic: IconName = n.uploads ? "upload" : n.device ? "phone" : open && twisty ? "folderOpen" : "folder";
+  let kids = "";
+  if (twisty && open) {
+    kids = many
+      ? n.folders.map((f) => navRow(folderNode(f, n), depth + 1)).join("")
+      : tree.has(n.path)
+        ? nodesOf(n.path)
+            .map((c) => navRow(c, depth + 1))
+            .join("") || `<div class="fo-empty" style="--d:${depth + 1}">No folders inside</div>`
+        : `<div class="fo-empty" style="--d:${depth + 1}"><span class="skeleton h-3 w-24"></span></div>`;
+  }
+  return `<div class="fo-node" style="--d:${depth}">
+    ${twisty ? `<button type="button" class="fo-twisty" data-twisty="${esc(n.path)}" data-many="${many ? "1" : ""}" aria-expanded="${open}" aria-label="${open ? "Fold" : "Unfold"} ${esc(n.name)}">${icon("chevron", "size-3.5")}</button>` : `<span class="fo-twisty-gap"></span>`}
+    <a class="fo-row" href="${hrefOf(n)}"${here ? ' aria-current="page"' : ""} title="${esc(n.folders.join(", "))}">${icon(ic)}<span class="min-w-0 flex-1 truncate">${esc(n.name)}</span>${n.files ? pctBadge(n.synced, n.files, n.failed) : ""}</a>
+  </div>${kids}`;
+}
+
+function renderNav(): void {
+  const nav = document.getElementById("fo-nav");
+  if (!nav) return;
+  const top = nodesOf("");
+  const prioRows = prio
+    .map(
+      (p, i) => `<li class="fo-prio">
+        <span class="fo-prio-n">${i + 1}</span>
+        <a class="min-w-0 flex-1 truncate" href="#/folders/${p.split("/").length === 2 ? "d" : "f"}/${enc(p)}" title="${esc(p)}">${esc(prioName(p))}</a>
+        <span class="fo-prio-tools">
+          <button type="button" class="fo-mini" data-prio-move="${esc(p)}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Earlier">${icon("up", "size-3.5")}</button>
+          <button type="button" class="fo-mini" data-prio-move="${esc(p)}" data-dir="1" ${i === prio.length - 1 ? "disabled" : ""} aria-label="Later">${icon("down", "size-3.5")}</button>
+          <button type="button" class="fo-mini" data-prio-remove="${esc(p)}" aria-label="Back to the usual order">${icon("x", "size-3.5")}</button>
+        </span></li>`,
+    )
+    .join("");
+  html(
+    nav,
+    `<a class="fo-row fo-all" href="#/folders"${path ? "" : ' aria-current="page"'}>${icon("library")}<span class="min-w-0 flex-1 truncate">Everything</span>${rootTotal ? pctBadge(rootTotal.synced, rootTotal.files, rootTotal.failed ?? 0) : ""}</a>
+     ${
+       prio.length
+         ? `<div class="fo-sec"><span>Back up first</span><span class="meta">${prio.length}/${PRIORITY_MAX}</span></div><ol class="fo-prios">${prioRows}</ol>`
+         : ""
+     }
+     <div class="fo-sec"><span>Folders on ${esc(host())}</span></div>
+     <div class="fo-tree">${
+       tree.has("")
+         ? top.map((n) => navRow(n, 0)).join("") ||
+           `<div class="fo-empty" style="--d:0">No backed-up folders. <a class="link-btn" href="#/settings/folders">Choose folders</a></div>`
+         : '<div class="space-y-2 px-2 py-1"><div class="skeleton h-4"></div><div class="skeleton h-4 w-3/4"></div><div class="skeleton h-4 w-2/3"></div></div>'
+     }</div>
+     ${
+       notBackedUp.length
+         ? `<details class="fo-skip"><summary>${icon("info", "size-3.5")}Not backed up <span class="meta">${notBackedUp.length}</span></summary>
+         <ul>${notBackedUp.map((f) => `<li><a class="fo-row" href="#/folders/f/${encodeURIComponent(f.name)}">${icon("folder")}<span class="min-w-0 flex-1 truncate">${esc(f.name)}</span><span class="meta">${num(f.files)}</span></a></li>`).join("")}</ul>
+         <a class="link-btn sm ml-6" href="#/settings/folders">Choose folders</a></details>`
+         : ""
+     }`,
+  );
+}
+
+// ---- backup priority: folders whose files go to Google first (saved in settings)
 let prio: string[] = [];
 
 async function loadPrio(): Promise<void> {
   const st = await get<Settings>("settings").catch(() => null);
   prio = st?.priority ?? [];
-  renderPrio();
-  if (report) render();
+  renderNav();
+  if (report) renderHead(report);
 }
 
 async function savePrio(next: string[], message: string): Promise<void> {
   const before = prio;
   prio = next;
-  renderPrio();
-  if (report) render();
+  renderNav();
+  if (report) renderHead(report);
   try {
     const st = await post<Settings>("settings", { priority: next });
     prio = st.priority ?? next;
@@ -107,42 +303,14 @@ async function savePrio(next: string[], message: string): Promise<void> {
     prio = before;
     toast((e as Error).message, "bad");
   }
-  renderPrio();
-  if (report) render();
+  renderNav();
+  if (report) renderHead(report);
 }
 
 /** "Photos/I2220 (2)" -> "I2220", "Photos/trip/day2" -> "day2". */
 function prioName(p: string): string {
   const parts = p.split("/");
   return parts.length === 2 ? deviceName(parts[1]!) : (parts.at(-1) ?? p);
-}
-
-function prioBadge(p: string): string {
-  const i = prio.indexOf(p);
-  return i < 0 ? "" : badge(`Priority #${i + 1}`, "good", "up");
-}
-
-function renderPrio(): void {
-  const card = document.getElementById("fo-prio-card");
-  if (!card) return;
-  const show = prio.length > 0;
-  card.classList.toggle("hidden", !show);
-  if (!show) return;
-  html(
-    card,
-    `${cardHead("Backup priority", "up", `<span class="text-xs text-ink-3">Preferred folders in the backup queue</span>`)}
-     <ol class="divide-y divide-line">${prio
-       .map(
-         (p, i) => `<li class="flex items-center gap-3 px-4 py-2.5">
-           <span class="grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-xs tabular-nums">${i + 1}</span>
-           <a class="min-w-0 flex-1" href="#/folders/${p.split("/").length === 2 ? "d" : "f"}/${p.split("/").map(encodeURIComponent).join("/")}"><span class="block truncate text-sm font-medium">${esc(prioName(p))}</span><span class="block truncate text-xs text-ink-3">${esc(p)}</span></a>
-           <button class="btn icon sm" data-prio-move="${esc(p)}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Earlier">${icon("up")}</button>
-           <button class="btn icon sm" data-prio-move="${esc(p)}" data-dir="1" ${i === prio.length - 1 ? "disabled" : ""} aria-label="Later">${icon("down")}</button>
-           <button class="btn icon sm" data-prio-remove="${esc(p)}" aria-label="Back to the usual order">${icon("x")}</button></li>`,
-       )
-       .join("")}</ol>
-     <p class="border-t border-line px-4 py-2.5 text-xs text-ink-3">Others follow in the usual order. Up to ${PRIORITY_MAX} folders.</p>`,
-  );
 }
 
 const RANGES: [number, string][] = [
@@ -164,19 +332,16 @@ function parse(args: string[]): void {
   const last = args[args.length - 1] ?? "";
   linkedKind = last === "~photo" || last === "~video" ? last.slice(1) : "all";
   if (linkedKind !== "all") args = args.slice(0, -1);
-  group = args[0] === "f" ? "folders" : "devices";
+  deviceRoute = args[0] === "d";
   path = args[0] === "f" || args[0] === "d" ? args.slice(1).map(decodeURIComponent).join("/") : "";
 }
 
-/** A link inside the current view: devices stay devices, folders stay folders. */
-function folderHref(p: string): string {
-  const kind = group === "devices" ? "d" : "f";
-  if (!p) return group === "devices" ? "#/folders" : "#/folders/f";
-  return `#/folders/${kind}/${p.split("/").map(encodeURIComponent).join("/")}`;
+/** Is the open folder a phone's? Known from the navigator, or from a #/folders/d/ link. */
+function openDevice(): boolean {
+  const parent = path.split("/").slice(0, -1).join("/");
+  const c = tree.get(parent)?.find((x) => x.folders.includes(path));
+  return c ? !!c.device : deviceRoute;
 }
-
-/** "I2220 (2)" -> "I2220": a phone that paired again is still the same device. */
-const deviceName = (folder: string) => folder.replace(/ \(\d+\)$/, "");
 
 /** Backup apps name files by a long code; a date says more about such a photo. */
 function fileTitle(f: { name: string; mtime: number; kind: string }): string {
@@ -190,14 +355,28 @@ function rangeText(): string {
   return days === 366 ? "the last year" : `the last ${days} days`;
 }
 
-// ---- loading
+/** "Today", "Yesterday", else "Sun, Nov 9", for a day key ("2026-11-09"). */
+function dayTitle(day: string, today: string, long = false): string {
+  const t = Date.parse(`${today}T12:00:00Z`);
+  const d = Date.parse(`${day}T12:00:00Z`);
+  if (day === today) return "Today";
+  if (t - d === 86400000) return "Yesterday";
+  return new Date(d).toLocaleDateString([], {
+    timeZone: "UTC",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(long && day.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {}),
+  });
+}
+
+// ---- loading the open folder
 
 /** `background`: the 30 s refresh. A failed refresh keeps the report on screen, and new synced or
- * failed counts reload the photos below. */
+ * failed counts reload the photos. */
 async function load(background = false): Promise<void> {
   const mine = ++request;
-  const kind = path ? "folders" : group; // inside a device it is a folder like any other
-  const url = `folders?group=${kind}&path=${encodeURIComponent(path)}&days=${days}&tz=${tz}`;
+  const url = `folders?group=folders&path=${encodeURIComponent(path)}&days=${days}&tz=${tz}`;
   const seen = opened ? peek<FolderReport>(url) : undefined;
   opened = false;
   if (seen) {
@@ -209,7 +388,13 @@ async function load(background = false): Promise<void> {
   if (background && !r && report) return;
   const before = report?.total;
   report = r;
-  if (r && group === "devices" && !path) rememberDevices(r.children);
+  if (r && !path) {
+    storeLevel("", r);
+    renderNav();
+  } else if (r) {
+    tree.set(path, r.children); // its folders, for the navigator too
+    renderNav();
+  }
   render();
   if (background && before && r && (before.synced !== r.total.synced || before.failed !== r.total.failed))
     void loadFiles(true, true);
@@ -223,7 +408,7 @@ async function loadFiles(reset: boolean, keep = false): Promise<void> {
   const offset = reset ? 0 : shownFiles.length;
   const limit = keep ? Math.min(600, Math.max(60, shownFiles.length)) : 60;
   try {
-    const url = `folders/files?path=${encodeURIComponent(path)}&group=${group}&status=${fStatus}&kind=${fKind}&sort=${fSort}&offset=${offset}&limit=${limit}&day=${encodeURIComponent(fDay)}&tz=${tz}`;
+    const url = `folders/files?path=${encodeURIComponent(path)}&group=folders&status=${fStatus}&kind=${fKind}&sort=${fSort}&offset=${offset}&limit=${limit}&day=${encodeURIComponent(fDay)}&tz=${tz}`;
     const seen = reset && filesOpened ? peek<FolderFiles>(url) : undefined;
     if (reset) filesOpened = false;
     if (seen) {
@@ -245,223 +430,146 @@ async function loadFiles(reset: boolean, keep = false): Promise<void> {
   }
 }
 
-// ---- top bar
+// ---- the open folder: header, numbers, tabs
 
-function renderBar(): void {
-  $$("button", $("#fo-group")).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.g === group)));
-  const sep = `<span class="text-ink-3">${icon("chevron", "size-3.5")}</span>`;
+function crumbs(): string {
   const parts = path.split("/").filter(Boolean);
-  // A device starts at its folder (Photos/iPhone); show it by name, then what's inside it.
-  const from = group === "devices" ? Math.min(2, parts.length) : 0;
-  const steps = parts.slice(from).map((part, i, all) => {
-    const to = parts.slice(0, from + i + 1).join("/");
-    return i === all.length - 1
-      ? `<span class="font-medium">${esc(part)}</span>`
-      : `<a class="link-btn" href="${folderHref(to)}">${esc(part)}</a>`;
+  const steps = parts.map((part, i) => {
+    const to = parts.slice(0, i + 1).join("/");
+    return i === parts.length - 1
+      ? `<span class="text-ink-2">${esc(part)}</span>`
+      : `<a class="hover:text-ink" href="#/folders/f/${enc(to)}">${esc(part)}</a>`;
   });
-  if (group === "devices" && from) {
-    const dev = deviceName(parts[from - 1] ?? "");
-    steps.unshift(
-      steps.length
-        ? `<a class="link-btn" href="${folderHref(parts.slice(0, from).join("/"))}">${icon("phone", "size-4")}${esc(dev)}</a>`
-        : `<span class="flex items-center gap-1.5 font-medium">${icon("phone", "size-4 text-ink-3")}${esc(dev)}</span>`,
-    );
-  }
-  const root =
-    group === "devices"
-      ? path
-        ? `<a class="link-btn" href="#/folders">${icon("devices", "size-4")}Devices</a>`
-        : `<span class="flex items-center gap-1.5 font-medium">${icon("devices", "size-4 text-ink-3")}Devices on ${esc(host())}</span>`
-      : path
-        ? `<a class="link-btn" href="#/folders/f">${icon("folder", "size-4")}${esc(host())}</a>`
-        : `<span class="flex items-center gap-1.5 font-medium">${icon("folder", "size-4 text-ink-3")}Folders on ${esc(host())}</span>`;
-  const crumbs = [root, ...steps].join(sep);
-  html($("#fo-crumbs"), `<div class="flex min-w-0 flex-wrap items-center gap-1.5 text-sm">${crumbs}</div>`);
+  const sep = `<span aria-hidden="true">/</span>`;
+  return [`<a class="hover:text-ink" href="#/folders">${esc(host())}</a>`, ...steps].join(sep);
 }
 
-// ---- the main card: the folder's totals, the chosen day (today unless a bar was picked), the chart
-
-function stat(label: string, value: string, sub = ""): string {
-  return `<div class="min-w-0"><div class="label truncate">${esc(label)}</div><div class="num mt-1 truncate text-lg sm:text-xl">${value}</div>${sub ? `<div class="truncate text-xs text-ink-3">${sub}</div>` : ""}</div>`;
-}
-
-/** "Today", "Yesterday", else "Sun, Nov 9", for a day key ("2026-11-09"). */
-function dayTitle(day: string, today: string, long = false): string {
-  const t = Date.parse(`${today}T12:00:00Z`);
-  const d = Date.parse(`${day}T12:00:00Z`);
-  if (day === today) return "Today";
-  if (t - d === 86400000) return "Yesterday";
-  return new Date(d).toLocaleDateString([], {
-    timeZone: "UTC",
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    ...(long && day.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {}),
-  });
-}
-
-function renderSummary(r: FolderReport): void {
+function renderHead(r: FolderReport): void {
   const t = r.total;
   const done = percent(t.synced, t.files);
   const failed = t.failed ?? 0;
   const waiting = Math.max(0, t.files - t.synced - failed);
+  const device = !!path && openDevice();
   const parts = path.split("/").filter(Boolean);
-  const siblings =
-    group === "devices" && parts.length === 2
-      ? (deviceFolders.get(deviceName(parts[1]!)) ?? []).filter((f) => f !== path)
-      : [];
-  const title = !path
-    ? group === "devices"
-      ? "All devices"
-      : "All folders"
-    : group === "devices" && parts.length === 2
-      ? deviceName(parts[1]!)
-      : (parts.at(-1) ?? path);
+  const title = !path ? "Everything" : device ? deviceName(parts.at(-1) ?? path) : (parts.at(-1) ?? path);
+  const siblings = device
+    ? (nodesOf(parts.slice(0, -1).join("/")).find((n) => n.folders.includes(path))?.folders ?? []).filter(
+        (f) => f !== path,
+      )
+    : [];
+  const ic: IconName = !path ? "library" : device ? "phone" : "folder";
   html(
-    $("#fo-summary"),
-    `<div class="flex flex-wrap items-center gap-x-3 gap-y-1"><span class="truncate text-base font-medium">${esc(title)}</span>
-       <span class="text-xs text-ink-3">${num(t.files)} files · ${bytes(t.bytes)}</span>
-       ${path ? prioBadge(path) : ""}
-       <span class="ml-auto text-xs text-ink-3 tabular-nums">${done}% in Google Photos</span></div>
-     <div class="bar mt-2"><i style="width:${done}%"></i></div>
-     ${t.accounts?.length ? `<div class="mt-2">${accountChips(t.accounts)}</div>` : ""}
-     ${siblings.length ? `<div class="mt-2 text-xs text-ink-3">Also from this device: ${siblings.map((f) => `<a class="link-btn" href="${folderHref(f)}">${esc(f)}</a>`).join(" · ")}</div>` : ""}
-     <div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
-       ${stat("Photos", num(t.photos), bytes(t.photo_bytes))}
-       ${stat("Videos", num(t.videos), bytes(t.video_bytes))}
-       ${stat("Last added", t.last_added ? ago(t.last_added) : "–", t.last_added ? date(t.last_added, true) : "Nothing yet")}
-       ${stat("In Google", num(t.synced), `${done}% of the files`)}
-       ${stat("Waiting", num(waiting), waiting ? "Not sent yet" : "Nothing waiting")}
-       ${stat("Failed", failed ? `<span class="text-bad">${num(failed)}</span>` : "0", failed ? '<a class="link-btn" href="#/activity/failed">See why</a>' : "None")}
+    $("#fo-head"),
+    `<div class="flex items-center gap-2">
+       <button type="button" class="btn sm lg:hidden" id="fo-browse" aria-expanded="${navOpen}" aria-controls="fo-nav-wrap">${icon("layers")}Folders</button>
+       <nav class="meta flex min-w-0 flex-wrap items-center gap-1.5" aria-label="Where you are">${crumbs()}</nav>
      </div>
-     ${path ? backupPriorityControl(path, prio.indexOf(path), waiting + failed > 0) : ""}`,
+     <div class="mt-4 flex items-start gap-3">
+       <span class="grid size-10 shrink-0 place-items-center rounded-[10px] bg-panel-2 text-ink-2">${icon(ic, "size-5")}</span>
+       <div class="min-w-0 flex-1">
+         <h2 class="truncate text-xl leading-7 font-medium">${esc(title)}</h2>
+         <p class="mt-0.5 text-xs text-ink-3">${device ? "Phone · " : ""}${num(t.files)} files · ${bytes(t.bytes)}${t.last_added ? ` · last added ${ago(t.last_added)}` : ""}${!path ? ` · every backed-up folder on ${esc(host())}` : ""}</p>
+       </div>
+       ${path ? backupPriorityControl(path, prio.indexOf(path), waiting + failed > 0) : ""}
+     </div>
+     <div class="mt-4 flex items-center gap-3"><div class="bar flex-1"><i style="width:${done}%"></i></div><span class="meta shrink-0">${done}% in Google Photos</span></div>
+     ${t.accounts?.length ? `<div class="mt-3">${accountChips(t.accounts)}</div>` : ""}
+     ${siblings.length ? `<div class="mt-3 flex flex-wrap items-center gap-x-2 text-xs text-ink-3">Also from this device:${siblings.map((f) => `<a class="link-btn sm" href="#/folders/d/${enc(f)}">${esc(lastPart(f))}</a>`).join("")}</div>` : ""}`,
+  );
+  renderStats(r, waiting, failed);
+}
+
+/** The four numbers. Each one is a filter for the photos below. */
+function renderStats(r: FolderReport, waiting: number, failed: number): void {
+  const t = r.total;
+  const cell = (key: string, label: string, ic: IconName, value: string, sub: string, on: boolean) =>
+    `<button type="button" class="card metric-card lift flex min-w-0 flex-col p-4 text-left" data-stat="${key}" aria-pressed="${on}">
+      <span class="flex min-w-0 items-center gap-2"><span class="metric-icon shrink-0">${icon(ic)}</span><span class="label truncate">${esc(label)}</span></span>
+      <span class="num mt-4 truncate text-2xl">${value}</span>
+      <span class="mt-1 truncate text-xs text-ink-3">${sub}</span></button>`;
+  html(
+    $("#fo-stats"),
+    cell("photo", "Photos", "photo", num(t.photos), bytes(t.photo_bytes), fKind === "photo") +
+      cell("video", "Videos", "video", num(t.videos), bytes(t.video_bytes), fKind === "video") +
+      cell(
+        "waiting",
+        "Waiting",
+        "hourglass",
+        num(waiting),
+        waiting ? "Not in Google yet" : "Nothing waiting",
+        fStatus === "waiting",
+      ) +
+      cell(
+        "failed",
+        "Failed",
+        "error",
+        failed ? `<span class="text-bad">${num(failed)}</span>` : "0",
+        failed ? "Tap to see them" : "None",
+        fStatus === "failed",
+      ),
   );
 }
 
-/** The chosen day's numbers, above the chart: today unless a bar was picked. */
-function renderDay(r: FolderReport): void {
-  const day = fDay || r.today;
-  const d = r.daily.find((x) => x.day === day) ?? {
-    day,
-    photos: 0,
-    videos: 0,
-    backed_up: 0,
-    waiting: 0,
-    failed: 0,
-  };
-  const added = d.photos + d.videos;
-  const inGoogle = percent(d.backed_up, added);
+function renderTabs(r: FolderReport | null): void {
+  const inside = (r?.children ?? []).filter((c) => c.name).length;
+  const count = (n: number | undefined) => (n == null ? "" : `<span class="meta">${num(n)}</span>`);
+  const tabs: [Tab, string, IconName, string][] = [
+    ["photos", "Photos", "library", count(files?.counts.all ?? r?.total.files)],
+    ["folders", "Folders inside", "folder", count(inside)],
+    ["added", "Added", "chart", r ? `<span class="meta">${num(r.total.new)}</span>` : ""],
+  ];
+  if (tab === "folders" && !inside) tab = "photos";
   html(
-    $("#fo-day"),
-    `<div class="flex flex-wrap items-center gap-2">
-       <div class="min-w-0 flex-1"><div class="label">${fDay ? "Picked day" : "Added today"}</div>
-         <div class="mt-0.5 flex flex-wrap items-baseline gap-x-2"><span class="text-lg font-medium">${esc(dayTitle(day, r.today, true))}</span>${day === r.today ? `<span class="text-xs text-ink-3">${esc(dayTitle(day, "", true))}</span>` : ""}</div></div>
-       ${fDay ? `<button class="btn sm" id="fo-clear-day">${icon("calendar")}Back to today</button>` : ""}
-       <div class="seg" id="fo-range">${RANGES.map(([n, l]) => `<button data-d="${n}" aria-pressed="${n === days}" class="max-sm:px-2.5">${l}</button>`).join("")}</div>
-     </div>
-     <div class="even mt-3">
-       ${dayStat("Added", num(added), added ? `${inGoogle}% in Google` : "Nothing", "")}
-       ${dayStat("Photos", num(d.photos), "", "s1")}
-       ${dayStat("Videos", num(d.videos), "", "s2")}
-       ${dayStat("In Google", num(d.backed_up), "", "good")}
-       ${dayStat(d.failed ? "Failed" : "Waiting", num(d.failed || d.waiting), d.failed ? `${num(d.waiting)} waiting` : "", d.failed ? "bad" : "")}
-     </div>`,
+    $("#fo-tabs"),
+    tabs
+      .filter(([k]) => k !== "folders" || inside)
+      .map(
+        ([k, l, ic, n]) =>
+          `<button type="button" role="tab" data-tab="${k}" aria-selected="${k === tab}" class="whitespace-nowrap max-sm:px-2">${icon(ic, "size-4 max-sm:hidden")}<span>${k === "folders" ? '<span class="sm:hidden">Folders</span><span class="max-sm:hidden">Folders inside</span>' : l}</span>${n}</button>`,
+      )
+      .join(""),
   );
+  for (const k of ["photos", "folders", "added"] as Tab[])
+    document.getElementById(`fo-tab-${k}`)?.toggleAttribute("hidden", k !== tab);
 }
 
-function dayStat(label: string, value: string, sub: string, tone: string): string {
-  return `<div class="day-stat ${tone}"><div class="text-[11px] text-ink-3">${esc(label)}</div><div class="num text-xl">${value}</div>${sub ? `<div class="truncate text-[11px] text-ink-3">${esc(sub)}</div>` : ""}</div>`;
-}
-
-// ---- devices and subfolders
-
-function rowTarget(c: FolderGroup): string {
-  // Several folders (the phone paired again): each one is its own link, not a jump to the first.
-  if (group === "devices" && !path) return c.folders.length === 1 ? folderHref(c.folders[0]!) : "";
-  const to = c.folders[0] ?? path;
-  // A phone's folder opens as that device, whichever way it was reached.
-  if (c.device) return `#/folders/d/${to.split("/").map(encodeURIComponent).join("/")}`;
-  return folderHref(to);
-}
+// ---- tab: folders inside
 
 function rowHtml(c: FolderGroup): string {
   const done = percent(c.synced, c.files);
-  const devices = group === "devices" && !path;
-  const ic = devices ? (c.uploads ? "upload" : "phone") : c.device ? "phone" : "folder";
-  const sub = devices
-    ? c.uploads
-      ? "Sent from the Upload page"
-      : c.folders.length > 1
-        ? c.folders
-            .map(
-              (f) =>
-                `<a class="link-btn" href="${folderHref(f)}" title="${esc(f)}">${esc(f.split("/").pop() ?? f)}</a>`,
-            )
-            .join(" · ")
-        : esc(c.folders[0] ?? "")
-    : `${c.device ? "Device · " : ""}${num(c.photos)} photos · ${num(c.videos)} videos`;
-  const href = rowTarget(c);
-  const tag = href ? "a" : "div";
+  const to = c.folders[0] ?? (path ? `${path}/${c.name}` : c.name);
+  const href = `#/folders/${c.device ? "d" : "f"}/${enc(to)}`;
+  const ic: IconName = c.uploads ? "upload" : c.device ? "phone" : "folder";
   const thumbs = (c.recent ?? [])
     .map(
       (n) =>
         `<span class="block size-10 overflow-hidden rounded-lg bg-panel-2">${thumb(n, "size-full object-cover")}</span>`,
     )
     .join("");
-  return `<${tag} ${href ? `href="${href}"` : ""} class="row ${href ? "clickable" : ""} flex-wrap gap-y-2 px-4 py-3">
-    <span class="grid size-10 shrink-0 place-items-center rounded-xl bg-panel-2 text-ink-2">${icon(ic, "size-5")}</span>
+  return `<a href="${href}" class="row clickable flex-wrap gap-y-2">
+    <span class="grid size-10 shrink-0 place-items-center rounded-[10px] bg-panel-2 text-ink-2">${icon(ic, "size-5")}</span>
     <div class="min-w-0 flex-1 basis-40">
-      <div class="flex items-center gap-2"><span class="truncate text-sm font-medium">${esc(c.name)}</span>${c.folders.length === 1 ? prioBadge(c.folders[0]!) : ""}${c.new ? badge(`+${num(c.new)} new`, "info") : ""}</div>
-      <div class="truncate text-xs text-ink-3">${sub}</div>
-      ${c.accounts?.length ? `<div class="mt-1">${accountChips(c.accounts)}</div>` : ""}
-      <div class="mt-1.5 flex items-center gap-2"><div class="bar h-1.5 max-w-48 flex-1"><i style="width:${done}%"></i></div><span class="text-xs text-ink-3 tabular-nums">${done}%</span></div>
+      <div class="flex items-center gap-2"><span class="truncate text-sm font-medium">${esc(c.device ? deviceName(c.name) : c.name)}</span>${c.new ? `<span class="meta" title="Added in ${rangeText()}">+${num(c.new)}</span>` : ""}</div>
+      <div class="truncate text-xs text-ink-3">${c.uploads ? "Sent from the Upload page" : `${c.device ? "Phone · " : ""}${num(c.photos)} photos · ${num(c.videos)} videos`}</div>
+      <div class="mt-2 flex items-center gap-2"><div class="bar max-w-48 flex-1"><i style="width:${done}%"></i></div><span class="meta">${done}%</span>${c.failed ? `<span class="text-xs text-bad">${num(c.failed)} failed</span>` : ""}</div>
     </div>
-    ${thumbs ? `<div class="hidden gap-1.5 md:flex">${thumbs}</div>` : ""}
-    <div class="hidden w-28 text-right text-sm tabular-nums sm:block">${num(c.files)}<div class="text-xs text-ink-3">${bytes(c.bytes)}</div></div>
-    <div class="hidden w-28 lg:block" data-tip="${esc(`${num(c.new)} added in ${rangeText()}\n${num(c.new_week)} this week\nLast added ${c.last_added ? ago(c.last_added) : "never"}`)}">${sparkline(c.series, c.new ? "var(--s1)" : "var(--line)", 28)}</div>
-    <span class="text-ink-3">${href ? icon("chevron", "size-4") : ""}</span>
-  </${tag}>`;
+    ${thumbs ? `<div class="hidden gap-2 md:flex">${thumbs}</div>` : ""}
+    <div class="hidden w-24 text-right sm:block"><div class="text-sm tabular-nums">${num(c.files)}</div><div class="text-xs text-ink-3">${bytes(c.bytes)}</div></div>
+    <span class="text-ink-3">${icon("chevron", "size-4")}</span>
+  </a>`;
 }
 
-function renderList(r: FolderReport): void {
-  const rows = r.children.filter((c) => c.name); // loose files are in the photos below
-  const card = $("#fo-list-card");
-  card.classList.toggle("hidden", !rows.length && !!path); // a folder without folders inside: just its photos
-  html(
-    $("#fo-list-head"),
-    cardHead(
-      group === "devices" && !path ? "Devices" : path ? "Folders inside" : "Folders",
-      group === "devices" && !path ? "devices" : "layers",
-      `<span class="text-xs text-ink-3">${num(rows.length)}</span>`,
-    ),
-  );
-  const skipped = !path ? (r.not_backed_up ?? []) : [];
-  const note = skipped.length
-    ? `<div class="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 py-3 text-xs text-ink-3">${icon("info", "size-3.5")}<span>Not backed up, so not counted here: ${skipped
-        .map(
-          (f) =>
-            `<a class="link-btn" href="#/folders/f/${encodeURIComponent(f.name)}">${esc(f.name)}</a> (${num(f.files)})`,
-        )
-        .join(", ")}.</span><a class="link-btn" href="#/settings/folders">Choose folders</a></div>`
-    : "";
-  html(
-    $("#fo-list"),
-    rows.length
-      ? rows.map(rowHtml).join("") + note
-      : `<div class="empty">${icon(group === "devices" ? "phone" : "folder")}${
-          group === "devices" && !path
-            ? "No device folders yet. Phone backup apps make one folder per device inside a backed-up folder (for example Photos/iPhone)."
-            : "No folders here"
-        }</div>`,
-  );
+function renderInside(r: FolderReport): void {
+  const rows = r.children.filter((c) => c.name);
+  html($("#fo-inside"), rows.map(rowHtml).join(""));
 }
 
-// ---- photos and videos of the open folder
+// ---- tab: photos
 
 function fileTile(f: FolderFiles["items"][number]): string {
   const [label, tone, ic] = FILE_STATES[f.state] ?? [f.state, "info", "info"];
   return `<figure class="ph-tile group" ${openAttrs(f.name, f.state === "failed")} title="${esc(`${fileTitle(f)}\n${label} · ${bytes(f.size)}${f.error ? `\n${f.error}` : ""}`)}">
-    <div class="shimmer relative aspect-square overflow-hidden rounded-lg">${thumb(f.name, "zoom-img fade-img size-full object-cover", f.mtime)}
+    <div class="shimmer relative aspect-square overflow-hidden rounded-lg">${thumb(f.name, "fade-img size-full object-cover", f.mtime)}
       <span class="ph-state ${tone}" aria-label="${esc(label)}">${icon(ic, "size-3")}</span>
       ${f.kind === "video" ? `<span class="ph-video">${icon("play", "size-3")}</span>` : ""}</div>
     <figcaption class="mt-1 flex justify-between gap-1 px-0.5 text-[11px] text-ink-3 tabular-nums"><span class="keep-line truncate">${clock(f.added)}</span><span class="keep-line shrink-0">${bytes(f.size)}</span></figcaption></figure>`;
@@ -491,13 +599,13 @@ function moreHtml(): string {
   return shownFiles.length < files.total
     ? `<button class="btn" id="fo-more">${icon("plus")}Show more (${num(files.total - shownFiles.length)} left)</button>`
     : shownFiles.length > 60
-      ? `<span class="text-xs text-ink-3">All ${num(files.total)} shown</span>`
+      ? `<span class="meta">All ${num(files.total)} shown</span>`
       : "";
 }
 
-function renderFilesHead(): void {
+function renderFilesTools(): void {
   const c = files?.counts;
-  const n = (k: keyof NonNullable<typeof c>) => (c ? ` · ${num(c[k])}` : "");
+  const n = (k: keyof NonNullable<typeof c>) => (c ? ` <span class="meta">${num(c[k])}</span>` : "");
   html(
     $("#fo-files-tools"),
     `<div class="seg" id="fo-fstatus">${[
@@ -506,7 +614,7 @@ function renderFilesHead(): void {
       ["waiting", "Waiting", n("waiting")],
       ["failed", "Failed", n("failed")],
     ]
-      .filter(([k]) => k !== "failed" || !c || c.failed)
+      .filter(([k]) => k !== "failed" || !c || c.failed || fStatus === "failed")
       .map(([k, l, x]) => `<button data-s="${k}" aria-pressed="${k === fStatus}">${l}${x}</button>`)
       .join("")}</div>
      <div class="seg" id="fo-fkind">${[
@@ -516,7 +624,8 @@ function renderFilesHead(): void {
      ]
        .map(([k, l]) => `<button data-k="${k}" aria-pressed="${k === fKind}">${l}</button>`)
        .join("")}</div>
-     <select class="input w-auto" id="fo-fsort">${[
+     ${fDay ? `<button type="button" class="chip" aria-pressed="true" id="fo-clear-day" title="Show every day">${icon("calendar")}Added ${esc(dayTitle(fDay, report?.today ?? "", true))}${icon("x")}</button>` : ""}
+     <select class="input ml-auto w-auto" id="fo-fsort" aria-label="Sort">${[
        ["new", "Newest added"],
        ["old", "Oldest added"],
        ["size", "Largest"],
@@ -528,17 +637,25 @@ function renderFilesHead(): void {
 }
 
 function renderFiles(): void {
-  renderFilesHead();
+  renderFilesTools();
+  renderTabs(report);
+  if (report) renderStats(report, ...waitingFailed(report));
   const body = document.getElementById("fo-files");
   if (!body) return;
+  const filtered = fStatus !== "all" || fKind !== "all" || fDay;
   html(
     body,
     shownFiles.length
       ? `<div class="ph-grid" id="fo-grid" data-gallery>${tilesHtml(shownFiles)}</div>
        <div class="mt-4 flex min-h-10 justify-center" id="fo-sentinel">${moreHtml()}</div>`
-      : `<div class="empty">${icon("library")}${fStatus === "all" && fKind === "all" ? "No photos or videos here" : "Nothing matches"}</div>`,
+      : `<div class="empty">${icon("library")}${filtered ? "Nothing matches these filters" : "No photos or videos here"}${filtered ? '<button type="button" class="btn sm mt-2" id="fo-reset">Show everything</button>' : ""}</div>`,
   );
   watchEnd();
+}
+
+function waitingFailed(r: FolderReport): [number, number] {
+  const failed = r.total.failed ?? 0;
+  return [Math.max(0, r.total.files - r.total.synced - failed), failed];
 }
 
 function appendFiles(more: FolderFiles["items"]): void {
@@ -565,10 +682,13 @@ function watchEnd(): void {
   observer.observe(end);
 }
 
-// ---- chart
+// ---- tab: added (per day; picking a day filters the photos)
 
-/** Stacked columns of photos and videos added; a year is shown per week so bars stay readable. */
-function renderChart(r: FolderReport): void {
+function dayStat(label: string, value: string, sub: string, tone: string): string {
+  return `<div class="day-stat ${tone}"><div class="text-xs text-ink-3">${esc(label)}</div><div class="num text-xl">${value}</div>${sub ? `<div class="truncate text-xs text-ink-3">${esc(sub)}</div>` : ""}</div>`;
+}
+
+function renderAdded(r: FolderReport): void {
   let rows = r.daily.map((d) => ({ ...d }));
   if (days > 90) {
     const weeks: typeof rows = [];
@@ -594,59 +714,78 @@ function renderChart(r: FolderReport): void {
     );
   const weekly = days > 90; // a bar per week: not a single day to pick
   const picked = fDay || r.today;
+  const day = r.daily.find((x) => x.day === picked) ?? {
+    day: picked,
+    photos: 0,
+    videos: 0,
+    backed_up: 0,
+    waiting: 0,
+    failed: 0,
+  };
+  const added = day.photos + day.videos;
   html(
-    $("#fo-chart"),
-    `<div class="cols flex h-24 items-end gap-[3px] sm:h-32 ${fDay ? "has-pick" : ""}">${rows
-      .map((d) => {
-        const head = weekly ? `Week of ${nice(d.day)}` : nice(d.day, true);
-        const tip = `${head}\nPhotos: ${num(d.photos)}\nVideos: ${num(d.videos)}\nIn Google: ${num(d.backed_up)}\nWaiting: ${num(d.waiting)}${d.failed ? `\nFailed: ${num(d.failed)}` : ""}${weekly ? "" : "\nTap to see this day"}`;
-        const on = !weekly && d.day === picked;
-        const bars = `${d.videos ? `<div class="col-bar rounded-t-[4px] bg-s2" style="height:${(d.videos / max) * 100}%"></div>` : ""}
-          ${d.photos ? `<div class="col-bar ${d.videos ? "" : "rounded-t-[4px]"} bg-s1" style="height:${(d.photos / max) * 100}%"></div>` : ""}
-          ${d.photos || d.videos ? "" : `<div class="h-[2px] rounded bg-panel-2"></div>`}`;
-        return weekly
-          ? `<div class="col flex h-full flex-1 flex-col justify-end gap-[2px]" data-tip="${esc(tip)}">${bars}</div>`
-          : `<button type="button" class="col flex h-full flex-1 flex-col justify-end gap-[2px]" data-day="${d.day}" aria-pressed="${on}" aria-label="${esc(`${nice(d.day, true)}: ${num(d.photos)} photos, ${num(d.videos)} videos`)}" data-tip="${esc(tip)}">${bars}</button>`;
-      })
-      .join("")}</div>
-    <div class="mt-1.5 flex gap-[3px] text-[11px] text-ink-3">${rows
-      .map(
-        (d, i) =>
-          `<div class="flex-1 text-center whitespace-nowrap ${!weekly && d.day === picked ? "font-medium text-ink" : ""}">${(rows.length - 1 - i) % every === 0 ? esc(nice(d.day)) : ""}</div>`,
-      )
-      .join("")}</div>
-    <div class="mt-2 flex items-center gap-3 text-xs text-ink-3"><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s1"></i>Photos</span><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s2"></i>Videos</span><span class="ml-auto">${weekly ? "One bar per week: a trend only. Pick 90 d or less to open a day" : "Tap a day to see it"}</span></div>`,
+    $("#fo-added"),
+    `<div class="flex flex-wrap items-center gap-2">
+       <div class="min-w-0 flex-1"><div class="label">${fDay ? "Picked day" : "Today"}</div>
+         <div class="mt-1 text-lg font-medium">${esc(dayTitle(picked, r.today, true))} <span class="meta">${num(added)} added</span></div></div>
+       ${added && !weekly ? `<button type="button" class="btn sm" data-show-day="${picked}">${icon("library")}Show these ${num(added)}</button>` : ""}
+       <div class="seg" id="fo-range">${RANGES.map(([n, l]) => `<button data-d="${n}" aria-pressed="${n === days}">${l}</button>`).join("")}</div>
+     </div>
+     <div class="even mt-4">
+       ${dayStat("Photos", num(day.photos), "", "s1")}
+       ${dayStat("Videos", num(day.videos), "", "s2")}
+       ${dayStat("In Google", num(day.backed_up), added ? `${percent(day.backed_up, added)}% of the day` : "", "")}
+       ${dayStat(day.failed ? "Failed" : "Waiting", num(day.failed || day.waiting), day.failed ? `${num(day.waiting)} waiting` : "", day.failed ? "bad" : "")}
+     </div>
+     <div class="cols mt-6 flex h-32 items-end gap-[3px] sm:h-40 ${fDay ? "has-pick" : ""}">${rows
+       .map((d) => {
+         const head = weekly ? `Week of ${nice(d.day)}` : nice(d.day, true);
+         const tip = `${head}\nPhotos: ${num(d.photos)}\nVideos: ${num(d.videos)}\nIn Google: ${num(d.backed_up)}\nWaiting: ${num(d.waiting)}${d.failed ? `\nFailed: ${num(d.failed)}` : ""}${weekly ? "" : "\nTap to pick this day"}`;
+         const on = !weekly && d.day === picked;
+         const bars = `${d.videos ? `<div class="col-bar rounded-t-[4px] bg-s2" style="height:${(d.videos / max) * 100}%"></div>` : ""}
+           ${d.photos ? `<div class="col-bar ${d.videos ? "" : "rounded-t-[4px]"} bg-s1" style="height:${(d.photos / max) * 100}%"></div>` : ""}
+           ${d.photos || d.videos ? "" : `<div class="h-[2px] rounded bg-panel-2"></div>`}`;
+         return weekly
+           ? `<div class="col flex h-full flex-1 flex-col justify-end gap-[2px]" data-tip="${esc(tip)}">${bars}</div>`
+           : `<button type="button" class="col flex h-full flex-1 flex-col justify-end gap-[2px]" data-day="${d.day}" aria-pressed="${on}" aria-label="${esc(`${nice(d.day, true)}: ${num(d.photos)} photos, ${num(d.videos)} videos`)}" data-tip="${esc(tip)}">${bars}</button>`;
+       })
+       .join("")}</div>
+     <div class="mt-2 flex gap-[3px] text-[11px] text-ink-3">${rows
+       .map(
+         (d, i) =>
+           `<div class="flex-1 text-center whitespace-nowrap ${!weekly && d.day === picked ? "text-ink" : ""}">${(rows.length - 1 - i) % every === 0 ? esc(nice(d.day)) : ""}</div>`,
+       )
+       .join("")}</div>
+     <div class="mt-3 flex flex-wrap items-center gap-3 text-xs text-ink-3"><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s1"></i>Photos</span><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s2"></i>Videos</span><span class="ml-auto">${weekly ? "One bar per week. Pick 90 d or less to open a day" : `${num(r.total.new)} added in ${rangeText()} · tap a day to pick it`}</span></div>`,
   );
-  renderDay(r);
 }
 
 function render(): void {
-  renderBar();
+  renderNav();
   const r = report;
   if (!r) {
-    html($("#fo-summary"), `<div class="empty">${icon("warn")}Couldn't load this folder</div>`);
+    html($("#fo-head"), `<div class="empty">${icon("warn")}Couldn't load this folder</div>`);
     return;
   }
   if (!r.ready) {
     html(
-      $("#fo-summary"),
+      $("#fo-head"),
       `<div class="empty">${icon("loader", "spin")}Counting files: the first scan is still running</div>`,
     );
     return;
   }
-  renderSummary(r);
-  renderChart(r);
-  renderList(r);
+  renderHead(r);
+  renderTabs(r);
+  renderInside(r);
+  renderAdded(r);
 }
 
 function skeleton(): void {
   html(
-    $("#fo-summary"),
-    '<div class="skeleton h-5 w-40"></div><div class="skeleton mt-3 h-2"></div><div class="skeleton mt-4 h-12"></div>',
+    $("#fo-head"),
+    '<div class="skeleton h-4 w-40"></div><div class="skeleton mt-4 h-7 w-56"></div><div class="skeleton mt-4 h-2"></div>',
   );
-  html($("#fo-list"), '<div class="skeleton m-4 h-12"></div>'.repeat(3));
-  html($("#fo-day"), '<div class="skeleton h-5 w-32"></div><div class="skeleton mt-3 h-14"></div>');
-  html($("#fo-chart"), '<div class="skeleton h-28"></div>');
+  html($("#fo-stats"), '<div class="card skeleton h-28"></div>'.repeat(4));
   html($("#fo-files-tools"), "");
   html(
     $("#fo-files"),
@@ -654,12 +793,10 @@ function skeleton(): void {
   );
 }
 
-function filesSub(): string {
-  if (fDay)
-    return `Added ${dayTitle(fDay, report?.today ?? "", true)}${path ? " · including the folders inside" : ""}`;
-  if (path) return "Including the folders inside";
-  if (group === "devices") return "Newest first, from every device";
-  return "Newest first, from every backed-up folder";
+function setNav(open: boolean): void {
+  navOpen = open;
+  $("#fo-nav-wrap").classList.toggle("open", open);
+  document.getElementById("fo-browse")?.setAttribute("aria-expanded", String(open));
 }
 
 function open(): void {
@@ -670,89 +807,139 @@ function open(): void {
   fStatus = "all";
   fKind = linkedKind;
   fDay = "";
+  if (linkedKind !== "all") tab = "photos";
   observer?.disconnect();
+  revealPath();
+  setNav(!path); // phones: the navigator is the first screen; a folder folds it away
   skeleton();
-  renderBar();
-  renderPrio();
+  renderTabs(null);
+  renderNav();
   void loadPrio();
-  html($("#fo-files-sub"), filesSub());
   void load();
   void loadFiles(true);
-  // #/folders/f/~photo (from the Sync page's Photos and videos): straight to the photos.
-  if (linkedKind !== "all")
-    requestAnimationFrame(() =>
-      document.getElementById("fo-files-card")?.scrollIntoView({ block: "start", behavior: "smooth" }),
-    );
+  // Unfolded folders the navigator hasn't read yet (after a reload).
+  for (const p of expanded) if (!tree.has(p) && p !== path) void loadLevel(p, true);
+}
+
+/** Switch to the Photos tab with a filter (from a number or the Added tab). */
+function filterPhotos(next: { status?: string; kind?: string; day?: string }): void {
+  if (next.status !== undefined) fStatus = next.status;
+  if (next.kind !== undefined) fKind = next.kind;
+  if (next.day !== undefined) fDay = next.day;
+  tab = "photos";
+  renderTabs(report);
+  void loadFiles(true);
 }
 
 const folders: View = {
-  subtitle: "Files per device and folder",
+  subtitle: "Every backed-up folder and phone, and how much of each is in Google Photos",
   mount(el, args) {
     opened = true; // the first load draws the last answer at once (peek), then the fresh one
     filesOpened = true;
     parse(args);
     el.innerHTML = `
-    <section class="toolbar">
-      <div class="seg" id="fo-group"><button data-g="devices">${icon("devices")}Devices</button><button data-g="folders">${icon("folder")}Folders</button></div>
-      <div class="order-first w-full min-w-0 px-1 pb-1 sm:order-none sm:w-auto sm:flex-1 sm:pb-0" id="fo-crumbs"></div>
-    </section>
-    <section class="card mb-4 overflow-hidden">
-      <div class="p-4" id="fo-summary"></div>
-      <div class="border-t border-line p-4" id="fo-day"></div>
-      <div class="px-4 pb-4" id="fo-chart"></div>
-    </section>
-    <section class="card mb-4 hidden overflow-hidden" id="fo-prio-card"></section>
-    <section class="card mb-4 overflow-hidden" id="fo-list-card"><div id="fo-list-head"></div><div class="divide-y divide-line" id="fo-list"></div></section>
-    <section class="card mb-4" id="fo-files-card">
-      ${cardHead("Photos and videos", "library", `<span class="hidden text-xs text-ink-3 sm:inline" id="fo-files-sub"></span>`)}
-      <div class="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3" id="fo-files-tools"></div>
-      <div class="p-3" id="fo-files"></div>
-    </section>`;
-    $("#fo-group").addEventListener("click", (e) => {
-      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
-      if (b) location.hash = b.dataset.g === "devices" ? "#/folders" : "#/folders/f";
-    });
+    <div class="fo-layout">
+      <aside class="fo-nav-wrap" id="fo-nav-wrap" aria-label="Folders"><nav class="fo-nav scroll-thin" id="fo-nav"></nav></aside>
+      <div class="min-w-0">
+        <section class="card mb-4 p-4 sm:p-5" id="fo-head"></section>
+        <section class="stat-row" id="fo-stats"></section>
+        <div class="page-tabs mb-4" role="tablist" aria-label="Folder" id="fo-tabs"></div>
+        <section class="card" id="fo-tab-photos" role="tabpanel">
+          <div class="flex flex-wrap items-center gap-2 border-b border-line p-3" id="fo-files-tools"></div>
+          <div class="p-3" id="fo-files"></div>
+        </section>
+        <section class="card overflow-hidden" id="fo-tab-folders" role="tabpanel" hidden><div id="fo-inside"></div></section>
+        <section class="card p-4 sm:p-5" id="fo-tab-added" role="tabpanel" hidden><div id="fo-added"></div></section>
+      </div>
+    </div>`;
 
     el.addEventListener("click", (e) => {
-      const range = (e.target as HTMLElement).closest<HTMLButtonElement>("#fo-range button");
+      const t = e.target as HTMLElement;
+      // navigator
+      const tw = t.closest<HTMLElement>("[data-twisty]");
+      if (tw) {
+        const p = tw.dataset.twisty!;
+        if (expanded.has(p)) expanded.delete(p);
+        else {
+          expanded.add(p);
+          if (!tw.dataset.many && !tree.has(p)) void loadLevel(p);
+        }
+        saveExpanded();
+        renderNav();
+        return;
+      }
+      if (t.closest("#fo-browse")) return setNav(!navOpen);
+      if (t.closest(".fo-row") && window.matchMedia("(max-width: 1023px)").matches) setNav(false);
+      // tabs and numbers
+      const tb = t.closest<HTMLElement>("[data-tab]");
+      if (tb) {
+        tab = tb.dataset.tab as Tab;
+        renderTabs(report);
+        return;
+      }
+      const st = t.closest<HTMLElement>("[data-stat]");
+      if (st) {
+        const k = st.dataset.stat!;
+        if (k === "photo" || k === "video") filterPhotos({ kind: fKind === k ? "all" : k });
+        else filterPhotos({ status: fStatus === k ? "all" : k });
+        return;
+      }
+      // photos
+      if (t.closest("#fo-more")) return void loadFiles(false);
+      if (t.closest("#fo-reset")) return filterPhotos({ status: "all", kind: "all", day: "" });
+      if (t.closest("#fo-clear-day")) {
+        filterPhotos({ day: "" });
+        if (report) renderAdded(report);
+        return;
+      }
+      const s = t.closest<HTMLElement>("#fo-fstatus button");
+      if (s) return filterPhotos({ status: s.dataset.s ?? "all" });
+      const k = t.closest<HTMLElement>("#fo-fkind button");
+      if (k) {
+        filterPhotos({ kind: k.dataset.k ?? "all" });
+        // Kept in the address (#/folders/f/Photos/~video), so a link or reload opens the same.
+        const base = location.hash.replace(/\/~(photo|video)$/, "");
+        const next = fKind === "all" ? base : `${base}/~${fKind}`;
+        if (next !== location.hash) history.replaceState(history.state, "", next);
+        linkedKind = fKind;
+        return;
+      }
+      // added
+      const range = t.closest<HTMLButtonElement>("#fo-range button");
       if (range) {
         days = Number(range.dataset.d);
         void load();
         return;
       }
-      // A bar picks its day (the card above shows it, the photos below are that day's); the same
-      // bar again, or Back to today, goes back.
-      const dayButton = (e.target as HTMLElement).closest<HTMLElement>("[data-day], #fo-clear-day");
+      const show = t.closest<HTMLElement>("[data-show-day]");
+      if (show) return filterPhotos({ day: show.dataset.showDay ?? "" });
+      const dayButton = t.closest<HTMLElement>("[data-day]");
       if (dayButton) {
         fDay = dayButton.dataset.day === fDay ? "" : (dayButton.dataset.day ?? "");
-        html($("#fo-files-sub"), filesSub());
-        if (report) renderChart(report);
+        if (report) renderAdded(report);
         void loadFiles(true);
         return;
       }
-      const b = (e.target as HTMLElement).closest<HTMLElement>(
-        "[data-prio-toggle], [data-prio-move], [data-prio-remove]",
-      );
+      // priority
+      const b = t.closest<HTMLElement>("[data-prio-toggle], [data-prio-move], [data-prio-remove]");
       if (!b) return;
       e.preventDefault();
       if (b.dataset.prioToggle) {
         const p = b.dataset.prioToggle;
-        const focused = document.activeElement === b;
         if (prio.includes(p))
           void savePrio(
             prio.filter((x) => x !== p),
-            `Backup priority removed for ${prioName(p)}`,
+            `${prioName(p)} goes in the usual order again`,
           );
         else if (prio.length >= PRIORITY_MAX) {
-          toast(`Up to ${PRIORITY_MAX} folders can go first. Remove one from Backup priority first.`, "bad");
-          if (report) render(); // the switch stays off
-        } else void savePrio([...prio, p], `Backup priority set for ${prioName(p)}`);
-        if (focused) document.querySelector<HTMLButtonElement>("#fo-summary [data-prio-toggle]")?.focus();
+          toast(`Up to ${PRIORITY_MAX} folders can go first. Remove one from Back up first.`, "bad");
+          if (report) renderHead(report); // the switch stays off
+        } else void savePrio([...prio, p], `${prioName(p)} backs up first`);
       } else if (b.dataset.prioRemove) {
         const p = b.dataset.prioRemove;
         void savePrio(
           prio.filter((x) => x !== p),
-          `Backup priority removed for ${prioName(p)}`,
+          `${prioName(p)} goes in the usual order again`,
         );
       } else if (b.dataset.prioMove) {
         const i = prio.indexOf(b.dataset.prioMove);
@@ -760,41 +947,28 @@ const folders: View = {
         if (i < 0 || j < 0 || j >= prio.length) return;
         const next = [...prio];
         [next[i], next[j]] = [next[j]!, next[i]!];
-        void savePrio(next, "Backup priority order saved");
+        void savePrio(next, "Back up first order saved");
       }
     });
-    const card = $("#fo-files-card");
-    card.addEventListener("click", (e) => {
-      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
-      if (!b) return;
-      if (b.id === "fo-more") void loadFiles(false);
-      else if (b.dataset.s) {
-        fStatus = b.dataset.s;
-        void loadFiles(true);
-      } else if (b.dataset.k) {
-        fKind = b.dataset.k;
-        // Kept in the address (#/folders/f/Photos/~video), so a link or reload opens the same.
-        const base = location.hash.replace(/\/~(photo|video)$/, "");
-        const next = fKind === "all" ? base : `${base}/~${fKind}`;
-        if (next !== location.hash) history.replaceState(history.state, "", next);
-        linkedKind = fKind;
-        void loadFiles(true);
-      }
-    });
-    card.addEventListener("change", (e) => {
+    el.addEventListener("change", (e) => {
       const t = e.target as HTMLSelectElement;
       if (t.id === "fo-fsort") {
         fSort = t.value;
         void loadFiles(true);
       }
     });
+    if (!tree.has("")) void loadLevel("");
     open();
-    refreshTimer = window.setInterval(() => void load(true), 30000);
+    refreshTimer = window.setInterval(() => {
+      void load(true);
+      if (path) void loadLevel("", true);
+      for (const p of expanded) if (p !== path && tree.has(p)) void loadLevel(p, true);
+    }, 30000);
   },
   route(args) {
     parse(args);
     open();
-    if (linkedKind === "all") document.getElementById("view")?.scrollTo({ top: 0 });
+    document.getElementById("view")?.scrollTo({ top: 0 });
   },
   unmount() {
     clearInterval(refreshTimer);

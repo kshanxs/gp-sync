@@ -12,6 +12,7 @@
   --color-bg: var(--bg);
   --color-panel: var(--panel);
   --color-panel-2: var(--panel-2);
+  --color-raised: var(--raised);
   --color-line: var(--line);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
@@ -1792,13 +1793,13 @@ svg:hover .donut-arc:not(:hover) {
 .page-tabs {
   @apply flex gap-1 rounded-xl border border-line bg-panel-2/40 p-1;
 }
-.page-tabs > a {
+.page-tabs > :is(a, button) {
   @apply inline-flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm text-ink-3 transition-colors duration-150 hover:text-ink sm:flex-none;
 }
-.page-tabs > a[aria-selected="true"] {
+.page-tabs > :is(a, button)[aria-selected="true"] {
   @apply bg-panel font-medium text-ink ring-1 ring-line;
 }
-.page-tabs > a[aria-selected="true"] > svg {
+.page-tabs > :is(a, button)[aria-selected="true"] > svg {
   @apply text-accent;
 }
 
@@ -2044,4 +2045,127 @@ button.col[aria-pressed="true"]::after {
 .up-chip > svg,
 .up-chip > b {
   color: var(--c);
+}
+
+/* ---- Folders (views/folders.ts): the navigator on the left, the open folder on the right. */
+.fo-layout {
+  @apply grid grid-cols-1 gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] xl:grid-cols-[18rem_minmax(0,1fr)];
+}
+/* Phones and tablets: folded away while a folder is open ("Folders" in its header unfolds it). */
+.fo-nav-wrap {
+  @apply hidden lg:block;
+}
+.fo-nav-wrap.open {
+  @apply block;
+}
+.fo-nav {
+  @apply flex flex-col gap-0.5 rounded-2xl border border-line bg-panel p-2 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-10rem)] lg:overflow-y-auto;
+  box-shadow: var(--shadow);
+}
+.fo-sec {
+  @apply flex items-center justify-between px-2 pt-4 pb-1 text-xs text-ink-3;
+}
+.fo-row {
+  @apply flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-sm text-ink-2 transition-colors duration-150 hover:bg-panel-2 hover:text-ink;
+}
+.fo-row svg {
+  @apply size-4 shrink-0 text-ink-3;
+}
+.fo-row[aria-current="page"] {
+  @apply font-medium text-ink;
+  background: var(--raised);
+  box-shadow: inset 0 1px 0 var(--edge);
+}
+[data-theme="light"] .fo-row[aria-current="page"] {
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 1px 2px rgb(0 0 0 / 0.05);
+}
+.fo-row[aria-current="page"] svg {
+  color: var(--accent);
+}
+/* A tree level is indented by --d steps of 12px; the twisty sits in front of the row. */
+.fo-node {
+  @apply flex items-center;
+  padding-left: calc(var(--d, 0) * 12px);
+}
+.fo-twisty,
+.fo-twisty-gap {
+  @apply grid size-6 shrink-0 place-items-center rounded-md text-ink-3;
+}
+.fo-twisty {
+  @apply cursor-pointer transition-[background-color,transform] duration-150 hover:bg-panel-2 hover:text-ink;
+}
+.fo-twisty svg {
+  transition: transform 0.15s var(--ease);
+}
+.fo-twisty[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+.fo-empty {
+  @apply py-1.5 text-xs text-ink-3;
+  padding-left: calc(var(--d, 0) * 12px + 32px);
+}
+.fo-pct {
+  @apply ml-auto shrink-0 font-mono text-[11px] text-ink-3 tabular-nums;
+}
+.fo-pct.done {
+  color: var(--good);
+}
+.fo-fail {
+  @apply ml-auto size-1.5 shrink-0 rounded-full;
+  background: var(--bad);
+}
+.fo-fail + .fo-pct {
+  @apply ml-1.5;
+}
+/* Back up first: numbered, with move and remove on hover (always shown on touch screens). */
+.fo-prios {
+  @apply flex flex-col gap-0.5;
+}
+.fo-prio {
+  @apply flex h-8 items-center gap-2 rounded-lg px-2 text-sm text-ink-2 hover:bg-panel-2;
+}
+.fo-prio > a:hover {
+  @apply text-ink;
+}
+.fo-prio-n {
+  @apply grid size-5 shrink-0 place-items-center rounded-md bg-panel-2 font-mono text-[11px] text-ink-2;
+}
+.fo-prio-tools {
+  @apply flex shrink-0 items-center opacity-0 transition-opacity duration-150;
+}
+.fo-prio:hover .fo-prio-tools,
+.fo-prio:focus-within .fo-prio-tools {
+  @apply opacity-100;
+}
+@media (pointer: coarse) {
+  .fo-prio-tools {
+    @apply opacity-100;
+  }
+}
+.fo-mini {
+  @apply grid size-6 cursor-pointer place-items-center rounded-md text-ink-3 transition-colors duration-150 hover:bg-raised hover:text-ink disabled:cursor-default disabled:opacity-30;
+}
+.fo-skip {
+  @apply mt-2 border-t border-line pt-2;
+}
+.fo-skip > summary {
+  @apply flex h-8 cursor-pointer list-none items-center gap-2 rounded-lg px-2 text-xs text-ink-3 hover:text-ink-2;
+}
+.fo-skip > summary::-webkit-details-marker {
+  display: none;
+}
+.fo-skip .fo-row {
+  @apply pl-6;
+}
+/* The four numbers are filters: the chosen one gets the selection's edge. */
+#fo-stats [aria-pressed="true"] {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+
+/* "Back up first" beside a folder's name (lib/backup-priority.ts). */
+.prio-switch {
+  @apply flex shrink-0 items-center gap-3;
 }
