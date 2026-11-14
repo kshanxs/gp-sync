@@ -176,7 +176,7 @@ function searchCard(r: SnapchatReport): string {
     ["Match", r.checked, r.memories],
   ] as const;
   return `<section class="card mb-4 p-4" aria-live="polite">
-    <div class="flex flex-wrap items-center gap-2"><h2 class="font-semibold">${icon("search", "inline size-4 -mt-0.5")} Finding your memories in Google</h2>${r.slow_until ? chip("clock", `Paused by Google until ${new Date(r.slow_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`, "warn") : ""}</div>
+    <div class="flex flex-wrap items-center gap-2"><h2 class="font-medium">${icon("search", "inline size-4 -mt-0.5")} Finding your memories in Google</h2>${r.slow_until ? chip("clock", `Paused by Google until ${new Date(r.slow_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`, "warn") : ""}</div>
     <div class="mt-3 grid gap-3 sm:grid-cols-3">${steps
       .map(
         ([label, done, total]) =>
@@ -285,9 +285,9 @@ function hero(r: SnapchatReport): string {
   const folders = r.manifests.map((m) => m.folder).join(", ");
   return `<section class="card sc-hero mb-4 p-4 sm:p-5">
     <div class="flex items-center gap-4 sm:gap-5">
-      <div class="relative shrink-0">${ring(p, 88, 8)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="text-lg font-semibold tabular-nums">${Math.floor(p)}%</div><div class="text-[9px] uppercase tracking-wider text-ink-3">${busy ? "sending" : "done"}</div></div></div></div>
+      <div class="relative shrink-0">${ring(p, 88, 8)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="text-lg font-medium tabular-nums">${Math.floor(p)}%</div><div class="text-[9px] uppercase tracking-wider text-ink-3">${busy ? "sending" : "done"}</div></div></div></div>
       <div class="min-w-0 flex-1">
-        <div class="flex flex-wrap items-baseline gap-x-2"><h2 class="text-2xl font-semibold tracking-tight tabular-nums">${num(r.memories)}</h2><span class="text-sm text-ink-3">memories</span><span class="text-sm text-ink-3">· ${num(done)} in Google</span></div>
+        <div class="flex flex-wrap items-baseline gap-x-2"><h2 class="text-2xl font-medium tabular-nums">${num(r.memories)}</h2><span class="text-sm text-ink-3">memories</span><span class="text-sm text-ink-3">· ${num(done)} in Google</span></div>
         <div class="sc-seg mt-3" role="img" aria-label="${esc(SNAP_GROUPS.map((g) => `${g.title} ${r.counts[g.id].total}`).join(", "))}">${seg}</div>
       </div>
     </div>
@@ -319,7 +319,7 @@ function groupTiles(r: SnapchatReport): string {
           : "";
       return `<div class="card sc-tile ${show === g.id ? "on" : ""}" style="--tc:${COLOR[g.id]}" role="tab" tabindex="0" aria-selected="${show === g.id}" data-show="${g.id}" title="${esc(g.hint)}">
         <div class="flex items-center gap-2"><span class="sc-ic">${icon(g.ic, "size-4")}</span><span class="min-w-0 truncate text-sm font-medium">${g.title}</span></div>
-        <div class="mt-2 text-2xl font-semibold tabular-nums">${num(c.total)}</div>
+        <div class="mt-2 text-2xl font-medium tabular-nums">${num(c.total)}</div>
         <div class="mt-0.5 text-xs">${state}${c.failed ? ` <span class="text-bad">· ${num(c.failed)} failed</span>` : ""}</div>
         ${g.id !== "skip" && c.total ? `<div class="sc-bar mt-2"><i style="width:${pct(c.done, c.total)}%"></i></div>` : ""}
         ${go}
@@ -358,7 +358,7 @@ function render(): void {
     html(
       $("#sc-body"),
       `<section class="card p-5 text-sm text-ink-2">
-        <h2 class="text-lg font-semibold tracking-tight">Bring in your Snapchat Memories</h2>
+        <h2 class="text-lg font-medium">Bring in your Snapchat Memories</h2>
         <ol class="mt-4 grid gap-3 sm:grid-cols-3">
           <li class="sc-step">${icon("download", "size-5")}<b>Download</b><span>Snapchat › Settings › My Data: tick Memories, download every zip.</span></li>
           <li class="sc-step">${icon("code", "size-5")}<b>Run the script</b><span><code>python3 scripts/snapchat_export.py &lt;zips&gt; &lt;Photos/Snapchat&gt;</code></span></li>
@@ -429,7 +429,7 @@ function render(): void {
   const list = `<section class="card min-w-0 overflow-hidden">
       <div class="flex items-center gap-2 border-b border-line px-4 py-3">
         <span class="size-2.5 shrink-0 rounded-full" style="background:${COLOR[group.id]}"></span>
-        <h2 class="min-w-0 flex-1 truncate font-semibold">${group.title} <span class="font-normal text-ink-3">· ${num(r.counts[group.id].total)}</span></h2>
+        <h2 class="min-w-0 flex-1 truncate font-medium">${group.title} <span class="font-normal text-ink-3">· ${num(r.counts[group.id].total)}</span></h2>
         <span class="hidden text-xs text-ink-3 sm:inline">Memory ${icon("arrowRight", "inline size-3")} Google's copies</span>
       </div>
       <div id="sc-list" aria-live="polite">${

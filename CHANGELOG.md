@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **A calmer dashboard.** The chrome steps back so your photos and the backup's progress carry
+  the colour: graphite surfaces one step apart with hairlines (near-neutral paper by day), no dot
+  grid, glows, gradients or light that follows the mouse. Buttons, inputs and tabs share one
+  10px corner; cards 16px. The main button is off-white at night and ink by day; moonlight blue
+  (night) and amber (day) stay as the one accent, on the selection, the progress bars and the Sync
+  ring. Labels are in sentence case (no more spaced capitals), headings are lighter, counts next
+  to the menu are plain numbers (red only when something failed), and badges are quiet outlines,
+  with a fill only for warnings and errors.
+- Counters read like frame numbers: the version, the sidebar's share backed up, the menu counts
+  and Sync's "2,052 / 2,312 files in Google Photos" are set in mono.
+- Sync's backup ring is a flat, thinner arc; charts and sparklines lost their glow and 3D bars.
+  Overview's process cards and stat tiles show a plain icon instead of a coloured tile.
+- The sidebar has a flat mark (a photo with an arrow going up) in place of the glossy icon; the
+  app icon itself is unchanged. Snapchat has its own icon (a ghost) instead of sparkles.
+- Less motion: no ripple on tap, no bouncing upload icon, no pulsing Live dot, no zoom on hover
+  over photos and cards, no shimmer while pictures load. Spinners stay where work is running.
+- The sidebar's status card no longer spills its percentage past the edge when the status is long.
+- **Fix: Sync's Now card stayed empty while uploading** (a missing import threw on every update).
+
 ## 1.7.5
 
 - **Security: other websites can no longer change GP Sync.** Without a password, a page on any

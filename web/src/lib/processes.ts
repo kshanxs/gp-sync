@@ -8,7 +8,7 @@ export const PROCESS: Record<ProcessKey, { label: string; noun: string; icon: Ic
   freed: { label: "Free storage", noun: "freed", icon: "cloud", color: "var(--s2)" },
   copied: { label: "Copies", noun: "copied", icon: "users", color: "var(--s3)" },
   fixed: { label: "Date fixes", noun: "fixed", icon: "clock", color: "var(--s4)" },
-  snapchat: { label: "Snapchat", noun: "sent", icon: "sparkles", color: "var(--s5)" },
+  snapchat: { label: "Snapchat", noun: "sent", icon: "ghost", color: "var(--s5)" },
 };
 export const PROCESS_KEYS = Object.keys(PROCESS) as ProcessKey[];
 

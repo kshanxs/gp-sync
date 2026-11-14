@@ -24,7 +24,7 @@ function show(name: string): void {
   box.setAttribute("aria-labelledby", "und-title");
   box.innerHTML = `<div class="card w-full max-w-md p-5 shadow-2xl">
     <div class="flex items-center gap-3"><span class="grid size-10 place-items-center rounded-xl bg-panel-2 text-ink-2">${icon("calendar", "size-5")}</span>
-      <h2 id="und-title" class="text-lg font-semibold tracking-tight">Photos without a date</h2></div>
+      <h2 id="und-title" class="text-lg font-medium">Photos without a date</h2></div>
     <p class="mt-3 text-sm text-ink-2">Snapchat saves, screenshots and chat pictures have no date inside, so Google dates them by the upload.</p>
     <p class="mt-2 text-sm text-ink-3">Keep them together in one album?</p>
     <label class="mt-4 block"><span class="mb-1.5 block text-sm font-medium">Album name</span>

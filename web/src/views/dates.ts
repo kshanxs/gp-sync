@@ -280,7 +280,7 @@ function render(): void {
     $("#dt-body"),
     `    <section class="card min-w-0 overflow-hidden">
         <div class="flex flex-wrap items-center gap-3 border-b border-line p-4">
-          <div class="min-w-0 flex-1 basis-64"><h2 class="font-semibold">Files without a date</h2>
+          <div class="min-w-0 flex-1 basis-64"><h2 class="font-medium">Files without a date</h2>
             <p class="mt-1 text-xs text-ink-3">${num(r.undated)} files · ${num(r.wrong)} with different dates · ${num(r.waiting)} in progress</p></div>
           <span class="text-xs text-ink-3">Album: ${r.album ? esc(r.album) : "Off"} · <a class="underline" href="#/settings/dates">Settings</a> · <a class="underline" href="#/sources">Sources</a></span>
         </div>

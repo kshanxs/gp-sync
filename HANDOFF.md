@@ -9,7 +9,7 @@ wins, and the Work log row says so. Written by the handoff skill (`handoff.py lo
 
 | Item | Owner | Status | Link |
 |---|---|---|---|
-| Nothing in progress right now | - | - | - |
+| Unslop the web UI: PR open, not merged | Owner | Review | branch unslop-web-ui |
 
 ## Next up
 
@@ -53,6 +53,7 @@ Newest first. One row per session that changed anything; never edit another sess
 
 | Date | Entry | Agent | Area | What changed | Links | Next step | Status |
 |---|---|---|---|---|---|---|---|
+| 2026-11-14T16:30+05:30 | Unslop the web UI | Claude | Dev | Ran the unslop pass on web/ (direction approved by the owner: graphite, photos carry the colour, Sync ring as the moment, mono counters; keep the moon/sun accent pair; flat mark in the sidebar only). Flat buttons and badges, sentence-case labels, weights 400/500, no glows, gradients, ripple or dot grid. Fixed a missing uploadSummary import that left Sync's Now card empty. vp check, 58 web tests and the build pass on umbrel | branch unslop-web-ui, PR | Owner: review the PR on a phone and desktop; README screenshots in docs/ still show 1.5.8 | Waiting on owner |
 | 2026-11-12T03:20+05:30 | Sync page and copy progress | Cursor | Dev | Pushed 6ecd4ef to origin/main. Follow-up on main: Main library in stays a progress state, several accounts no longer share one jumping Now card, a failed copy stays in copies left, Snapchat holds and given-up copies are left out of an extra account's percent, and upload progress refreshes about twice a second without rereading the speed limit on every chunk. | main, after 6ecd4ef | Try two accounts on the Umbrel dashboard | Done |
 | 2026-11-12T03:05+05:30 | Parallel folder backup per account | Claude | Dev | Folder backup now uploads to each account side by side (shared speed limit, per-account lanes in status). Make main in Settings → Folders; per-account cards on Sync; per-account percent, failed split, priority cap on Folders. 324 backend + 58 web tests pass on umbrel | local commit on main, not pushed | Owner: try with two accounts on Umbrel, then approve push and a release | Waiting on owner |
 | 2026-11-12T02:36+05:30 | Fix all: DNS rebinding and test disk space | Claude | Dev | Without PASSWORD (not on Umbrel) only home-network Host names are answered; new ALLOWED_HOSTS setting. Copy test no longer needs 2 GB free. 320 backend tests pass | branch fix/cross-site-posts, not pushed | Owner: approve push, PR and release 1.7.5 | Waiting on owner |

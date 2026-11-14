@@ -16,6 +16,7 @@ import {
   copiesLeft,
   copiesText,
   lanePhaseText,
+  uploadSummary,
   uploadTitle,
   type AccountLane,
 } from "../lib/lanes";
@@ -276,7 +277,7 @@ function stepBadge(c: NonNullable<Status["current"]>): string {
     up && c.bytes_total
       ? `Uploading ${pct(c.bytes_done, c.bytes_total).toFixed(0)}%`
       : (STEPS[c.step] ?? c.step);
-  return `<span class="badge info">${icon(up ? "cloudUp" : "loader", up ? "bob" : "spin")}${esc(label)}</span>`;
+  return `<span class="badge info">${icon(up ? "cloudUp" : "loader", up ? "" : "spin")}${esc(label)}</span>`;
 }
 
 /** What the Now card says when no file is being sent. */
@@ -432,7 +433,7 @@ function nowCard(s: Status): string {
   const summary = uploadSummary(s);
   // One featured file jumps between accounts. With several uploading, the account cards are the list.
   if (summary.accounts > 1)
-    return `<div class="flex items-center gap-3"><span class="grid size-12 shrink-0 place-items-center rounded-xl bg-panel-2 text-accent">${icon("cloudUp", "size-6 bob")}</span>
+    return `<div class="flex items-center gap-3"><span class="grid size-12 shrink-0 place-items-center rounded-xl bg-panel-2 text-accent">${icon("cloudUp", "size-6")}</span>
       <div class="min-w-0 flex-1"><div class="font-medium">${esc(uploadTitle(s))}</div>
       <div class="truncate text-xs text-ink-3">${s.total ? `${num(s.done)} of ${num(s.total)} done this round` : "Sending files"} · ${speed(s.net.up_now)}</div></div></div>
       <p class="mt-3 text-xs text-ink-3">Each account's files are in the cards below. They share one speed limit.</p>`;
@@ -467,7 +468,12 @@ function heroBadges(s: Status): string {
           s.paused ? "Waiting until uploads resume" : "Waiting for upload",
         )
       : s.copies_pending
-        ? badge("Main library in", "info", "copy", "The backup account has every file. Other accounts are still catching up.")
+        ? badge(
+            "Main library in",
+            "info",
+            "copy",
+            "The backup account has every file. Other accounts are still catching up.",
+          )
         : badge("All backed up", "good", "ok"),
     eta ? badge(`~${eta} left`, "info", "clock", "At the current upload speed") : "",
     ...copiesLeft(s).map(([a, n]) =>
@@ -514,10 +520,10 @@ const sync: View = {
       <!-- Phones: progress, Now, then the tiles. Wider: progress with the tiles under it, beside Now. -->
       <div class="contents lg:col-span-5 lg:flex lg:flex-col lg:gap-4">
       <section class="card overview-hero relative order-1 overflow-hidden p-5 lg:order-none" id="sy-hero">
-        <div class="flex items-center justify-between gap-2"><div><span class="label">Your library</span><h2 class="mt-1 text-lg font-semibold tracking-tight">Backup progress</h2></div><span id="sy-rate" class="text-xs text-ink-3 tabular-nums"></span></div>
-        <div class="mt-4 flex items-center gap-4 sm:gap-5">
-          <div class="ring-box relative shrink-0">${ring(0, 148, 12)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-3xl" id="sy-pct">–</div><div class="text-[11px] text-ink-3" id="sy-pct-sub">of files</div></div></div></div>
-          <div class="min-w-0 space-y-1.5" id="sy-hero-text"></div>
+        <div class="flex items-center justify-between gap-2"><div><span class="label">Your library</span><h2 class="mt-1 text-base font-medium">Backup progress</h2></div><span id="sy-rate" class="text-xs text-ink-3 tabular-nums"></span></div>
+        <div class="mt-6 flex items-center gap-6">
+          <div class="ring-box relative shrink-0">${ring(0, 148, 8)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-[32px] leading-9" id="sy-pct">–</div><div class="meta mt-1" id="sy-pct-sub">of files</div></div></div></div>
+          <div class="min-w-0 space-y-2" id="sy-hero-text"></div>
         </div>
         <div class="even mt-4" id="sy-badges"></div>
       </section>
@@ -616,7 +622,7 @@ const sync: View = {
     $("#sy-pct-sub").textContent = copying ? "main library" : "of files";
     html(
       $("#sy-hero-text"),
-      `<div class="num text-xl">${num(lib.synced_files)} <span class="text-sm font-normal text-ink-3">of ${num(lib.files)} files</span></div>
+      `<div><div class="font-mono text-lg whitespace-nowrap tabular-nums sm:text-xl">${num(lib.synced_files)}<span class="text-ink-3"> / ${num(lib.files)}</span></div><div class="mt-1 text-xs text-ink-3">files in Google Photos</div></div>
        <div class="text-sm text-ink-2">${bytes(lib.synced_bytes)} of ${bytes(lib.bytes)} <span class="text-ink-3">(${pctText(lib.synced_bytes, lib.bytes)} of the space)</span></div>
        <div class="text-xs text-ink-3">${left ? `${bytes(lib.bytes - lib.synced_bytes)} still to back up` : copying ? `Main library is in. Still copying to ${esc(copying)}` : "Every file is in Google Photos"}</div>`,
     );

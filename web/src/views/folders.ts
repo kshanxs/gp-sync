@@ -319,7 +319,7 @@ function renderSummary(r: FolderReport): void {
       : (parts.at(-1) ?? path);
   html(
     $("#fo-summary"),
-    `<div class="flex flex-wrap items-center gap-x-3 gap-y-1"><span class="truncate text-base font-semibold">${esc(title)}</span>
+    `<div class="flex flex-wrap items-center gap-x-3 gap-y-1"><span class="truncate text-base font-medium">${esc(title)}</span>
        <span class="text-xs text-ink-3">${num(t.files)} files · ${bytes(t.bytes)}</span>
        ${path ? prioBadge(path) : ""}
        <span class="ml-auto text-xs text-ink-3 tabular-nums">${done}% in Google Photos</span></div>
@@ -355,7 +355,7 @@ function renderDay(r: FolderReport): void {
     $("#fo-day"),
     `<div class="flex flex-wrap items-center gap-2">
        <div class="min-w-0 flex-1"><div class="label">${fDay ? "Picked day" : "Added today"}</div>
-         <div class="mt-0.5 flex flex-wrap items-baseline gap-x-2"><span class="text-lg font-semibold">${esc(dayTitle(day, r.today, true))}</span>${day === r.today ? `<span class="text-xs text-ink-3">${esc(dayTitle(day, "", true))}</span>` : ""}</div></div>
+         <div class="mt-0.5 flex flex-wrap items-baseline gap-x-2"><span class="text-lg font-medium">${esc(dayTitle(day, r.today, true))}</span>${day === r.today ? `<span class="text-xs text-ink-3">${esc(dayTitle(day, "", true))}</span>` : ""}</div></div>
        ${fDay ? `<button class="btn sm" id="fo-clear-day">${icon("calendar")}Back to today</button>` : ""}
        <div class="seg" id="fo-range">${RANGES.map(([n, l]) => `<button data-d="${n}" aria-pressed="${n === days}" class="max-sm:px-2.5">${l}</button>`).join("")}</div>
      </div>
@@ -609,10 +609,10 @@ function renderChart(r: FolderReport): void {
           : `<button type="button" class="col flex h-full flex-1 flex-col justify-end gap-[2px]" data-day="${d.day}" aria-pressed="${on}" aria-label="${esc(`${nice(d.day, true)}: ${num(d.photos)} photos, ${num(d.videos)} videos`)}" data-tip="${esc(tip)}">${bars}</button>`;
       })
       .join("")}</div>
-    <div class="mt-1.5 flex gap-[3px] text-[10px] text-ink-3">${rows
+    <div class="mt-1.5 flex gap-[3px] text-[11px] text-ink-3">${rows
       .map(
         (d, i) =>
-          `<div class="flex-1 text-center whitespace-nowrap ${!weekly && d.day === picked ? "font-semibold text-ink" : ""}">${(rows.length - 1 - i) % every === 0 ? esc(nice(d.day)) : ""}</div>`,
+          `<div class="flex-1 text-center whitespace-nowrap ${!weekly && d.day === picked ? "font-medium text-ink" : ""}">${(rows.length - 1 - i) % every === 0 ? esc(nice(d.day)) : ""}</div>`,
       )
       .join("")}</div>
     <div class="mt-2 flex items-center gap-3 text-xs text-ink-3"><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s1"></i>Photos</span><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s2"></i>Videos</span><span class="ml-auto">${weekly ? "One bar per week: a trend only. Pick 90 d or less to open a day" : "Tap a day to see it"}</span></div>`,

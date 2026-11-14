@@ -124,7 +124,7 @@ function tileIcon(ic: IconName, color: string, size = ""): string {
 function sectionHead(key: string): string {
   const sec = SECTIONS.find(([k]) => k === key) ?? SECTIONS[0]!;
   const [, title, ic, , color, intro] = sec;
-  return `<header class="set-head">${tileIcon(ic, color, "lg")}<div class="min-w-0"><h2 class="text-lg font-semibold tracking-tight">${esc(title)}</h2><p class="text-sm text-ink-3">${esc(intro)}</p></div></header>`;
+  return `<header class="set-head">${tileIcon(ic, color, "lg")}<div class="min-w-0"><h2 class="text-lg font-medium">${esc(title)}</h2><p class="text-sm text-ink-3">${esc(intro)}</p></div></header>`;
 }
 
 /** One bar for a section's buttons: a short note on the left, actions on the right. */
@@ -183,7 +183,7 @@ function hoursBar(): string {
     (_, h) =>
       `<div class="relative h-9 flex-1 rounded-[4px] ${!draft.enabled ? "bg-s1/30" : allowed(h) ? "bg-s1" : "bg-panel-2"}" data-tip="${hour(h)}–${hour(h + 1)}: ${allowed(h) ? "uploads run" : "no uploads"}${h === now ? " (now)" : ""}">${h === now ? '<i class="absolute -bottom-2 left-1/2 size-1.5 -translate-x-1/2 rounded-full bg-ink"></i>' : ""}</div>`,
   ).join("")}</div>
-  <div class="mt-3 flex justify-between text-[10px] text-ink-3"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+  <div class="mt-3 flex justify-between text-[11px] text-ink-3"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
   <p class="mt-2 text-xs ${draft.enabled ? "text-ink-2" : "text-ink-3"}">${draft.enabled ? `Uploads run ${draft.start === draft.end ? "all day" : `from ${hour(draft.start)} until ${hour(draft.end)}`}.` : "Off: uploads run at any hour. Turn it on to use the hours below."}</p>`;
 }
 
@@ -352,7 +352,7 @@ function sectionAccounts(s: Status | null): string {
           <textarea class="input" id="set-auth" rows="3" placeholder="androidId=…"></textarea>
           <div class="mt-auto flex items-center justify-between gap-2"><span class="flex min-w-0 items-center gap-1.5 text-xs text-ink-3">${icon("lock", "size-3.5 shrink-0")}<span class="truncate">Stays on ${esc(host())}</span></span><button class="btn primary shrink-0" id="set-connect">${icon("key")}Connect</button></div>
         </div></section>
-      <section class="card flex flex-col">${cardHead("Let an AI assistant do it", "sparkles")}
+      <section class="card flex flex-col">${cardHead("Let an AI assistant do it", "logs")}
         <div class="card-b flex flex-1 flex-col gap-3 text-sm">
           <p class="text-ink-2">Paste this into Claude Code, Codex or a similar assistant on the computer your phone is plugged into. It runs the steps and hands you the <code class="rounded bg-panel-2 px-1">androidId=</code> line.</p>
           <pre class="prompt-box" id="set-prompt">${esc(AUTH_PROMPT)}</pre>

@@ -50,7 +50,7 @@ function render(): void {
           const day = dayLabel(l.time);
           const head =
             day !== lastDay
-              ? `<div class="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-bg/90 px-4 py-2 text-xs font-semibold text-ink-2 backdrop-blur">${icon("calendar", "size-3.5 text-ink-3")}${esc(day)}</div>`
+              ? `<div class="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-bg/90 px-4 py-2 text-xs font-medium text-ink-2 backdrop-blur">${icon("calendar", "size-3.5 text-ink-3")}${esc(day)}</div>`
               : "";
           lastDay = day;
           const m = eventMeta[l.kind] ?? eventMeta.info!;

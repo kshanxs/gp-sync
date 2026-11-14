@@ -71,11 +71,10 @@ export function badge(label: string, tone: Tone = "", ic?: IconName, tip?: strin
   return `<span class="badge ${tone}"${tip ? ` data-tip="${esc(tip)}"` : ""}>${ic ? icon(ic) : ""}${esc(label)}</span>`;
 }
 
-/** The one badge that says what the app is doing. Moving icons while it works. */
+/** The one badge that says what the app is doing. A turning icon only while it scans or starts. */
 export function phaseBadge(s: Status): string {
   const p = phaseInfo(s);
-  const motion =
-    s.phase === "scanning" || s.phase === "starting" ? "spin" : s.phase === "uploading" ? "bob" : "";
+  const motion = s.phase === "scanning" || s.phase === "starting" ? "spin" : "";
   return `<span class="badge ${p.tone} phase" data-tip="${esc(p.detail)}">${icon(p.icon, motion)}${esc(p.label)}</span>`;
 }
 
@@ -152,9 +151,9 @@ export function tile(opts: {
       ? ` type="button" data-pace="${opts.open}"`
       : "";
   return `<${tag} class="card metric-card lift flex min-w-0 flex-col p-4${opts.href ? " tile-link" : ""}${opts.open ? " tile-link tile-open" : ""}"${attrs}${opts.id ? ` id="${opts.id}"` : ""}>
-    <div class="flex min-w-0 items-center gap-2.5"><span class="metric-icon grid size-9 shrink-0 place-items-center rounded-xl">${icon(opts.ic, "size-4")}</span><span class="label line-clamp-2 min-w-0 [overflow-wrap:anywhere]" title="${esc(opts.label)}">${esc(opts.label)}</span>${opts.open ? `<span class="tile-hint" title="Settings">${icon("sliders", "size-4")}</span>` : ""}</div>
-    <div class="num mt-3 truncate text-xl sm:text-2xl" data-v>${opts.value}</div>
-    <div class="mt-0.5 truncate text-xs text-ink-3" data-s>${opts.sub ?? ""}</div>
+    <div class="flex min-w-0 items-center gap-2"><span class="metric-icon shrink-0">${icon(opts.ic, "size-4")}</span><span class="label line-clamp-2 min-w-0 [overflow-wrap:anywhere]" title="${esc(opts.label)}">${esc(opts.label)}</span>${opts.open ? `<span class="tile-hint" title="Settings">${icon("sliders", "size-4")}</span>` : ""}</div>
+    <div class="num mt-4 truncate text-2xl sm:text-[28px] sm:leading-8" data-v>${opts.value}</div>
+    <div class="mt-1 truncate text-xs text-ink-3" data-s>${opts.sub ?? ""}</div>
     ${opts.chart !== undefined ? `<div class="mt-auto pt-2" data-c>${opts.chart}</div>` : ""}
   </${tag}>`;
 }
@@ -174,7 +173,7 @@ export function kindIcon(name: string): IconName {
 export const eventMeta: Record<string, { tone: Tone; icon: IconName; label: string }> = {
   uploaded: { tone: "good", icon: "cloudUp", label: "Uploaded" },
   fixed: { tone: "good", icon: "calendar", label: "Date fixed" },
-  freed: { tone: "good", icon: "sparkles", label: "Re-uploaded free" },
+  freed: { tone: "good", icon: "cloud", label: "Re-uploaded free" },
   copied: { tone: "good", icon: "copy", label: "Copied" },
   deleted: { tone: "warn", icon: "trash", label: "Deleted in Google" },
   downloaded: { tone: "info", icon: "download", label: "Downloaded" },

@@ -28,58 +28,72 @@
   --color-bad: var(--bad);
 }
 
-/* Dark ("night"): neutral graphite, so the toggle's blue moonlight is the only colour cast; quiet
-   bordered cards and a moon-blue accent. Status colors stay the familiar green / amber / red. */
+/* Dark ("night"): graphite surfaces, one step apart, with hairlines for depth. The photos carry
+   the colour; moonlight blue is the one accent (the selection, the progress, the key figure).
+   Status colors stay the familiar green / amber / red, toned down to sit in the ramp. */
 :root {
   color-scheme: dark;
-  --bg: #0b0c0e;
-  --surface: #17181b;
-  --panel: #141518;
+  --bg: #111113;
+  --side: #0e0e10;
+  --surface: #19191b;
+  --panel: #171719;
   --panel-2: rgb(255 255 255 / 0.05);
-  --line: rgb(255 255 255 / 0.085);
-  --edge: rgb(255 255 255 / 0.04);
-  --ink: #f2f3f5;
-  --ink-2: #c4c6cc;
-  --ink-3: #8f929a;
+  --raised: rgb(255 255 255 / 0.08);
+  --line: rgb(255 255 255 / 0.08);
+  --edge: rgb(255 255 255 / 0.06);
+  --ink: #ededed;
+  --ink-2: #b4b4ba;
+  --ink-3: #8a8a90;
   --accent: #8ea2ff;
   --accent-2: #a9b8ff;
-  --accent-fill: #4f6cf0;
-  --accent-fill-2: #6a84f6;
+  --accent-fill: #4862e6;
+  --accent-fill-2: #4862e6;
+  --meter: #8ea2ff;
   --on-accent: #ffffff;
+  /* The main button: off-white on night, ink on day. */
+  --primary: #ededed;
+  --primary-hover: #ffffff;
+  --on-primary: #111113;
   --s1: #6f86ff;
   --s2: #e58a3a;
   --s3: #2fb383;
   --s4: #d3a032;
   --s5: #d667a1;
-  --good: #3ccf6e;
-  --warn: #f5b04c;
-  --run: #ff8a3d; /* orange: work running (Free storage) */
-  --bad: #ff6b63;
-  --shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 12px 32px -18px rgb(0 0 0 / 0.7);
+  --good: #4cc38a;
+  --warn: #e8a54b;
+  --run: #f08a4b; /* orange: work running (Free storage) */
+  --bad: #e5484d;
+  --shadow: none;
   --h1: #1a2140;
   --h2: #2b3a85;
   --h3: #4f6cf0;
   --h4: #a3b3ff;
-  --dot: rgb(255 255 255 / 0.055);
 }
 
-/* Light ("day"): warm paper, white cards with a soft drop shadow, amber light (the sun). */
+/* Light ("day"): near-neutral paper, white cards with a small soft shadow, amber (the sun) as the
+   one accent. */
 [data-theme="light"] {
   color-scheme: light;
-  --bg: #ecebe7;
+  --bg: #f4f3f1;
+  --side: #efeeeb;
   --surface: #ffffff;
   --panel: #ffffff;
-  --panel-2: rgb(70 58 38 / 0.06);
-  --line: rgb(70 58 38 / 0.1);
+  --panel-2: rgb(28 27 26 / 0.05);
+  --raised: rgb(28 27 26 / 0.07);
+  --line: rgb(28 27 26 / 0.09);
   --edge: rgb(255 255 255 / 0.9);
-  --ink: #1d1c1a;
-  --ink-2: #47443f;
-  --ink-3: #6f6a62;
-  --accent: #b25f00;
+  --ink: #1c1b1a;
+  --ink-2: #4f4c47;
+  --ink-3: #6f6b65;
+  --accent: #a85a00;
   --accent-2: #e8901f;
   --accent-fill: #f39a26;
-  --accent-fill-2: #f8b04a;
+  --accent-fill-2: #f39a26;
+  --meter: #e8901f;
   --on-accent: #2b1a03;
+  --primary: #1c1b1a;
+  --primary-hover: #33312e;
+  --on-primary: #ffffff;
   --s1: #5b68e0; /* the same meaning in both themes: s1 blue (photos, this week), s2 orange */
   --s2: #ef961f;
   --s3: #1c9f71;
@@ -89,12 +103,16 @@
   --warn: #a95400;
   --run: #c2410c;
   --bad: #cf1f2a;
-  --shadow: 0 1px 2px rgb(60 45 20 / 0.05), 0 10px 28px -16px rgb(60 45 20 / 0.22);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.05);
   --h1: #f6e3c6;
   --h2: #f4c27e;
   --h3: #ee9a2c;
   --h4: #b8650a;
-  --dot: rgb(70 58 38 / 0.09);
+}
+
+/* One easing curve for every movement on the page. */
+:root {
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 html,
@@ -111,50 +129,30 @@ body {
   @apply bg-bg font-sans text-ink antialiased;
   -webkit-tap-highlight-color: transparent;
 }
-/* The soft glow sits on its own fixed layer, so scrolling never repaints it
-   (background-attachment: fixed repaints the whole page on every scroll). */
-body::before {
-  content: "";
-  @apply pointer-events-none fixed inset-0 -z-10;
-  /* Soft color fields behind the glass, like iOS and Material You wallpapers. */
-  /* A faint dot grid, like paper. */
-  background-image: radial-gradient(var(--dot) 1px, transparent 1.2px);
-  background-size: 22px 22px;
+/* Bold text inside sentences: a step up, never heavy. */
+b,
+strong {
+  font-weight: 600;
 }
 
 @layer components {
   .card {
-    @apply relative rounded-[20px] border border-line bg-panel;
+    @apply relative rounded-2xl border border-line bg-panel;
     box-shadow: var(--shadow);
     transition:
-      border-color 0.25s ease,
-      box-shadow 0.25s ease,
-      transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+      border-color 0.15s var(--ease),
+      background-color 0.15s var(--ease),
+      transform 0.15s var(--ease);
   }
-  /* A soft light that follows the pointer (set by main.ts as --mx/--my). */
-  .card::before {
-    content: "";
-    @apply pointer-events-none absolute inset-0 rounded-[inherit] opacity-0 transition-opacity duration-300;
-    background: none;
-  }
-  /* Hover effects only where there is a mouse: on phones they would stick after a tap. */
+  /* Hover effects only where there is a mouse: on phones they would stick after a tap. Clickable
+     cards get a slightly stronger edge; nothing lifts or glows. */
   @media (hover: hover) {
-    .card:hover {
-      border-color: color-mix(in oklab, var(--accent) 22%, var(--line));
-    }
-    .card:hover::before {
-      opacity: 1;
-    }
-    /* Tiles and clickable cards lift a little. */
     .lift:hover,
     a.card:hover {
-      transform: translateY(-2px);
-      box-shadow:
-        var(--shadow),
-        0 14px 30px -18px color-mix(in oklab, var(--accent) 35%, transparent);
+      border-color: color-mix(in oklab, var(--ink) 16%, transparent);
     }
   }
-  /* Tapped cards sink a little. */
+  /* Tapped cards press in a little. */
   a.card:active,
   figure.card:active,
   .lift:active {
@@ -162,7 +160,7 @@ body::before {
     transition-duration: 0.08s;
   }
   .card-h {
-    @apply flex min-h-14 flex-wrap items-center gap-2.5 border-b border-line px-4 py-3 text-sm font-semibold tracking-tight;
+    @apply flex min-h-14 flex-wrap items-center gap-2 border-b border-line px-4 py-3 text-sm font-medium;
   }
   .card-h .sub {
     @apply ml-auto flex items-center gap-1.5 text-xs font-normal text-ink-3;
@@ -171,122 +169,101 @@ body::before {
     @apply p-4;
   }
   .label {
-    @apply text-[11px] font-semibold tracking-[0.1em] text-ink-3 uppercase;
+    @apply text-xs font-medium text-ink-3;
   }
   .num {
-    @apply font-semibold tabular-nums tracking-tight;
+    @apply font-medium tabular-nums;
+  }
+  /* Counters, like the frame numbers on a strip of negatives: mono, muted, tabular. */
+  .meta {
+    @apply font-mono text-xs text-ink-3 tabular-nums;
   }
 
   /* Badges: small status pills, always with text (never color alone). */
+  /* Badges: quiet status text with an icon, always with words (never color alone). Only problems
+     (warn, bad) get a tinted fill; good and info color the icon and leave the text neutral. */
   .badge {
-    @apply inline-flex h-[22px] shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] leading-none font-medium tracking-[0.01em] whitespace-nowrap transition-[transform,background-color,box-shadow] duration-200;
-    border-color: transparent;
-    background: var(--panel-2);
+    @apply inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-line px-2 text-xs leading-none font-normal whitespace-nowrap transition-colors duration-150;
+    background: transparent;
     color: var(--ink-2);
   }
   @media (hover: hover) {
-    a .badge:hover,
-    .badge[data-tip]:hover {
-      transform: translateY(-1px);
+    a .badge:hover {
+      border-color: color-mix(in oklab, var(--ink) 18%, transparent);
     }
   }
   .badge.phase svg {
     @apply size-3.5;
   }
-  /* Live dot: pulses for things happening right now. */
+  /* Live dot: a steady status light, like the one on the server. */
   .badge .dot {
     @apply relative inline-block size-1.5 rounded-full;
-    background: currentColor;
-  }
-  .badge .dot.live::after {
-    content: "";
-    @apply absolute inset-0 rounded-full;
-    background: currentColor;
-    animation: ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+    background: var(--good);
   }
   .badge svg {
     @apply size-3;
   }
-  /* Tonal status pills (Material 3 / iOS): tinted fill, text in the status color, always with words. */
-  .badge.good,
-  .badge.warn,
-  .badge.bad,
-  .badge.info {
-    border-color: transparent;
-    box-shadow: none;
-  }
-  .badge.good {
+  .badge.good svg {
     color: var(--good);
-    background: color-mix(in oklab, var(--good) 15%, transparent);
+  }
+  .badge.info svg {
+    color: var(--accent);
   }
   .badge.warn {
     color: var(--warn);
-    background: color-mix(in oklab, var(--warn) 16%, transparent);
+    border-color: transparent;
+    background: color-mix(in oklab, var(--warn) 13%, transparent);
   }
   .badge.bad {
     color: var(--bad);
-    background: color-mix(in oklab, var(--bad) 15%, transparent);
-  }
-  .badge.info {
-    color: var(--accent);
-    background: color-mix(in oklab, var(--accent) 15%, transparent);
+    border-color: transparent;
+    background: color-mix(in oklab, var(--bad) 13%, transparent);
   }
   .badge.solid {
     @apply border-transparent text-white;
     background: var(--accent-fill);
   }
+  /* Counts next to a nav item: a mono counter, colored only when something failed. */
   .count {
-    @apply ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold tabular-nums;
-    background: var(--panel-2);
-    color: var(--ink-2);
+    @apply ml-auto inline-flex h-5 min-w-5 items-center justify-end font-mono text-xs tabular-nums;
+    color: var(--ink-3);
   }
   .count.bad {
-    background: color-mix(in oklab, var(--bad) 20%, transparent);
+    @apply justify-center rounded-md px-1.5;
+    background: color-mix(in oklab, var(--bad) 14%, transparent);
     color: var(--bad);
   }
   .count.info {
-    background: color-mix(in oklab, var(--accent) 20%, transparent);
-    color: var(--accent);
+    color: var(--ink-2);
   }
 
-  /* Pill buttons (Material 3); tonal by default, filled for the main action. */
+  /* Buttons: the raised surface with a hairline; the main action is solid (off-white at night, ink
+     by day). Radius 10, the control radius everywhere. */
   .btn {
-    @apply inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-full border border-line bg-panel-2 px-4 text-sm font-medium text-ink transition duration-200 select-none active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50;
+    @apply relative inline-flex h-9 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-[10px] border border-line bg-panel-2 px-4 text-sm font-medium text-ink select-none active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50;
     box-shadow: inset 0 1px 0 var(--edge);
-  }
-  .btn {
-    @apply relative overflow-hidden;
+    transition:
+      background-color 0.15s var(--ease),
+      border-color 0.15s var(--ease),
+      color 0.15s var(--ease),
+      transform 0.15s var(--ease);
   }
   @media (hover: hover) {
     .btn:hover {
-      background: color-mix(in oklab, var(--ink) 11%, transparent);
+      background: var(--raised);
     }
-    .btn:hover svg {
-      transform: scale(1.08);
-    }
-  }
-  .btn svg {
-    @apply transition-transform duration-200;
   }
   .btn svg {
     @apply size-4 shrink-0;
   }
   .btn.primary {
-    @apply border-transparent font-semibold;
-    color: var(--on-accent);
-    background: linear-gradient(180deg, var(--accent-fill-2), var(--accent-fill));
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.28),
-      0 6px 16px -8px color-mix(in oklab, var(--accent-fill) 80%, transparent);
-  }
-  [data-theme="light"] .btn.primary {
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.25),
-      0 3px 8px -4px color-mix(in oklab, var(--accent) 50%, transparent);
+    @apply border-transparent;
+    color: var(--on-primary);
+    background: var(--primary);
+    box-shadow: none;
   }
   .btn.primary:is(:hover, :active) {
-    background: linear-gradient(180deg, var(--accent-fill), var(--accent-fill));
-    filter: brightness(0.96);
+    background: var(--primary-hover);
   }
   .btn.danger {
     color: var(--bad);
@@ -300,7 +277,7 @@ body::before {
 
   /* Text button (iOS "Edit"): accent text, a soft tint only while pressed or hovered. */
   .link-btn {
-    @apply inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-sm font-medium transition-colors duration-200 select-none;
+    @apply inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium transition-colors duration-150 select-none;
     color: var(--accent);
   }
   .link-btn svg {
@@ -326,8 +303,7 @@ body::before {
     }
   }
   .input {
-    @apply h-10 w-full rounded-xl border border-line bg-panel-2 px-3 text-sm text-ink outline-none placeholder:text-ink-3 focus:border-accent/70 focus:ring-[3px] focus:ring-accent/20;
-    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.04);
+    @apply h-10 w-full rounded-[10px] border border-line bg-panel-2 px-3 text-sm text-ink outline-none placeholder:text-ink-3 focus:border-accent/70 focus:ring-[3px] focus:ring-accent/20;
   }
   textarea.input {
     @apply h-auto py-2 font-mono text-xs;
@@ -343,54 +319,55 @@ body::before {
     scrollbar-width: none;
   }
   .seg button {
-    @apply relative overflow-hidden active:scale-95 inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-[8px] px-3 text-xs font-medium whitespace-nowrap text-ink-2 transition hover:text-ink;
+    @apply relative inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1.5 overflow-hidden rounded-[8px] px-3 text-xs font-medium whitespace-nowrap text-ink-2 transition-colors duration-150 hover:text-ink;
   }
   .seg button svg {
     @apply size-3.5;
   }
-  /* The chosen option: tinted with the accent, an accent edge and text, so it reads as selected at a
-     glance (in light and dark), not only a slightly lighter pill. */
+  /* The chosen option: a raised surface with a hairline and full-strength text. */
   .seg button[aria-pressed="true"],
   .seg button[aria-selected="true"] {
-    @apply font-semibold;
-    color: var(--accent);
-    background: color-mix(in oklab, var(--accent-fill) 16%, var(--surface));
+    color: var(--ink);
+    background: var(--surface);
     box-shadow:
-      inset 0 0 0 1px color-mix(in oklab, var(--accent) 45%, transparent),
-      0 1px 2px rgb(0 0 0 / 0.14),
-      0 3px 8px -3px color-mix(in oklab, var(--accent-fill) 45%, transparent);
+      inset 0 0 0 1px var(--line),
+      0 1px 2px rgb(0 0 0 / 0.12);
+  }
+  :root:not([data-theme="light"]) .seg button:is([aria-pressed="true"], [aria-selected="true"]) {
+    background: rgb(255 255 255 / 0.1);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
   }
   .seg button[aria-pressed="true"] svg {
     color: var(--accent);
   }
   /* Ordinary buttons that act as a choice (Downloads: the account shown). */
   .btn[aria-pressed="true"] {
-    color: var(--accent);
     border-color: color-mix(in oklab, var(--accent) 55%, transparent);
-    background: color-mix(in oklab, var(--accent-fill) 16%, var(--surface));
+    background: color-mix(in oklab, var(--accent) 12%, transparent);
   }
 
   /* Toggle chips (accounts per folder). */
   .chip {
-    @apply inline-flex h-8 max-w-full cursor-pointer items-center gap-1.5 truncate rounded-full border border-line bg-panel-2 px-3 text-xs font-medium text-ink-2 transition select-none active:scale-95;
+    @apply inline-flex h-8 max-w-full cursor-pointer items-center gap-1.5 truncate rounded-lg border border-line bg-panel-2 px-3 text-xs font-medium text-ink-2 transition-colors duration-150 select-none active:scale-[0.97];
   }
   .chip svg {
     @apply w-3.5 opacity-25 transition-opacity;
   }
   .chip[aria-pressed="true"] {
     @apply text-ink;
-    border-color: color-mix(in oklab, var(--accent) 55%, transparent);
-    background: color-mix(in oklab, var(--accent) 18%, transparent);
+    border-color: color-mix(in oklab, var(--accent) 50%, transparent);
+    background: color-mix(in oklab, var(--accent) 12%, transparent);
   }
   .chip[aria-pressed="true"] svg {
     @apply text-accent opacity-100;
   }
 
   .switch {
-    @apply relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border border-line bg-panel-2 transition;
+    @apply relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border border-line bg-panel-2 transition-colors duration-150;
   }
   .switch::after {
-    @apply absolute left-0.5 size-5 rounded-full bg-ink-3 transition content-[''];
+    @apply absolute left-0.5 size-5 rounded-full bg-ink-3 transition-[transform,background-color] duration-150 content-[''];
+    transition-timing-function: var(--ease);
   }
   .switch[aria-checked="true"] {
     background: var(--accent-fill);
@@ -400,43 +377,38 @@ body::before {
     @apply translate-x-5 bg-white;
   }
 
+  /* Sidebar rows: 36 tall, 2 apart, the icons in one column and the labels on one line. */
   .nav-item {
-    @apply flex h-10 items-center gap-3 rounded-xl px-3.5 text-sm font-medium text-ink-2 transition duration-200 hover:bg-panel-2 hover:text-ink;
-  }
-  .nav-item {
-    @apply relative w-auto cursor-pointer overflow-hidden;
-  }
-  @media (hover: hover) {
-    .nav-item:hover svg {
-      transform: translateX(1px) scale(1.06);
-    }
+    @apply relative flex h-9 w-auto cursor-pointer items-center gap-2.5 overflow-hidden rounded-lg px-3 text-sm text-ink-2 transition-colors duration-150 hover:bg-panel-2 hover:text-ink;
   }
   .nav-item svg {
-    @apply transition-transform duration-200;
+    @apply size-4 shrink-0 text-ink-3;
   }
-  .nav-item svg {
-    @apply size-[18px] shrink-0;
-  }
+  /* The open page: one surface step up with a hairline highlight, and the accent on its icon. */
   .nav-item[aria-current="page"] {
-    @apply font-semibold text-ink;
-    background: color-mix(in oklab, var(--accent-fill) 14%, transparent);
+    @apply font-medium text-ink;
+    background: var(--raised);
+    box-shadow: inset 0 1px 0 var(--edge);
   }
   [data-theme="light"] .nav-item[aria-current="page"] {
-    background: color-mix(in oklab, var(--accent) 11%, transparent);
+    background: var(--surface);
+    box-shadow:
+      0 0 0 1px var(--line),
+      0 1px 2px rgb(0 0 0 / 0.05);
   }
   .nav-item[aria-current="page"] svg {
     color: var(--accent);
   }
 
   .bar {
-    @apply block h-2 overflow-hidden rounded-full bg-panel-2;
+    @apply block h-1.5 overflow-hidden rounded-full bg-panel-2;
   }
   /* Linear and about as long as the gap between updates, so the bar glides instead of jumping
      and stopping. */
   .bar > i {
     @apply relative block h-full overflow-hidden rounded-full;
     transition: width 1.2s linear;
-    background: linear-gradient(90deg, var(--accent-fill), var(--accent-fill-2));
+    background: var(--meter);
   }
   /* No byte count yet: a short bar slides across. */
   .bar.indeterminate > i {
@@ -445,7 +417,7 @@ body::before {
   }
 
   .row {
-    @apply flex items-center gap-3 border-b border-line px-4 py-2.5 transition-colors duration-150 last:border-b-0;
+    @apply flex items-center gap-3 border-b border-line px-4 py-3 transition-colors duration-150 last:border-b-0;
   }
   .row:hover,
   .row:focus-visible {
@@ -457,25 +429,11 @@ body::before {
   .row.clickable {
     @apply relative overflow-hidden active:bg-panel-2;
   }
-  @media (hover: hover) {
-    .row.clickable:hover .thumb {
-      transform: scale(1.06);
-    }
-  }
   .thumb {
-    @apply size-10 shrink-0 overflow-hidden rounded-lg bg-panel-2 object-cover ring-1 ring-line transition-transform duration-300;
-  }
-  .zoom-img {
-    @apply transition-transform duration-500 ease-out;
-  }
-  @media (hover: hover) {
-    .group:hover .zoom-img {
-      transform: scale(1.06);
-    }
+    @apply size-10 shrink-0 overflow-hidden rounded-lg bg-panel-2 object-cover ring-1 ring-line;
   }
   .stat-tile {
-    @apply flex min-w-0 flex-col gap-1 rounded-2xl border border-line bg-panel-2 p-3 transition duration-200 hover:-translate-y-px hover:border-accent/30 hover:bg-panel-2;
-    box-shadow: inset 0 1px 0 var(--edge);
+    @apply flex min-w-0 flex-col gap-1 rounded-xl border border-line bg-panel-2 p-3 transition-colors duration-150;
   }
   .kv {
     @apply flex items-center justify-between gap-3 border-b border-line py-2 text-sm last:border-b-0;
@@ -493,9 +451,10 @@ body::before {
     @apply size-8 opacity-60;
   }
   .tip {
-    @apply pointer-events-none fixed z-[60] min-w-28 rounded-xl border border-line px-3 py-2 text-xs shadow-2xl backdrop-blur-xl;
-    background: color-mix(in oklab, var(--surface) 88%, transparent);
-    animation: pop 0.12s ease-out;
+    @apply pointer-events-none fixed z-[60] min-w-28 rounded-lg border border-line px-3 py-2 text-xs;
+    background: var(--surface);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+    animation: pop 0.16s var(--ease);
   }
 }
 
@@ -504,14 +463,14 @@ body::before {
   /* Section menu: a frosted panel without the pointer light (the light spread over the
    neighboring rows); each row lights up on its own instead. */
   .set-nav {
-    @apply sticky top-0 flex-col gap-1 rounded-[20px] border border-line bg-panel p-2;
+    @apply sticky top-0 flex-col gap-0.5 rounded-2xl border border-line bg-panel p-2;
     box-shadow: var(--shadow);
   }
   .set-group {
-    @apply px-2.5 pt-3 pb-1 text-[11px] font-semibold tracking-wider text-ink-3 uppercase first:pt-1;
+    @apply px-2 pt-4 pb-2 text-xs font-medium text-ink-3 first:pt-1;
   }
   .set-item {
-    @apply relative flex cursor-pointer items-center gap-3 overflow-hidden rounded-2xl px-2.5 py-2 text-sm font-medium text-ink-2 transition-[background-color,color] duration-200 select-none;
+    @apply relative flex cursor-pointer items-center gap-3 overflow-hidden rounded-lg px-2 py-2 text-sm text-ink-2 transition-[background-color,color] duration-150 select-none;
   }
   .set-item:active {
     background: color-mix(in oklab, var(--ink) 8%, transparent);
@@ -519,26 +478,16 @@ body::before {
   @media (hover: hover) {
     .set-item:hover {
       @apply text-ink;
-      background: color-mix(in oklab, var(--ink) 5.5%, transparent);
-    }
-    .set-item:hover .set-ic {
-      transform: scale(1.06);
+      background: var(--panel-2);
     }
     .set-item:hover .set-chev {
-      @apply translate-x-0.5 opacity-70;
+      @apply opacity-70;
     }
   }
   .set-item[aria-current="page"] {
-    @apply font-semibold text-ink;
-    background: color-mix(in oklab, var(--accent) 14%, transparent);
-  }
-  [data-theme="light"] .set-item[aria-current="page"] {
-    background: color-mix(in oklab, var(--accent) 10%, transparent);
-  }
-  .set-item[aria-current="page"]::before {
-    content: "";
-    @apply absolute top-1/2 left-0 h-6 w-[3px] -translate-y-1/2 rounded-r-full;
-    background: var(--accent);
+    @apply font-medium text-ink;
+    background: var(--raised);
+    box-shadow: inset 0 1px 0 var(--edge);
   }
   .set-chev {
     @apply size-4 shrink-0 text-ink-3 opacity-0 transition duration-200;
@@ -548,32 +497,29 @@ body::before {
     color: var(--accent);
   }
 
-  /* iOS Settings style icon tile: white glyph on a colored rounded square. */
-  /* Neutral icon tiles; the open section's tile (and section headers) carry the accent light. */
+  /* Neutral icon tiles; the open section's icon takes the accent, its tile stays neutral. */
   .set-ic {
-    @apply grid size-8 shrink-0 place-items-center rounded-[10px] text-ink-2 transition-transform duration-200;
+    @apply grid size-8 shrink-0 place-items-center rounded-lg text-ink-3;
     background: var(--panel-2);
   }
   [aria-current="page"] .set-ic,
   .set-ic.lg {
-    color: var(--on-accent);
-    background: linear-gradient(180deg, var(--accent-fill-2), var(--accent-fill));
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.25);
+    color: var(--accent);
   }
   .set-ic svg {
-    @apply size-[17px];
+    @apply size-4;
   }
   .set-ic.sm {
-    @apply size-6 rounded-[7px];
+    @apply size-6 rounded-md;
   }
   .set-ic.sm svg {
     @apply size-3.5;
   }
   .set-ic.lg {
-    @apply size-11 rounded-[12px];
+    @apply size-10 rounded-[10px];
   }
   .set-ic.lg svg {
-    @apply size-[22px];
+    @apply size-5;
   }
 
   /* Phones and tablets: the sections as a scrolling row of pills. */
@@ -582,20 +528,20 @@ body::before {
     scroll-snap-type: x proximity;
   }
   .set-tab {
-    @apply relative flex h-10 shrink-0 items-center gap-2 overflow-hidden rounded-full border border-line bg-panel pr-4 pl-2 text-sm font-medium text-ink-2 transition-colors duration-200 select-none;
+    @apply relative flex h-10 shrink-0 items-center gap-2 overflow-hidden rounded-[10px] border border-line bg-panel pr-4 pl-1 text-sm text-ink-2 transition-colors duration-150 select-none;
     scroll-snap-align: center;
   }
   .set-tab[aria-current="page"] {
-    @apply text-ink;
-    border-color: color-mix(in oklab, var(--accent) 55%, transparent);
-    background: color-mix(in oklab, var(--accent) 16%, var(--surface));
+    @apply font-medium text-ink;
+    border-color: color-mix(in oklab, var(--ink) 18%, transparent);
+    background: var(--surface);
   }
 
   .set-head {
     @apply mb-4 flex items-center gap-3.5 px-1;
   }
   .set-actions {
-    @apply flex flex-wrap items-center gap-3 rounded-[18px] border border-line px-4 py-3;
+    @apply flex flex-wrap items-center gap-3 rounded-2xl border border-line px-4 py-3;
     background: color-mix(in oklab, var(--surface) 70%, transparent);
   }
   @media (max-width: 640px) {
@@ -609,22 +555,22 @@ body::before {
     @apply relative inline-block max-w-full;
   }
   .acc-btn {
-    @apply flex h-10 max-w-full items-center gap-2.5 rounded-xl border border-line bg-panel-2 pr-3 pl-1.5 transition-colors;
+    @apply flex h-10 max-w-full items-center gap-2 rounded-[10px] border border-line bg-panel-2 pr-3 pl-1 transition-colors duration-150;
   }
   .acc-btn:not(:disabled) {
     @apply cursor-pointer;
   }
   .acc-btn:not(:disabled):hover,
   .acc-btn[aria-expanded="true"] {
-    border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+    border-color: color-mix(in oklab, var(--ink) 18%, transparent);
   }
   .acc-av {
-    @apply grid shrink-0 place-items-center rounded-full text-xs font-semibold;
-    color: var(--accent);
-    background: color-mix(in oklab, var(--accent) 18%, var(--surface));
+    @apply grid shrink-0 place-items-center rounded-full text-xs font-medium;
+    color: var(--ink-2);
+    background: var(--raised);
   }
   .acc-menu {
-    @apply absolute top-full left-0 z-40 mt-1.5 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-line p-1.5;
+    @apply absolute top-full left-0 z-40 mt-1 w-[min(22rem,calc(100vw-2rem))] rounded-xl border border-line p-1;
     background: var(--surface);
     box-shadow: 0 18px 40px -16px rgb(0 0 0 / 0.55);
   }
@@ -640,7 +586,7 @@ body::before {
     @apply right-0 w-auto;
   }
   .acc-item {
-    @apply flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 outline-none;
+    @apply flex w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-2 outline-none;
   }
   .acc-item:hover,
   .acc-item:focus-visible {
@@ -664,17 +610,12 @@ body::before {
     @apply flex min-w-0 cursor-pointer flex-col items-stretch gap-2.5 text-left select-none;
   }
   .theme-prev {
-    @apply relative block aspect-[16/10] overflow-hidden rounded-2xl transition-[transform,box-shadow] duration-200;
-    box-shadow:
-      0 0 0 1px var(--line),
-      0 8px 20px -14px rgb(0 0 0 / 0.6);
+    @apply relative block aspect-[16/10] overflow-hidden rounded-xl transition-[transform,box-shadow] duration-150;
+    box-shadow: 0 0 0 1px var(--line);
   }
   @media (hover: hover) {
     .theme-opt:hover .theme-prev {
-      transform: translateY(-2px);
-      box-shadow:
-        0 0 0 1px color-mix(in oklab, var(--accent) 40%, var(--line)),
-        0 14px 26px -16px rgb(0 0 0 / 0.65);
+      box-shadow: 0 0 0 1px color-mix(in oklab, var(--ink) 22%, transparent);
     }
   }
   .theme-opt:active .theme-prev {
@@ -682,31 +623,27 @@ body::before {
     transition-duration: 0.08s;
   }
   .theme-opt[aria-checked="true"] .theme-prev {
-    box-shadow:
-      0 0 0 2px var(--accent),
-      0 0 0 5px color-mix(in oklab, var(--accent) 22%, transparent),
-      0 10px 24px -14px color-mix(in oklab, var(--accent) 60%, transparent);
+    box-shadow: 0 0 0 2px var(--accent);
   }
   .theme-check {
-    @apply absolute right-2 bottom-2 grid size-6 scale-50 place-items-center rounded-full text-white opacity-0 transition duration-200;
+    @apply absolute right-2 bottom-2 grid size-6 place-items-center rounded-full text-white opacity-0 transition-opacity duration-150;
     background: var(--accent-fill);
-    box-shadow: 0 2px 6px rgb(0 0 0 / 0.3);
   }
   .theme-check svg {
     @apply size-3.5;
     stroke-width: 3;
   }
   .theme-opt[aria-checked="true"] .theme-check {
-    @apply scale-100 opacity-100;
+    @apply opacity-100;
   }
   .theme-label {
-    @apply flex items-center justify-center gap-1.5 text-sm font-medium text-ink-2 transition-colors;
+    @apply flex items-center justify-center gap-1.5 text-sm text-ink-2 transition-colors;
   }
   .theme-label svg {
     @apply size-4;
   }
   .theme-opt[aria-checked="true"] .theme-label {
-    @apply font-semibold text-ink;
+    @apply font-medium text-ink;
   }
   .theme-opt[aria-checked="true"] .theme-label svg {
     color: var(--accent);
@@ -723,17 +660,17 @@ body::before {
     @apply block rounded-full;
   }
   .pv-dark {
-    --pb: #0b0c0e;
-    --pc: #1a1b1f;
+    --pb: #111113;
+    --pc: #19191b;
     --pl: rgb(255 255 255 / 0.14);
-    --pa: #6f86ff;
-    --pg: #3ccf6e;
+    --pa: #8ea2ff;
+    --pg: #4cc38a;
   }
   .pv-light {
-    --pb: #ecebe7;
+    --pb: #f4f3f1;
     --pc: #ffffff;
-    --pl: rgb(70 58 38 / 0.16);
-    --pa: #ef961f;
+    --pl: rgb(28 27 26 / 0.14);
+    --pa: #e8901f;
     --pg: #23853b;
   }
   /* System: dark top-left, light bottom-right. */
@@ -815,7 +752,7 @@ body::before {
 
   /* Install steps sit in a soft well. */
   .install-help {
-    @apply space-y-2 rounded-2xl p-3.5 text-sm leading-relaxed;
+    @apply space-y-2 rounded-xl p-4 text-sm leading-relaxed;
     background: var(--panel-2);
   }
 
@@ -853,14 +790,18 @@ body::before {
   scrollbar-color: var(--line) transparent;
 }
 
-/* The shell has a quieter, more opaque glass than the content it frames. */
-.app-sidebar,
-.app-topbar,
-.app-tabbar,
-.app-sheet {
-  background: color-mix(in oklab, var(--bg) 82%, transparent);
-  -webkit-backdrop-filter: blur(18px);
-  backdrop-filter: blur(18px);
+/* The shell is solid and one step darker than the page; only the phone tab bar keeps a light
+   frosting, since the page scrolls under it. */
+.app-sidebar {
+  background: var(--side);
+}
+.app-topbar {
+  background: var(--bg);
+}
+.app-tabbar {
+  background: color-mix(in oklab, var(--bg) 88%, transparent);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
 }
 .app-sheet {
   background: var(--surface);
@@ -870,14 +811,18 @@ body::before {
   max-height: min(90dvh, 52rem);
   overflow-y: auto;
 }
-.brand-icon {
-  box-shadow:
-    0 8px 18px -8px rgb(0 0 0 / 0.5),
-    0 0 0 1px var(--edge);
+/* The mark: a photo with an arrow going up, cut out of one solid tile in the ink color. */
+.brand-mark {
+  @apply grid size-8 shrink-0 place-items-center rounded-lg;
+  color: var(--bg);
+  background: var(--ink);
+}
+.brand-mark svg {
+  @apply size-[18px];
+  stroke-width: 2;
 }
 .metric-icon {
-  color: var(--accent);
-  background: color-mix(in oklab, var(--accent-fill) 14%, var(--surface));
+  color: var(--ink-3);
 }
 .overview-hero .ring-box {
   border-radius: 50%;
@@ -955,19 +900,8 @@ body::before {
   }
 }
 
-@keyframes content-flip {
-  from {
-    opacity: 0.35;
-    transform: perspective(900px) rotateX(-3deg) translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: perspective(900px) rotateX(0) translateY(0);
-  }
-}
 .content-swap {
-  transform-origin: top center;
-  animation: content-flip 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: fade-up 0.3s var(--ease) both;
 }
 @media (prefers-reduced-motion: reduce) {
   .content-swap {
@@ -975,30 +909,24 @@ body::before {
   }
 }
 
-/* Charts */
-.chart-line {
-  filter: drop-shadow(0 4px 10px color-mix(in oklab, currentColor 45%, transparent));
-}
+/* Charts: flat lines and bars on a muted grid; hover dims the others instead of lighting one. */
 .chart-line.draw {
   stroke-dasharray: var(--len);
-  animation: draw 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: draw 0.5s var(--ease) both;
 }
 .chart-area.draw {
-  animation: fade-up 0.8s ease-out both;
+  animation: fade-up 0.4s var(--ease) both;
 }
 .col-bar {
   transform-origin: bottom;
-  animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  transition:
-    opacity 0.2s,
-    filter 0.2s;
+  animation: rise 0.4s var(--ease) both;
+  transition: opacity 0.15s var(--ease);
 }
 .cols:hover .col-bar {
   opacity: 0.45;
 }
 .cols .col:hover .col-bar {
   opacity: 1;
-  filter: brightness(1.2) drop-shadow(0 0 8px color-mix(in oklab, var(--s1) 70%, transparent));
 }
 .heat rect[data-tip] {
   transition:
@@ -1008,7 +936,6 @@ body::before {
   transform-origin: center;
 }
 .heat rect[data-tip]:hover {
-  transform: scale(1.35);
   stroke: var(--ink);
   stroke-width: 1px;
 }
@@ -1020,7 +947,7 @@ body::before {
 
 /* Page changes */
 #view > * {
-  animation: fade-up 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: fade-up 0.3s var(--ease) both;
 }
 ::view-transition-old(root),
 ::view-transition-new(root) {
@@ -1113,8 +1040,8 @@ html.theme-reveal::view-transition-old(gt-live) {
 /* A circle behind the icon (the icons are round or square, so a pill looked off), the same
    size as the ring a live tab draws. */
 .tab-ic {
-  @apply relative grid size-9 place-items-center rounded-full transition-[background-color,transform] duration-300;
-  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  @apply relative grid size-9 place-items-center rounded-full transition-[background-color,transform] duration-150;
+  transition-timing-function: var(--ease);
 }
 .tab:active .tab-ic {
   transform: scale(0.86);
@@ -1124,10 +1051,7 @@ html.theme-reveal::view-transition-old(gt-live) {
   @apply text-accent;
 }
 .tab.on .tab-ic {
-  background: color-mix(in oklab, var(--accent) 18%, transparent);
-}
-.tab.on .tab-glyph svg {
-  animation: tab-pop 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
 }
 .tab-glyph {
   @apply grid place-items-center;
@@ -1148,7 +1072,7 @@ html.theme-reveal::view-transition-old(gt-live) {
 .tab-ring-arc {
   stroke: var(--accent);
   stroke-linecap: round;
-  transition: stroke-dashoffset 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: stroke-dashoffset 0.6s var(--ease);
 }
 .tab.live .tab-ring {
   opacity: 1;
@@ -1182,46 +1106,16 @@ html.theme-reveal::view-transition-old(gt-live) {
   @apply relative flex items-center justify-center py-1.5 select-none;
 }
 .tab-fab > span {
-  @apply relative grid size-12 place-items-center overflow-hidden rounded-full text-white transition-[transform,filter] duration-200;
-  color: var(--on-accent);
-  background: linear-gradient(160deg, var(--accent-fill-2), var(--accent-fill));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.28),
-    0 6px 14px -6px color-mix(in oklab, var(--accent-fill) 70%, transparent);
-}
-[data-theme="light"] .tab-fab > span {
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.28),
-    0 4px 10px -4px color-mix(in oklab, var(--accent) 45%, transparent);
+  @apply relative grid size-12 place-items-center overflow-hidden rounded-full transition-[transform,background-color] duration-150;
+  color: var(--on-primary);
+  background: var(--primary);
 }
 .tab-fab:active > span {
-  transform: scale(0.93);
-  filter: brightness(1.08);
+  transform: scale(0.97);
   transition-duration: 0.08s;
 }
-/* On the Upload page: a slightly deeper blue, no halo around it. */
 .tab-fab[aria-current] > span {
-  filter: saturate(1.1) brightness(0.94);
-}
-@keyframes tab-pop {
-  40% {
-    transform: scale(1.22) translateY(-1px);
-  }
-}
-
-/* Ripple from where a finger or the mouse presses (main.ts adds the span). */
-.ripple {
-  @apply pointer-events-none absolute rounded-full;
-  background: currentColor;
-  opacity: 0.18;
-  transform: scale(0);
-  animation: ripple 0.55s ease-out forwards;
-}
-@keyframes ripple {
-  to {
-    transform: scale(1);
-    opacity: 0;
-  }
+  background: var(--primary-hover);
 }
 
 /* "More" sheet slides up. */
@@ -1229,19 +1123,7 @@ html.theme-reveal::view-transition-old(gt-live) {
   animation: fade 0.2s ease-out both;
 }
 #sheet:not(.hidden) .sheet-panel {
-  animation: sheet-up 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-#sheet:not(.hidden) .sheet-item {
-  animation: fade-up 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-#sheet .sheet-item:nth-child(2) {
-  animation-delay: 30ms;
-}
-#sheet .sheet-item:nth-child(3) {
-  animation-delay: 60ms;
-}
-#sheet .sheet-item:nth-child(n + 4) {
-  animation-delay: 90ms;
+  animation: sheet-up 0.32s var(--ease) both;
 }
 @keyframes sheet-up {
   from {
@@ -1254,74 +1136,27 @@ html.theme-reveal::view-transition-old(gt-live) {
   }
 }
 
-/* ---- Working animations */
-@keyframes breathe {
-  0%,
-  100% {
-    opacity: 0.15;
-  }
-  50% {
-    opacity: 0.8;
-  }
-}
-.bob {
-  animation: bob 1.2s ease-in-out infinite;
-}
-@keyframes bob {
-  0%,
-  100% {
-    transform: translateY(1px);
-  }
-  50% {
-    transform: translateY(-1.5px);
-  }
-}
+/* An icon that changes (Pause becomes Resume) fades in where it stands. */
 .swap-in {
-  animation: swap-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-@keyframes swap-in {
-  from {
-    transform: scale(0.4) rotate(-90deg);
-    opacity: 0;
-  }
+  animation: fade 0.16s var(--ease);
 }
 
 /* ---- Library grid: steady loading */
-/* Pictures fade in over a shimmering placeholder instead of popping in one by one. */
+/* Pictures fade in over a still placeholder instead of popping in one by one. */
 .media-tile {
   content-visibility: auto;
   contain-intrinsic-size: auto 240px;
 }
-.shimmer {
-  background: linear-gradient(
-    100deg,
-    var(--panel-2) 30%,
-    color-mix(in oklab, var(--ink) 9%, transparent) 50%,
-    var(--panel-2) 70%
-  );
-  background-size: 300% 100%;
-  animation: shimmer-bg 1.4s linear infinite;
-}
+.shimmer,
 .shimmer.done {
-  animation: none;
   background: var(--panel-2);
 }
 .fade-img {
   opacity: 0;
-  transition:
-    opacity 0.35s ease,
-    transform 0.5s ease-out;
+  transition: opacity 0.3s var(--ease);
 }
 .fade-img.loaded {
   opacity: 1;
-}
-@keyframes shimmer-bg {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: -50% 0;
-  }
 }
 
 /* Phones: frosted glass on many cards is slow to scroll, so cards are solid there. */
@@ -1343,16 +1178,16 @@ html.theme-reveal::view-transition-old(gt-live) {
 
 /* ---- Messages (toast) */
 .toast {
-  @apply pointer-events-none fixed left-1/2 z-[70] flex max-w-[min(92vw,30rem)] items-start gap-2.5 rounded-2xl border px-4 py-3 text-sm shadow-2xl;
+  @apply pointer-events-none fixed left-1/2 z-[70] flex max-w-[min(92vw,30rem)] items-start gap-2 rounded-xl border px-4 py-3 text-sm;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.2);
   bottom: calc(5.75rem + env(safe-area-inset-bottom));
   transform: translate(-50%, 12px);
   opacity: 0;
   transition:
-    opacity 0.2s ease,
-    transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+    opacity 0.2s var(--ease),
+    transform 0.2s var(--ease);
   border-color: var(--line);
-  background: color-mix(in oklab, var(--surface) 94%, transparent);
-  backdrop-filter: blur(16px);
+  background: var(--surface);
 }
 @media (min-width: 1024px) {
   .toast {
@@ -1397,31 +1232,6 @@ html.theme-reveal::view-transition-old(gt-live) {
   .seg button {
     @apply h-9;
   }
-}
-
-/* ---- 2.5D charts: a little depth, never at the cost of reading the data */
-.chart-line {
-  filter: drop-shadow(0 6px 6px color-mix(in oklab, currentColor 35%, transparent));
-}
-.spark-line {
-  filter: drop-shadow(0 3px 3px color-mix(in oklab, currentColor 40%, transparent));
-}
-/* Bars: lit top edge, shaded right side, soft shadow on the floor. */
-.col-bar {
-  box-shadow:
-    inset 0 1.5px 0 rgb(255 255 255 / 0.35),
-    inset -3px 0 0 rgb(0 0 0 / 0.14),
-    0 6px 10px -6px color-mix(in oklab, var(--s1) 70%, transparent);
-}
-/* Ring: a recessed track and a lifted, glowing arc. */
-.ring-glow {
-  filter: drop-shadow(0 4px 8px color-mix(in oklab, var(--accent) 45%, transparent));
-}
-[data-theme="light"] .ring-glow {
-  filter: drop-shadow(0 3px 6px color-mix(in oklab, var(--accent) 28%, transparent));
-}
-.heat rect {
-  filter: drop-shadow(0 1px 0.5px rgb(0 0 0 / 0.18));
 }
 
 /* Donut slices: thin highlight on hover, like the bars. */
@@ -1560,7 +1370,7 @@ svg:hover .donut-arc:not(:hover) {
   -webkit-tap-highlight-color: transparent;
   transition: --p 0.75s cubic-bezier(0.65, 0, 0.25, 1);
   /* A little of the light spills onto the page around the switch. */
-  filter: drop-shadow(0 0 calc(10px * var(--gt-spill, 1)) color-mix(in oklab, var(--light) 28%, transparent));
+  filter: drop-shadow(0 0 calc(6px * var(--gt-spill, 1)) color-mix(in oklab, var(--light) 20%, transparent));
 }
 .gt.dragging {
   transition: none;
@@ -1722,7 +1532,7 @@ svg:hover .donut-arc:not(:hover) {
 
 /* ---- Overview process cards: a soft accent edge while that process runs */
 .proc-card.is-running {
-  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+  border-color: color-mix(in oklab, var(--accent) 28%, var(--line));
 }
 
 .text-run {
@@ -1802,7 +1612,7 @@ svg:hover .donut-arc:not(:hover) {
 }
 .sc-chip,
 .work-chip {
-  @apply inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-line bg-panel-2/60 px-2.5 py-1 text-xs text-ink-2;
+  @apply inline-flex max-w-full items-center gap-1.5 truncate rounded-md border border-line px-2 py-1 text-xs text-ink-2;
 }
 .sc-chip.warn {
   @apply border-warn/30 text-warn;
@@ -1822,15 +1632,13 @@ svg:hover .donut-arc:not(:hover) {
 }
 .sc-tile.on {
   border-color: var(--tc);
-  box-shadow:
-    inset 0 0 0 1px var(--tc),
-    0 8px 28px -14px var(--tc);
+  box-shadow: inset 0 0 0 1px var(--tc);
 }
 .sc-tile:focus-visible {
   @apply outline-2 outline-offset-2 outline-accent;
 }
 .sc-ic {
-  @apply grid size-8 shrink-0 place-items-center rounded-xl;
+  @apply grid size-8 shrink-0 place-items-center rounded-lg;
   color: var(--tc);
   background: color-mix(in oklab, var(--tc) 16%, transparent);
 }
@@ -1874,7 +1682,7 @@ svg:hover .donut-arc:not(:hover) {
   @apply bg-bad text-white ring-0;
 }
 .sc-off {
-  @apply inline-flex items-center gap-1 rounded-full px-1.5 font-medium text-warn;
+  @apply inline-flex items-center gap-1 rounded-md px-1.5 font-medium text-warn;
   background: color-mix(in oklab, var(--warn) 14%, transparent);
 }
 .sc-off.older {
@@ -1882,13 +1690,13 @@ svg:hover .donut-arc:not(:hover) {
 }
 /* "How it works" and the first-run steps: three short cards with an icon. */
 .sc-how > summary {
-  @apply inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full px-1 text-sm font-medium text-ink-3 hover:text-ink-2;
+  @apply inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md px-1 text-sm font-medium text-ink-3 hover:text-ink-2;
 }
 .sc-how > summary::-webkit-details-marker {
   display: none;
 }
 .sc-step {
-  @apply flex flex-col gap-1 rounded-2xl border border-line bg-panel-2/40 p-3 text-xs text-ink-3;
+  @apply flex flex-col gap-1 rounded-xl border border-line bg-panel-2/40 p-3 text-xs text-ink-3;
 }
 .sc-step > svg {
   @apply mb-1 text-accent;
@@ -1911,7 +1719,7 @@ svg:hover .donut-arc:not(:hover) {
   max-height: min(88dvh, 44rem);
   display: flex;
   flex-direction: column;
-  animation: sheet-up 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: sheet-up 0.22s var(--ease);
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface); /* solid: the page must not show through the choices */
 }
@@ -1956,20 +1764,23 @@ svg:hover .donut-arc:not(:hover) {
   grid-column: auto;
 }
 .pace-pick > button {
-  @apply inline-flex items-center whitespace-nowrap justify-center gap-1 rounded-xl border border-line bg-panel-2/50 px-3 py-2 text-sm text-ink-2 transition-colors;
+  @apply inline-flex items-center justify-center gap-1 rounded-[10px] border border-line bg-panel-2/50 px-3 py-2 text-sm whitespace-nowrap text-ink-2 transition-colors duration-150;
 }
 .pace-pick > button:hover {
   @apply text-ink;
 }
 .pace-pick > button[aria-checked="true"] {
-  @apply border-accent bg-accent/15 font-medium text-ink;
+  @apply border-accent/60 bg-accent/12 font-medium text-ink;
 }
 /* The button that opens it, the same on every page. */
 .pace-btn {
-  @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-panel-2/60 px-2.5 py-1 text-xs text-ink-2 transition-colors hover:border-accent/50 hover:text-ink;
+  @apply inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-ink-2 transition-colors duration-150 hover:text-ink;
+}
+.pace-btn:hover {
+  border-color: color-mix(in oklab, var(--ink) 18%, transparent);
 }
 .pace-btn > svg {
-  @apply text-accent;
+  @apply text-ink-3;
 }
 /* A tile that opens a sheet (Free storage's Moving now): a hint it can be tapped. */
 .tile-open {
@@ -1992,13 +1803,13 @@ svg:hover .donut-arc:not(:hover) {
 
 /* Tabs at the top of a page that holds several views (Insights: Activity, Patterns). */
 .page-tabs {
-  @apply flex gap-1 rounded-2xl border border-line bg-panel-2/40 p-1;
+  @apply flex gap-1 rounded-xl border border-line bg-panel-2/40 p-1;
 }
 .page-tabs > a {
-  @apply inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium text-ink-3 transition-colors hover:text-ink sm:flex-none;
+  @apply inline-flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm text-ink-3 transition-colors duration-150 hover:text-ink sm:flex-none;
 }
 .page-tabs > a[aria-selected="true"] {
-  @apply bg-panel text-ink shadow-sm ring-1 ring-line;
+  @apply bg-panel font-medium text-ink ring-1 ring-line;
 }
 .page-tabs > a[aria-selected="true"] > svg {
   @apply text-accent;
@@ -2066,11 +1877,7 @@ svg:hover .donut-arc:not(:hover) {
 .work-chip > svg {
   color: var(--step, var(--accent));
 }
-/* A step's chip in its colour, matching its part of the bar and its rows. */
-.work-chip[style*="--step"] {
-  border-color: color-mix(in oklab, var(--step) 40%, transparent);
-  background: color-mix(in oklab, var(--step) 13%, transparent);
-}
+/* A step's chip: its colour on the icon and count only, matching its part of the bar. */
 .work-chip[style*="--step"] > b {
   color: var(--step);
 }
@@ -2095,7 +1902,6 @@ svg:hover .donut-arc:not(:hover) {
 /* Each row's icon and bar in its step's colour. */
 .work-list .work-ic {
   color: var(--step, var(--accent));
-  background: color-mix(in oklab, var(--step, var(--accent)) 14%, transparent);
 }
 .work-list .bar > i {
   background: var(--step, var(--accent-fill));
@@ -2109,7 +1915,7 @@ svg:hover .donut-arc:not(:hover) {
   @apply min-w-0;
 }
 .work-row {
-  @apply flex items-center gap-3 px-4 py-2.5;
+  @apply flex items-center gap-3 px-4 py-3;
 }
 a.work-row {
   @apply transition-colors hover:bg-panel-2;
@@ -2145,7 +1951,7 @@ a.work-row {
   color: var(--accent-2);
 }
 .vw-info {
-  @apply absolute inset-x-0 bottom-0 z-20 max-h-[60%] overflow-y-auto overscroll-contain rounded-t-3xl border-t border-line bg-bg p-4 text-ink;
+  @apply absolute inset-x-0 bottom-0 z-20 max-h-[60%] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-line bg-bg p-4 text-ink;
   padding-bottom: calc(1rem + env(safe-area-inset-bottom));
 }
 @media (min-width: 640px) {
@@ -2204,7 +2010,7 @@ a.work-row {
 }
 /* Bars are buttons: the picked day stands out (and is outlined); with a pick the others fade. */
 button.col {
-  @apply relative cursor-pointer rounded-t-[5px] outline-offset-2;
+  @apply relative cursor-pointer rounded-t-[4px] outline-offset-2;
 }
 button.col[aria-pressed="true"]::after {
   content: "";
@@ -2220,7 +2026,7 @@ button.col[aria-pressed="true"]::after {
   @apply grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10;
 }
 .ph-day {
-  @apply col-span-full px-0.5 pt-3 pb-1 text-sm font-semibold first:pt-0;
+  @apply col-span-full px-0.5 pt-4 pb-1 text-sm font-medium first:pt-0;
 }
 .ph-tile {
   @apply min-w-0 cursor-pointer;
@@ -2246,9 +2052,7 @@ button.col[aria-pressed="true"]::after {
 
 /* ---- Overview's Uploads card: a chip per kind of work that sent files today, in its colour. */
 .up-chip {
-  @apply inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] text-ink-2;
-  border-color: color-mix(in oklab, var(--c) 40%, transparent);
-  background: color-mix(in oklab, var(--c) 12%, transparent);
+  @apply inline-flex min-w-0 items-center gap-1.5 rounded-md border border-line px-2 py-0.5 text-xs text-ink-2;
 }
 .up-chip > svg,
 .up-chip > b {

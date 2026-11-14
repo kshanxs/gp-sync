@@ -25,7 +25,7 @@ export function confirmDialog(o: ConfirmOptions): Promise<{ checked: boolean; re
     box.setAttribute("aria-labelledby", "cd-title");
     box.innerHTML = `<div class="card w-full max-w-md p-5 shadow-2xl">
       <div class="flex items-center gap-3"><span class="grid size-10 shrink-0 place-items-center rounded-xl bg-panel-2 text-ink-2">${icon(o.icon ?? "info", "size-5")}</span>
-        <h2 id="cd-title" class="text-lg font-semibold tracking-tight">${esc(o.title)}</h2></div>
+        <h2 id="cd-title" class="text-lg font-medium">${esc(o.title)}</h2></div>
       ${o.body.map((p, i) => `<p class="${i ? "mt-2 text-ink-3" : "mt-3 text-ink-2"} text-sm">${esc(p)}</p>`).join("")}
       ${
         o.checkbox

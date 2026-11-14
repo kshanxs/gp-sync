@@ -29,6 +29,7 @@ import {
   Flame,
   Folder,
   FolderOpen,
+  Ghost,
   Gauge,
   GitBranch,
   HardDrive,
@@ -37,6 +38,7 @@ import {
   History,
   Hourglass,
   Image,
+  ImageUp,
   Images,
   Inbox,
   Info,
@@ -120,6 +122,8 @@ const ICONS = {
   history: History,
   hourglass: Hourglass,
   photo: Image,
+  imageUp: ImageUp,
+  ghost: Ghost,
   library: Images,
   inbox: Inbox,
   info: Info,
@@ -177,5 +181,5 @@ export function icon(name: IconName, cls = "size-4"): string {
       return `<${tag} ${a}/>`;
     })
     .join("");
-  return `<svg class="${cls}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${parts}</svg>`;
+  return `<svg class="${cls}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${parts}</svg>`;
 }

@@ -25,7 +25,7 @@ export function openSheet(o: {
   box.innerHTML = `<div class="sheet card">
     <div class="flex items-center gap-3 border-b border-line px-4 py-3">
       <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-panel-2 text-accent">${icon(o.icon, "size-4")}</span>
-      <div class="min-w-0 flex-1"><h2 id="sheet-title" class="truncate font-semibold">${esc(o.title)}</h2>${o.sub ? `<p class="truncate text-xs text-ink-3">${esc(o.sub)}</p>` : ""}</div>
+      <div class="min-w-0 flex-1"><h2 id="sheet-title" class="truncate font-medium">${esc(o.title)}</h2>${o.sub ? `<p class="truncate text-xs text-ink-3">${esc(o.sub)}</p>` : ""}</div>
       <button class="btn icon sm" data-sheet-close aria-label="Close">${icon("x")}</button>
     </div>
     <div class="sheet-body">${o.body}</div>

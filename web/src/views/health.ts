@@ -43,7 +43,7 @@ function render(): void {
           .map(
             (
               a,
-            ) => `<div class="row"><span class="grid size-9 place-items-center rounded-full bg-panel-2 text-sm font-semibold uppercase">${esc(a.email[0] ?? "?")}</span>
+            ) => `<div class="row"><span class="grid size-9 place-items-center rounded-full bg-panel-2 text-sm font-medium uppercase">${esc(a.email[0] ?? "?")}</span>
             <div class="min-w-0 flex-1"><div class="truncate text-sm font-medium">${esc(a.email)}</div><div class="text-xs text-ink-3">Login saved ${a.login_saved ? date(a.login_saved, true) : "unknown"} · last upload ${ago(a.last_success)}</div></div>
             ${a.login_rejected ? badge("Rejected", "bad", "warn") : badge("OK", "good", "ok")}</div>`,
           )

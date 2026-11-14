@@ -218,14 +218,14 @@ function drawArea(c: ChartEl): void {
     if (cur.length) segs.push(cur);
     c._gid ??= `g${(++chartIds).toString(36)}`;
     const id = `${c._gid}-${si}`;
-    svg += `<defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${s.color}" stop-opacity="${si ? 0.22 : 0.38}"/><stop offset="0.55" stop-color="${s.color}" stop-opacity="${si ? 0.07 : 0.12}"/><stop offset="1" stop-color="${s.color}" stop-opacity="0"/></linearGradient></defs>`;
+    svg += `<defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${s.color}" stop-opacity="${si ? 0.08 : 0.16}"/><stop offset="0.55" stop-color="${s.color}" stop-opacity="${si ? 0.03 : 0.05}"/><stop offset="1" stop-color="${s.color}" stop-opacity="0"/></linearGradient></defs>`;
     for (const seg of segs) {
       const d = smoothPath(seg);
       const first = seg[0]!;
       const last = seg[seg.length - 1]!;
       const len = Math.round(iw * 3);
       svg += `<path class="chart-area ${animate ? "draw" : ""}" d="${d}L${last[0]},${y(0)}L${first[0]},${y(0)}Z" fill="url(#${id})"/>`;
-      svg += `<path class="chart-line ${animate ? "draw" : ""}" style="color:${s.color};--len:${len}" d="${d}" fill="none" stroke="${s.color}" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round"/>`;
+      svg += `<path class="chart-line ${animate ? "draw" : ""}" style="color:${s.color};--len:${len}" d="${d}" fill="none" stroke="${s.color}" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"/>`;
     }
     // Latest value: a small glowing dot at the end of the line.
     const lastSeg = segs[segs.length - 1];
@@ -242,7 +242,7 @@ function drawArea(c: ChartEl): void {
   if (c._zoom) {
     svg += `<button data-unzoom class="btn sm absolute top-1 right-1 shadow-lg">${icon("x", "size-3.5")}Zoom out</button>`;
   } else if (opts.zoomable) {
-    svg += `<span class="pointer-events-none absolute top-0 right-1 hidden text-[10px] text-ink-3 lg:block">Drag to zoom</span>`;
+    svg += `<span class="pointer-events-none absolute top-0 right-1 hidden text-[11px] text-ink-3 lg:block">Drag to zoom</span>`;
   }
   c._view = { start, n, max, ih, w: W };
   c._drawn = true;
@@ -321,24 +321,23 @@ export function sparkline(values: number[], color = "var(--s1)", h = 36): string
   const d = smoothPath(pts);
   const id = hashId("sp", `${color}${d}`);
   return `<svg class="block w-full overflow-visible" style="height:${h}px" viewBox="0 0 100 ${h}" preserveAspectRatio="none" aria-hidden="true">
-    <defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity="0.4"/><stop offset="0.6" stop-color="${color}" stop-opacity="0.1"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+    <defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity="0.14"/><stop offset="0.6" stop-color="${color}" stop-opacity="0.04"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
     <path d="${d}L100,${h}L0,${h}Z" fill="url(#${id})"/>
-    <path class="spark-line" style="color:${color}" d="${d}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>
+    <path class="spark-line" style="color:${color}" d="${d}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>
   </svg>`;
 }
 
-/** Progress ring. The glow sits on an unrotated layer and may spill past the box, so it is
- * never cut into a square edge; at 0% the arc is hidden (a round cap would leave a dot). */
+/** Progress ring: a flat arc in the accent on a quiet track. At 0% the arc is hidden (a round cap
+ * would leave a dot). */
 export function ring(percent: number, size = 160, stroke = 12): string {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const p = Math.max(0, Math.min(100, percent));
   const mid = size / 2;
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="overflow:visible" aria-hidden="true">
-    <defs><linearGradient id="ringg" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent-2)"/></linearGradient></defs>
     <circle class="ring-track" cx="${mid}" cy="${mid}" r="${r}" fill="none" stroke="var(--panel-2)" stroke-width="${stroke}"/>
-    <g class="ring-glow"><circle class="ring-arc" cx="${mid}" cy="${mid}" r="${r}" fill="none" stroke="url(#ringg)" stroke-width="${stroke}" stroke-linecap="round" transform="rotate(-90 ${mid} ${mid})"
-      stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p / 100)}" opacity="${p > 0 ? 1 : 0}" style="transition:stroke-dashoffset .6s ease,opacity .3s"/></g>
+    <circle class="ring-arc" cx="${mid}" cy="${mid}" r="${r}" fill="none" stroke="var(--meter)" stroke-width="${stroke}" stroke-linecap="round" transform="rotate(-90 ${mid} ${mid})"
+      stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p / 100)}" opacity="${p > 0 ? 1 : 0}" style="transition:stroke-dashoffset .6s var(--ease),opacity .3s"/>
   </svg>`;
 }
 
@@ -376,13 +375,13 @@ export function columns(
       ) => `<div class="col relative flex h-full flex-1 cursor-default items-end" data-tip="${esc(opts.tip(v, i))}">
         ${
           v
-            ? `<div class="col-bar w-full rounded-t-[4px]" style="height:${Math.max(3, (v / max) * 100)}%;animation-delay:${Math.min(i * 18, 400)}ms;background:linear-gradient(180deg, color-mix(in oklab, ${color(i)} 100%, white 12%), color-mix(in oklab, ${color(i)} 75%, transparent))"></div>`
+            ? `<div class="col-bar w-full rounded-t-[4px]" style="height:${Math.max(3, (v / max) * 100)}%;animation-delay:${Math.min(i * 18, 400)}ms;background:${color(i)}"></div>`
             : `<div class="h-[2px] w-full rounded bg-panel-2"></div>`
         }
       </div>`,
     )
     .join("")}</div>
-    <div class="mt-1.5 flex gap-[3px] text-[10px] text-ink-3">${labels
+    <div class="mt-1.5 flex gap-[3px] text-[11px] text-ink-3">${labels
       .map(
         (l, i) => `<div class="flex-1 text-center whitespace-nowrap">${i % every === 0 ? esc(l) : ""}</div>`,
       )
