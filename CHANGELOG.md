@@ -50,6 +50,8 @@
 - **Install as an app is gone from the dashboard:** no Install buttons in the sidebar or header,
   and no install card in Settings → Appearance. The browser can still add GP Sync to the home
   screen from its own menu, and sharing from the gallery to an installed GP Sync still works.
+- The 1.8.0 image is built on top of the 1.7.5 image (`scripts/patch-release.Dockerfile`): the
+  Python packages are unchanged, so an update downloads only the new app code and dashboard.
 
 ## 1.7.5
 
