@@ -537,9 +537,19 @@ export interface FileItem {
 /** One account a folder goes to: its backup (main) or an account it is also in, and how far. */
 export interface FolderAccount {
   account: string;
+  /** The folder's backup (its first account); otherwise a copy ("Also in"). */
   main: boolean;
+  /** Files it should have (for a copy, without the ones that gave up), and those in it. */
   files: number;
   done: number;
+  /** done, split: sent by GP Sync, or found already in Google. */
+  uploaded: number;
+  exists: number;
+  /** Still to send, and failed (a copy's failed ones are not in files). */
+  waiting: number;
+  failed: number;
+  /** Files it finished in the last hour (the whole library's totals only). */
+  per_hour?: number;
 }
 export interface FolderGroup {
   /** Subfolder name; "" = files sitting in the folder itself. */
@@ -607,7 +617,17 @@ export interface FolderReport {
 export interface FolderFiles {
   path: string;
   total: number;
-  counts: { all: number; backed_up: number; waiting: number; failed: number; photo: number; video: number };
+  counts: {
+    all: number;
+    backed_up: number;
+    waiting: number;
+    failed: number;
+    photo: number;
+    video: number;
+    /** With an account: backed_up split into sent by GP Sync and found already in Google. */
+    uploaded?: number;
+    exists?: number;
+  };
   items: {
     name: string;
     kind: "photo" | "video";

@@ -7,6 +7,27 @@
   cloud. It's in the Umbrel app store, the README, the browser tab and the home-screen icons.
 - The browser's bar now takes the dashboard's own background colour (graphite at night, paper by
   day) instead of the old near-black.
+- **Fix: Labs didn't show on phones.** The More sheet was one flat grid; it now has the sidebar's
+  groups (Backup, Insights, Labs, System) and scrolls when it doesn't fit. (1.8.0's notes said it
+  already did.)
+- **What each account has.** Sync's account cards and every folder's header split an account's
+  files into Uploaded (sent by GP Sync), Already in Google (Google had them, so nothing was sent),
+  New to sync and Failed, in one bar. On Sync, each account shows its time left at the pace of
+  its last hour (not while paused or outside upload hours). Tap a part to see those files: on
+  Folders it filters the photos to that account; on Sync it opens Folders that way.
+- **Folders: an account switch.** With two or more accounts, pick one above the folder tree and
+  every percentage, bar, Waiting and Failed number is that account's; the photos filter gains
+  Uploaded and Already in Google. Kept on this device.
+- **Folders: last added is back.** A Last added card joins Photos, Videos, Waiting and Failed (it
+  opens the Added tab), the tree says how long ago each folder last got files ("3h", "2d", faded
+  after a month), and Folders inside shows it on every row and can be sorted by Recently added.
+- **Since your last visit** on Overview: files added, backed up and failed while the dashboard was
+  closed, remembered on each device. Got it hides it until the next visit.
+- README rewritten as a product page: what GP Sync does and screenshots first, then getting started
+  (Umbrel or Docker), features grouped by what you want to do, Before you start, a short FAQ, and
+  the reference (setup details, Snapchat export, command line, API, development) after it.
+- API: `/api/folders` gives each account's `uploaded`, `exists`, `waiting` and `failed` (and, for
+  the whole folder, `per_hour`); `/api/folders/files` takes `account`.
 
 ## 1.8.0
 

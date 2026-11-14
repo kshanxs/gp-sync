@@ -2169,3 +2169,93 @@ button.col[aria-pressed="true"]::after {
 .prio-switch {
   @apply flex shrink-0 items-center gap-3;
 }
+
+/* What each account has (lib/account-breakdown.ts): uploaded, already in Google, new to sync,
+   failed. The meter colour for what GP Sync sent, the same at half strength for what Google
+   already had, the empty track for what is left. */
+.acc-rows {
+  @apply flex flex-col;
+}
+.acc-row {
+  @apply flex min-w-0 flex-col gap-2 py-3;
+}
+.acc-row + .acc-row {
+  @apply border-t border-line;
+}
+.acc-bar {
+  @apply flex h-1.5 gap-px overflow-hidden rounded-full bg-panel-2;
+}
+.acc-bar > i,
+.acc-key {
+  @apply block min-w-[3px];
+}
+.acc-key {
+  @apply size-2 shrink-0 rounded-full;
+}
+.acc-bar > .u,
+.acc-key.u {
+  background: var(--meter);
+}
+.acc-bar > .e,
+.acc-key.e {
+  background: color-mix(in srgb, var(--meter) 45%, transparent);
+}
+.acc-bar > .w,
+.acc-key.w {
+  background: var(--panel-2);
+}
+.acc-key.w {
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.acc-bar > .f,
+.acc-key.f {
+  background: var(--bad);
+}
+.acc-part {
+  @apply -mx-1.5 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-ink-2;
+  transition: background-color 0.15s var(--ease);
+}
+:is(a, button).acc-part:hover {
+  @apply bg-panel-2 text-ink;
+}
+.acc-part[aria-pressed="true"] {
+  @apply bg-raised text-ink;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* "2d ago" beside a folder: how recently files arrived. Faded after a month. */
+.fo-ago {
+  @apply shrink-0 font-mono text-[11px] text-ink-3 tabular-nums;
+}
+.fo-ago.old {
+  @apply opacity-60;
+}
+.fo-row .fo-ago {
+  @apply ml-auto;
+}
+.fo-row .fo-ago + .fo-fail,
+.fo-row .fo-ago + .fo-pct {
+  @apply ml-2;
+}
+/* The account the folders' percentages are for (only with two or more accounts). */
+.fo-acc {
+  @apply mb-2 px-1;
+}
+.fo-acc select {
+  @apply w-full;
+}
+
+/* Phones' More sheet: the same groups as the sidebar, Labs included. */
+.sheet-sec {
+  @apply mt-4 mb-2 flex items-center gap-2 px-1 text-xs text-ink-3;
+}
+.sheet-sec:first-child {
+  @apply mt-0;
+}
+/* Folders' five numbers: one row on wide screens; on smaller ones Last added takes a full row. */
+#fo-stats {
+  @apply xl:grid-cols-5;
+}
+#fo-stats > :last-child {
+  @apply col-span-2 xl:col-span-1;
+}

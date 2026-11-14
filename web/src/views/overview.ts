@@ -6,7 +6,8 @@ import { get, post, tz, type Disk, type Processes, type Status, type UploadKind 
 import { host, setPageStatus, setPauseControl, setRefreshControl } from "../lib/store";
 import { sparkline } from "../lib/charts";
 import { $, $$, esc, html } from "../lib/dom";
-import { bytes, clock, fileName, hour, num, pct, speed } from "../lib/format";
+import { ago, bytes, clock, date, fileName, hour, num, pct, speed } from "../lib/format";
+import { dismissVisit, sinceVisit } from "../lib/since-visit";
 import { icon, type IconName } from "../lib/icons";
 import { NetChart, rangeButtons, type Range } from "../lib/netchart";
 import { jobLink, jobTitle } from "../lib/jobs";
@@ -426,6 +427,30 @@ function renderSheet(): void {
       .join("")}</div>`;
 }
 
+/** "Since your last visit, 14 h ago: +142 added · 138 backed up · 2 failed". */
+function drawSince(s: Status): void {
+  const box = document.getElementById("ov-since");
+  if (!box) return;
+  const d = sinceVisit(s);
+  box.hidden = !d;
+  if (!d) return;
+  const parts = [
+    d.added ? `<span><span class="num text-ink">+${num(d.added)}</span> added</span>` : "",
+    d.backedUp ? `<span><span class="num text-ink">${num(d.backedUp)}</span> backed up</span>` : "",
+    d.failed
+      ? `<a class="text-bad hover:underline" href="#/activity/failed"><span class="num">${num(d.failed)}</span> failed</a>`
+      : "",
+  ].filter(Boolean);
+  html(
+    box,
+    `<div class="card mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-sm text-ink-2">
+      <span class="flex items-center gap-2 text-ink-3">${icon("clock", "size-4")}<span title="${esc(`${date(d.at, true)} ${clock(d.at)}`)}">Since your last visit, ${esc(ago(d.at))}</span></span>
+      ${parts.join('<span class="text-ink-3" aria-hidden="true">·</span>')}
+      <button type="button" class="link-btn ml-auto" data-since-ok>Got it</button>
+    </div>`,
+  );
+}
+
 const overview: View = {
   mount(el) {
     el.innerHTML = `
@@ -433,6 +458,7 @@ const overview: View = {
     <div class="-mt-2 mb-1 flex justify-end">
       <button class="link-btn" data-ov-custom aria-label="Customize overview">${icon("sliders")}Edit</button>
     </div>
+    <div id="ov-since" hidden></div>
     <div class="grid grid-flow-row-dense grid-cols-1 gap-4 lg:grid-cols-12" id="ov-grid">
       <section class="card is-idle lg:col-span-12" data-card="ov-running" id="ov-running-card">
         ${cardHead("Running now", "loader", '<span id="ov-running-count"></span>')}
@@ -473,6 +499,11 @@ const overview: View = {
       openUploads();
     });
     $$("[data-ov-custom]").forEach((b) => b.addEventListener("click", openCustomize));
+    $("#ov-since").addEventListener("click", (e) => {
+      if (!(e.target as HTMLElement).closest("[data-since-ok]") || !last) return;
+      dismissVisit(last);
+      drawSince(last);
+    });
     chart = new NetChart($("#ov-net"), matchMedia("(max-width: 640px)").matches ? 200 : 300);
     $("#ov-range").addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-range]");
@@ -486,6 +517,7 @@ const overview: View = {
   update(s) {
     last = s;
     controls(s);
+    drawSince(s);
     const r = s.resources;
     const setTile = (id: string, v: string, sub: string, chartSvg?: string) => {
       const t = $(id);
