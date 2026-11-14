@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A new app icon** to match the dashboard: the sidebar's mark (a photo with an arrow going up)
+  in off-white on a graphite tile, the arrow in moonlight blue, in place of the glossy gradient
+  cloud. It's in the Umbrel app store, the README, the browser tab and the home-screen icons.
+- The browser's bar now takes the dashboard's own background colour (graphite at night, paper by
+  day) instead of the old near-black.
+
 ## 1.8.0
 
 - **A calmer dashboard.** The chrome steps back so your photos and the backup's progress carry

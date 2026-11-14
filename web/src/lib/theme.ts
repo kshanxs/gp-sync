@@ -3,7 +3,7 @@
 function apply(t: string): void {
   const dark = t === "dark" || (t === "system" && !matchMedia("(prefers-color-scheme: light)").matches);
   document.documentElement.dataset.theme = dark ? "dark" : "light";
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0b0c0e" : "#ecebe7");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#111113" : "#f4f3f1");
   window.dispatchEvent(new Event("themechange"));
 }
 
