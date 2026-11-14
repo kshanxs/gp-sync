@@ -236,6 +236,16 @@ def db():
     conn.execute("CREATE INDEX IF NOT EXISTS copyjobs_state ON copyjobs(state, taken)")
     # Free storage asks "how many of this account are queued / done / failed" many times a second.
     conn.execute("CREATE INDEX IF NOT EXISTS reclaim_state ON reclaim(account, state)")
+    # Check first, then sync: an account added to a folder that is already backed up waits here
+    # while its Google library is compared with the folder's files, then until the user starts it.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS prechecks (
+            folder TEXT NOT NULL, account TEXT NOT NULL, state TEXT, total INTEGER DEFAULT 0,
+            matched INTEGER DEFAULT 0, new INTEGER DEFAULT 0, new_bytes INTEGER DEFAULT 0,
+            error TEXT DEFAULT '', added REAL, finished REAL, PRIMARY KEY (folder, account))"""
+    )
+    # SHA-1 of files not uploaded yet (uploaded ones keep theirs in files), for those comparisons.
+    conn.execute("CREATE TABLE IF NOT EXISTS hashes (path TEXT PRIMARY KEY, size INTEGER, mtime REAL, sha1 TEXT)")
     # Keep in sync: everything `src` has is copied to `dst` every so often (both ways: two rows).
     conn.execute(
         """CREATE TABLE IF NOT EXISTS mirrors (
@@ -1590,6 +1600,7 @@ def scan(st=None):
     # Everything below a Snapchat export folder (one with the list, or the export script's marker)
     # waits for the list, wherever the folder is: a file the script just wrote isn't listed yet.
     snap_paths, snap_skip = set(_snap["paths"]), set(_snap["skip"])
+    waiting_start = precheck_holds()  # (folder, account) checked first, or waiting to be started
     manifests, snap_roots, held, exporting = [], [], 0, []
     for top, account in fmap.items():
         for root, dirs, names in os.walk(MEDIA / top):
@@ -1668,7 +1679,7 @@ def scan(st=None):
                             continue
                     elif c:  # file changed: copy it again
                         q("UPDATE copies SET attempts=0 WHERE path=? AND account=?", (path, extra))
-                    if settled:
+                    if settled and (top, extra) not in waiting_start:
                         copies_todo.append((path, fst.st_size, fst.st_mtime, extra, True))
                 if row and row[0] == fst.st_size and row[1] == fst.st_mtime and row[4] in (account, None):
                     if row[2] in DONE:
@@ -1680,7 +1691,7 @@ def scan(st=None):
                         continue
                 elif row:  # file changed, or its folder moved to another account: start over
                     q("UPDATE files SET attempts=0 WHERE path=?", (path,))
-                if now - fst.st_mtime < SETTLE:
+                if now - fst.st_mtime < SETTLE or (top, account) in waiting_start:
                     continue
                 todo.append((path, fst.st_size, fst.st_mtime, account))
     prio = st.get("priority") or []
@@ -1791,12 +1802,227 @@ def account_speeds(now=None, window=3600):
     for table in ("files", "copies"):
         for acc, n in q(
             f"SELECT account, COUNT(*) FROM {table} WHERE updated > ? AND status IN ('uploaded','exists') "
-            "GROUP BY account",
-            (since,),
+            "AND COALESCE(error, '') != ? GROUP BY account",
+            (since, PRECHECK_NOTE),
         ):
             if acc:
                 out[acc] = out.get(acc, 0) + n
     return out
+
+
+# ---- Check first, then sync
+# When an account is added to a folder that is already backed up, its Google library list is read
+# and compared with the folder's files by SHA-1 (Google's own test for "already have it"). Matches
+# are recorded as already in Google without uploading anything; the rest wait as new to sync until
+# the user starts them. A folder backed up for the first time is not checked: it just syncs.
+
+PRECHECK_NOTE = "Found in Google by the check before syncing"
+precheck_wake = threading.Event()
+precheck_live = {}  # "folder|account" -> {"done", "total"} while comparing
+
+
+def precheck_holds():
+    """(folder, account) pairs whose files aren't sent yet: being checked, or checked and waiting."""
+    return {(f, a) for f, a in q("SELECT folder, account FROM prechecks")}
+
+
+def queue_prechecks(before, after):
+    """Accounts newly added to a folder that already had one get a check; removed ones lose it."""
+    now = time.time()
+    added = 0
+    for folder, accs in after.items():
+        old = before.get(folder) or []
+        for a in accs:
+            if old and a not in old:
+                q(
+                    """INSERT OR REPLACE INTO prechecks (folder, account, state, total, matched, new, new_bytes,
+                       error, added, finished) VALUES (?,?,'waiting',0,0,0,0,'',?,NULL)""",
+                    (folder, a, now),
+                )
+                added += 1
+    for folder, a in precheck_holds():
+        if a not in (after.get(folder) or []):
+            q("DELETE FROM prechecks WHERE folder=? AND account=?", (folder, a))
+    if added:
+        precheck_wake.set()
+    return added
+
+
+def precheck_start(account, folder=""):
+    """Sync what a check left waiting (or sync without checking, after one failed)."""
+    n = q("SELECT COUNT(*) FROM prechecks WHERE account=? AND (?='' OR folder=?)", (account, folder, folder))[0][0]
+    q("DELETE FROM prechecks WHERE account=? AND (?='' OR folder=?)", (account, folder, folder))
+    if n:
+        log(f"Syncing to {account} after the check", "info")
+        wake.set()
+    return n
+
+
+def precheck_retry(account, folder=""):
+    """Check again after a failure."""
+    q(
+        "UPDATE prechecks SET state='waiting', error='' WHERE account=? AND state='failed' AND (?='' OR folder=?)",
+        (account, folder, folder),
+    )
+    precheck_wake.set()
+
+
+def precheck_list():
+    """Every check, for the status: its state, counts, and progress while comparing."""
+    out = []
+    for folder, account, st, total, matched, new, new_bytes, error, added, finished in q(
+        """SELECT folder, account, state, total, matched, new, new_bytes, error, added, finished
+           FROM prechecks ORDER BY added"""
+    ):
+        live = precheck_live.get(f"{folder}|{account}") or {}
+        out.append(
+            {
+                "folder": folder,
+                "account": account,
+                "state": st,
+                "total": live.get("total", total),
+                "done": live.get("done", total if st == "ready" else 0),
+                "matched": matched,
+                "new": new,
+                "new_bytes": new_bytes,
+                "error": error,
+                "added": added,
+                "finished": finished,
+            }
+        )
+    return out
+
+
+def _sha1_of(path, size, mtime, known):
+    """The file's SHA-1 (hex): from the backup records or the cache when unchanged, else read now."""
+    for src in known:
+        h = src.get(path)
+        if h and h[0] == size and h[1] == mtime and h[2]:
+            return h[2]
+    digest = media.sha1_file(path).hex()
+    q("INSERT OR REPLACE INTO hashes (path, size, mtime, sha1) VALUES (?,?,?,?)", (path, size, mtime, digest))
+    return digest
+
+
+def run_precheck(folder, account, make_client=None):
+    """Compare one folder with one account's Google library and record what it already has."""
+    key = f"{folder}|{account}"
+
+    def put(**kw):
+        sets = ", ".join(f"{k}=?" for k in kw)
+        q(f"UPDATE prechecks SET {sets} WHERE folder=? AND account=?", (*kw.values(), folder, account))
+        notify_change()
+
+    try:
+        put(state="reading", error="")
+        update_library((make_client or _reclaim_client)(account), account)
+        put(state="comparing")
+        prefix = folder + "/"
+        skip = state.get("skip_copy") or ()
+        entries = [e for e in state["index"] if e[0].startswith(prefix) and (e[0], account) not in skip]
+        like = (str(MEDIA / prefix).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")) + "%"
+        known = [
+            {
+                p: (sz, mt, h)
+                for p, sz, mt, h in q(f"SELECT path, size, mtime, sha1 FROM {t} WHERE path LIKE ? ESCAPE '\\'", (like,))
+            }
+            for t in ("files", "hashes")
+        ]
+        live = precheck_live[key] = {"done": 0, "total": len(entries)}
+        digests = {}  # absolute path -> (size, mtime, sha1 hex)
+        for i, e in enumerate(entries):
+            path = str(MEDIA / e[0])
+            try:
+                fst = os.stat(path)
+                digests[path] = (fst.st_size, fst.st_mtime, _sha1_of(path, fst.st_size, fst.st_mtime, known))
+            except OSError:
+                pass  # gone since the scan
+            live["done"] = i + 1
+            if i % 250 == 0:
+                notify_change()
+        by_key = {_b64_hash(bytes.fromhex(h)): p for p, (_, _, h) in digests.items()}
+        found = {}
+        keys = list(by_key)
+        for j in range(0, len(keys), 500):
+            part = keys[j : j + 500]
+            rows = _library_rows(
+                account,
+                f"SELECT dedup_key, media_key FROM remote_media WHERE dedup_key IN ({','.join('?' * len(part))}) "
+                f"AND {_VISIBLE}",
+                part,
+            )
+            if rows is None:
+                raise RuntimeError("Couldn't read this account's library list")
+            for dedup, media_key in rows:
+                found.setdefault(by_key[dedup], media_key)
+        targets = folder_targets().get(folder) or []
+        main = bool(targets) and targets[0] == account
+        now = time.time()
+        if main:
+            done = {
+                p
+                for (p,) in q(
+                    "SELECT path FROM files WHERE status IN ('uploaded','exists') AND path LIKE ? ESCAPE '\\'", (like,)
+                )
+            }
+        else:
+            done = {
+                p
+                for (p,) in q(
+                    "SELECT path FROM copies WHERE account=? AND status IN ('uploaded','exists') "
+                    "AND path LIKE ? ESCAPE '\\'",
+                    (account, like),
+                )
+            }
+        for path, media_key in found.items():
+            if path in done:
+                continue  # already in this account's records
+            size, mtime, digest = digests[path]
+            if main:
+                q(
+                    """INSERT OR REPLACE INTO files (path, size, mtime, status, media_key, error, attempts, updated,
+                       account, sha1) VALUES (?,?,?,'exists',?,?,0,?,?,?)""",
+                    (path, size, mtime, media_key, PRECHECK_NOTE, now, account, digest),
+                )
+            else:
+                q(
+                    """INSERT OR REPLACE INTO copies (path, account, size, mtime, status, media_key, error, attempts,
+                       updated) VALUES (?,?,?,?,'exists',?,?,0,?)""",
+                    (path, account, size, mtime, media_key, PRECHECK_NOTE, now),
+                )
+        new = [p for p in digests if p not in found and p not in done]
+        put(
+            state="ready",
+            total=len(digests),
+            matched=len(found),
+            new=len(new),
+            new_bytes=sum(digests[p][0] for p in new),
+            finished=now,
+        )
+        log(f"Checked {folder} for {account}: {len(found)} already in Google, {len(new)} new to sync", "info")
+        wake.set()  # a scan now shows the matches as already in Google
+    except Exception as e:
+        why = outage_kind(e).replace(" Will retry next scan.", "") or f"{type(e).__name__}: {e}"
+        put(state="failed", error=why[:300])  # tried again from the page, not on its own
+    finally:
+        precheck_live.pop(key, None)
+        notify_change()
+
+
+def precheck_worker():
+    """Runs the waiting checks one at a time, once the first scan has listed the files (not while
+    paused)."""
+    q("UPDATE prechecks SET state='waiting' WHERE state IN ('reading', 'comparing')")  # cut off by a restart
+    while True:
+        precheck_wake.wait(60)
+        precheck_wake.clear()
+        if not state["last_scan"] or PAUSE_FILE.exists():
+            continue  # no file list yet, or paused: reading a library is Google work too
+        for folder, account in q("SELECT folder, account FROM prechecks WHERE state='waiting' ORDER BY added"):
+            try:
+                run_precheck(folder, account)
+            except Exception as e:  # never let one check stop the others
+                print(f"Check {folder} for {account}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
 
 
 def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):
@@ -3224,6 +3450,7 @@ def status_json():
         },
         "copies_pending": state.get("copies_pending", 0),
         "copies_pending_by": {a: n for a, n in list(state.get("copies_pending_by", {}).items()) if n},
+        "prechecks": precheck_list(),
         "jobs": background_jobs(),
         "reclaim": reclaim_summary(),
         "copying": copy_summary(),
@@ -8127,14 +8354,31 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.json({"ok": remove_account(email)})
         elif path == "/api/settings":
+            before = folder_targets()
             try:
-                new = update_settings(json.loads(body or "{}"))
+                changes = json.loads(body or "{}")
+                new = update_settings(changes)
             except (ValueError, TypeError) as e:
                 self.json({"ok": False, "error": str(e)}, 400)
                 return
+            if isinstance(changes, dict) and "folders" in changes:
+                queue_prechecks(before, folder_targets(new))
             log("Settings saved", "info")
             wake.set()
             self.json({"ok": True, "settings": {**new, "notify": public_settings()["notify"]}})
+        elif path in ("/api/prechecks/start", "/api/prechecks/retry"):
+            try:
+                d = json.loads(body or "{}")
+                account, folder = str(d["account"]), str(d.get("folder") or "")
+            except (ValueError, KeyError, TypeError):
+                self.json({"ok": False, "error": "bad request"}, 400)
+                return
+            if path.endswith("start"):
+                self.json({"ok": True, "started": precheck_start(account, folder)})
+            else:
+                precheck_retry(account, folder)
+                self.json({"ok": True})
+            notify_change()
         elif path == "/api/notify/test":
             cfg = get_settings()["notify"]
             if not notify.channels(cfg):
@@ -8391,6 +8635,7 @@ def main():
     threading.Thread(target=reclaim_worker, daemon=True).start()
     threading.Thread(target=copy_worker, daemon=True).start()
     threading.Thread(target=check_worker, daemon=True).start()
+    threading.Thread(target=precheck_worker, daemon=True).start()
     threading.Thread(target=mirror_worker, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
