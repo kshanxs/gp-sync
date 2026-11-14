@@ -23,6 +23,9 @@
   after a month), and Folders inside shows it on every row and can be sorted by Recently added.
 - **Since your last visit** on Overview: files added, backed up and failed while the dashboard was
   closed, remembered on each device. Got it hides it until the next visit.
+- README rewritten as a product page: what GP Sync does and screenshots first, then getting started
+  (Umbrel or Docker), features grouped by what you want to do, Before you start, a short FAQ, and
+  the reference (setup details, Snapchat export, command line, API, development) after it.
 - API: `/api/folders` gives each account's `uploaded`, `exists`, `waiting` and `failed` (and, for
   the whole folder, `per_hour`); `/api/folders/files` takes `account`.
 
