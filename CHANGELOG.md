@@ -20,6 +20,7 @@
   over photos and cards, no shimmer while pictures load. Spinners stay where work is running.
 - The sidebar's status card no longer spills its percentage past the edge when the status is long.
 - **Fix: Sync's Now card stayed empty while uploading** (a missing import threw on every update).
+- README: the dashboard's look and its design rules (Development).
 
 ## 1.7.5
 

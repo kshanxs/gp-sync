@@ -231,8 +231,10 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
   (for example India Standard Time). History, Insights, upload hours, the weekly summary and every
   time shown follow it, daylight saving included.
 - **Install as an app:** add the dashboard to a phone's home screen.
-- Sidebar on desktop, bottom tabs and a "More" menu on phones; dark and light themes. The phone
-  tabs show what's running: Sync gets a progress ring while files upload, and Overview turns into
+- Sidebar on desktop, bottom tabs and a "More" menu on phones; dark and light themes. The
+  dashboard keeps its own chrome quiet (graphite at night, near-neutral paper by day) so your
+  photos and the backup's progress carry the colour, with one accent: moonlight blue at night,
+  amber by day. The phone tabs show what's running: Sync gets a progress ring while files upload, and Overview turns into
   the background work running now (freeing storage, copying, fixing dates) with its progress.
 
 ## Statistics and REST API
@@ -439,7 +441,22 @@ VERSION         release version (backend and dashboard have their own); CHANGELO
 
 The sync engine and REST API are Python, in `backend/`. The dashboard is TypeScript in `web/`,
 styled with Tailwind CSS v4, with Lucide icons, hand-drawn SVG charts and the PhotoSwipe viewer, and built with
-[Vite+](https://viteplus.dev) (`vp`: Vite, Rolldown, Oxlint, Oxfmt and Vitest in one tool). In `web/`:
+[Vite+](https://viteplus.dev) (`vp`: Vite, Rolldown, Oxlint, Oxfmt and Vitest in one tool).
+
+Design rules for the dashboard (colours and components are in `web/src/style.css`):
+
+- Surfaces, borders and text come from one neutral ramp per theme; depth is a surface step and a
+  hairline, never a glow, a gradient or a coloured shadow.
+- One accent per theme (`--accent`, `--meter`), used rarely: the selection, progress bars and the
+  Sync ring. Chart series colours (`--s1`…`--s5`) only mean a series; green, amber and red only
+  mean a state.
+- Buttons, inputs and tabs share a 10px corner, cards 16px; the main button is `--primary`.
+- Labels in sentence case, weights 400 and 500 (600 only for bold words in a sentence), counters
+  in mono (`.meta`).
+- Lucide icons in the text colour; spacing on a 4px grid.
+- Motion is short and uses one curve (`--ease`). Nothing loops unless work is really running.
+
+In `web/`:
 
 ```sh
 npm ci                     # exact versions from package-lock.json
