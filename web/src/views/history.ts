@@ -180,7 +180,7 @@ function renderGenericDaily(): void {
           ${total ? keys.map((k, i) => (r.parts[i] ? `<div class="col-bar" style="height:${((r.parts[i] ?? 0) / max) * 100}%;background:${PROCESS[k].color}"></div>` : "")).join("") : `<div class="h-[2px] rounded bg-panel-2"></div>`}</div>`;
       })
       .join("")}</div>
-    <div class="mt-1.5 flex gap-[2px] text-[10px] text-ink-3">${rows
+    <div class="mt-1.5 flex gap-[2px] text-[11px] text-ink-3">${rows
       .map(
         (r, i) =>
           `<div class="flex-1 text-center whitespace-nowrap">${(rows.length - 1 - i) % every === 0 ? esc(date(r.date.getTime() / 1000)) : ""}</div>`,
@@ -261,7 +261,7 @@ function renderDaily(): void {
           ${p || v ? "" : `<div class="h-[2px] rounded bg-panel-2"></div>`}</div>`;
       })
       .join("")}</div>
-    <div class="mt-1.5 flex gap-[2px] text-[10px] text-ink-3">${rows
+    <div class="mt-1.5 flex gap-[2px] text-[11px] text-ink-3">${rows
       .map(
         (r, i) =>
           `<div class="flex-1 text-center whitespace-nowrap">${(rows.length - 1 - i) % every === 0 ? esc(date(r.date.getTime() / 1000)) : ""}</div>`,
@@ -353,12 +353,12 @@ const historyView: View = {
   subtitle: "Every process, day by day",
   mount(el) {
     el.innerHTML = `
-    <div class="seg mb-4" id="h-proc" aria-label="Which process">${[
+    <section class="toolbar"><div class="seg" id="h-proc" aria-label="Which process">${[
       ...PROCESS_KEYS.map((k) => [k, PROCESS[k].label]),
       ["all", "Everything"],
     ]
       .map(([k, l]) => `<button data-p="${k}" aria-pressed="${k === proc}">${l}</button>`)
-      .join("")}</div>
+      .join("")}</div></section>
     <div class="grid grid-cols-2 gap-4 md:grid-cols-3 2xl:grid-cols-6" id="h-tiles">${'<div class="card skeleton h-28"></div>'.repeat(6)}</div>
     <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
       <section class="card xl:col-span-12">

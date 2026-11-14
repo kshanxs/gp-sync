@@ -163,7 +163,7 @@ function renderWeeks(h: History): void {
             <div class="flex h-full flex-1 items-end">${a ? `<div class="col-bar w-full rounded-t-[4px] bg-s1" style="height:${(a / max) * 100}%"></div>` : `<div class="h-[2px] w-full rounded ${future ? "" : "bg-panel-2"}"></div>`}</div></div>`;
         })
         .join("")}</div>
-        <div class="mt-1.5 flex gap-3 text-[10px] text-ink-3">${WEEKDAYS.map((d, i) => `<div class="flex-1 text-center ${i === dow ? "font-semibold text-ink-2" : ""}">${d}</div>`).join("")}</div></div>
+        <div class="mt-1.5 flex gap-3 text-[11px] text-ink-3">${WEEKDAYS.map((d, i) => `<div class="flex-1 text-center ${i === dow ? "font-medium text-ink-2" : ""}">${d}</div>`).join("")}</div></div>
       <div class="space-y-2">${stats
         .map(
           ([l, a, b, na, nb]) =>
@@ -246,7 +246,7 @@ const insights: View = {
   mount(el) {
     el.innerHTML = `
     <section class="card mb-4 min-w-0 overflow-hidden">${cardHead("Every process", "layers", "This week vs last · pick one for its hours")}<div id="in-procs"><div class="skeleton m-4 h-44"></div></div></section>
-    <h2 class="mt-6 mb-3 px-1 text-sm font-semibold text-ink-2">Uploads in detail</h2>
+    <h2 class="mt-6 mb-3 px-1 text-sm font-medium text-ink-2">Uploads in detail</h2>
     <div class="mb-3 flex justify-end" id="in-note"></div>
     <div class="grid grid-cols-2 gap-4 md:grid-cols-3 2xl:grid-cols-6" id="in-tiles">${'<div class="card skeleton h-28"></div>'.repeat(6)}</div>
     <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">

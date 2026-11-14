@@ -92,7 +92,7 @@ function infoPanel(f: FileInfo): string {
             .join("")}`
         : ""
     }
-    ${f.sha1 ? `<div class="mt-3 truncate font-mono text-[10px] text-ink-3" title="SHA-1">${f.sha1}</div>` : ""}`;
+    ${f.sha1 ? `<div class="mt-3 truncate font-mono text-[11px] text-ink-3" title="SHA-1">${f.sha1}</div>` : ""}`;
 }
 
 function panel(p: PhotoSwipe): HTMLElement | null {

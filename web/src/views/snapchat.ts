@@ -17,7 +17,8 @@ import { ring } from "../lib/charts";
 import { icon } from "../lib/icons";
 import { choices, matchBadge, missingNote, offset, SNAP_ACTION_LABEL, SNAP_GROUPS } from "../lib/snapchat";
 import { setPageStatus, setPauseControl, setRefreshControl, status } from "../lib/store";
-import { openAttrs, thumb } from "../lib/ui";
+import { cardHead, openAttrs, thumb } from "../lib/ui";
+import { howSteps } from "../lib/page";
 import type { View } from "./view";
 
 // Snapchat: memories from a Snapchat export (made into a folder by scripts/snapchat_export.py, with
@@ -176,7 +177,7 @@ function searchCard(r: SnapchatReport): string {
     ["Match", r.checked, r.memories],
   ] as const;
   return `<section class="card mb-4 p-4" aria-live="polite">
-    <div class="flex flex-wrap items-center gap-2"><h2 class="font-semibold">${icon("search", "inline size-4 -mt-0.5")} Finding your memories in Google</h2>${r.slow_until ? chip("clock", `Paused by Google until ${new Date(r.slow_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`, "warn") : ""}</div>
+    <div class="flex flex-wrap items-center gap-2"><h2 class="font-medium">${icon("search", "inline size-4 -mt-0.5")} Finding your memories in Google</h2>${r.slow_until ? chip("clock", `Paused by Google until ${new Date(r.slow_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`, "warn") : ""}</div>
     <div class="mt-3 grid gap-3 sm:grid-cols-3">${steps
       .map(
         ([label, done, total]) =>
@@ -285,9 +286,9 @@ function hero(r: SnapchatReport): string {
   const folders = r.manifests.map((m) => m.folder).join(", ");
   return `<section class="card sc-hero mb-4 p-4 sm:p-5">
     <div class="flex items-center gap-4 sm:gap-5">
-      <div class="relative shrink-0">${ring(p, 88, 8)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="text-lg font-semibold tabular-nums">${Math.floor(p)}%</div><div class="text-[9px] uppercase tracking-wider text-ink-3">${busy ? "sending" : "done"}</div></div></div></div>
+      <div class="relative shrink-0">${ring(p, 88, 8)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="text-lg font-medium tabular-nums">${Math.floor(p)}%</div><div class="text-[9px] uppercase tracking-wider text-ink-3">${busy ? "sending" : "done"}</div></div></div></div>
       <div class="min-w-0 flex-1">
-        <div class="flex flex-wrap items-baseline gap-x-2"><h2 class="text-2xl font-semibold tracking-tight tabular-nums">${num(r.memories)}</h2><span class="text-sm text-ink-3">memories</span><span class="text-sm text-ink-3">· ${num(done)} in Google</span></div>
+        <div class="flex flex-wrap items-baseline gap-x-2"><h2 class="text-2xl font-medium tabular-nums">${num(r.memories)}</h2><span class="text-sm text-ink-3">memories</span><span class="text-sm text-ink-3">· ${num(done)} in Google</span></div>
         <div class="sc-seg mt-3" role="img" aria-label="${esc(SNAP_GROUPS.map((g) => `${g.title} ${r.counts[g.id].total}`).join(", "))}">${seg}</div>
       </div>
     </div>
@@ -319,7 +320,7 @@ function groupTiles(r: SnapchatReport): string {
           : "";
       return `<div class="card sc-tile ${show === g.id ? "on" : ""}" style="--tc:${COLOR[g.id]}" role="tab" tabindex="0" aria-selected="${show === g.id}" data-show="${g.id}" title="${esc(g.hint)}">
         <div class="flex items-center gap-2"><span class="sc-ic">${icon(g.ic, "size-4")}</span><span class="min-w-0 truncate text-sm font-medium">${g.title}</span></div>
-        <div class="mt-2 text-2xl font-semibold tabular-nums">${num(c.total)}</div>
+        <div class="mt-2 text-2xl font-medium tabular-nums">${num(c.total)}</div>
         <div class="mt-0.5 text-xs">${state}${c.failed ? ` <span class="text-bad">· ${num(c.failed)} failed</span>` : ""}</div>
         ${g.id !== "skip" && c.total ? `<div class="sc-bar mt-2"><i style="width:${pct(c.done, c.total)}%"></i></div>` : ""}
         ${go}
@@ -357,13 +358,25 @@ function render(): void {
     setRefreshControl(null);
     html(
       $("#sc-body"),
-      `<section class="card p-5 text-sm text-ink-2">
-        <h2 class="text-lg font-semibold tracking-tight">Bring in your Snapchat Memories</h2>
-        <ol class="mt-4 grid gap-3 sm:grid-cols-3">
-          <li class="sc-step">${icon("download", "size-5")}<b>Download</b><span>Snapchat › Settings › My Data: tick Memories, download every zip.</span></li>
-          <li class="sc-step">${icon("code", "size-5")}<b>Run the script</b><span><code>python3 scripts/snapchat_export.py &lt;zips&gt; &lt;Photos/Snapchat&gt;</code></span></li>
-          <li class="sc-step">${icon("sparkles", "size-5")}<b>Review here</b><span>Each memory is found in Google before anything is uploaded.</span></li>
-        </ol>
+      `<section class="card">
+        ${cardHead("Bring in your Snapchat Memories", "ghost")}
+        <div class="card-b [&_.how]:mb-0">${howSteps([
+          {
+            ic: "download",
+            title: "Download",
+            text: "Snapchat › Settings › My Data: tick Memories, download every zip.",
+          },
+          {
+            ic: "code",
+            title: "Run the script",
+            text: "<code>python3 scripts/snapchat_export.py &lt;zips&gt; &lt;Photos/Snapchat&gt;</code>",
+          },
+          {
+            ic: "search",
+            title: "Review here",
+            text: "Each memory is found in Google before anything is uploaded.",
+          },
+        ])}</div>
       </section>`,
     );
     return;
@@ -429,7 +442,7 @@ function render(): void {
   const list = `<section class="card min-w-0 overflow-hidden">
       <div class="flex items-center gap-2 border-b border-line px-4 py-3">
         <span class="size-2.5 shrink-0 rounded-full" style="background:${COLOR[group.id]}"></span>
-        <h2 class="min-w-0 flex-1 truncate font-semibold">${group.title} <span class="font-normal text-ink-3">· ${num(r.counts[group.id].total)}</span></h2>
+        <h2 class="min-w-0 flex-1 truncate font-medium">${group.title} <span class="font-normal text-ink-3">· ${num(r.counts[group.id].total)}</span></h2>
         <span class="hidden text-xs text-ink-3 sm:inline">Memory ${icon("arrowRight", "inline size-3")} Google's copies</span>
       </div>
       <div id="sc-list" aria-live="polite">${
@@ -551,6 +564,23 @@ async function onChange(e: Event): Promise<void> {
 
 const snapchat: View = {
   subtitle: "Snapchat Memories with their real date, without duplicates",
+  how: [
+    {
+      ic: "search",
+      title: "Find",
+      text: "Each memory is looked for in Google: the same file, the same second, or a picture that looks the same.",
+    },
+    {
+      ic: "calendar",
+      title: "Decide",
+      text: "Right date: into the album. Later date: replaced with Snapchat's. Missing: uploaded. Originals keep their date.",
+    },
+    {
+      ic: "copy",
+      title: "Clean up",
+      text: "Extra copies leave Google. Less certain ones are saved here first.",
+    },
+  ],
   mount(el) {
     opened = true; // the first load draws the last answer at once (peek), then the fresh one
     show = "replace";
@@ -558,14 +588,6 @@ const snapchat: View = {
     listHtml = "";
     el.innerHTML = `
     <div id="sc-chips"></div>
-    <details class="sc-how mb-4">
-      <summary>${icon("info", "size-4")}How it works</summary>
-      <ol class="mt-3 grid gap-3 sm:grid-cols-3">
-        <li class="sc-step">${icon("search", "size-5")}<b>Find</b><span>Each memory is looked for in Google: the same file, the same second, or a picture that looks the same.</span></li>
-        <li class="sc-step">${icon("calendar", "size-5")}<b>Decide</b><span>Right date: into the album. Later date: replaced with Snapchat's. Missing: uploaded. Originals keep their date.</span></li>
-        <li class="sc-step">${icon("copy", "size-5")}<b>Clean up</b><span>Extra copies leave Google. Less certain ones are saved here first.</span></li>
-      </ol>
-    </details>
     <div id="sc-body"><div class="card skeleton h-72"></div></div>`;
     el.addEventListener("click", onClick);
     el.addEventListener("keydown", (e) => {

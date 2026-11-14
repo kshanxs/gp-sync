@@ -3,7 +3,6 @@ import { $, $$, copyText, esc, html, toast } from "../lib/dom";
 import { bytes, clock, hour, num } from "../lib/format";
 import { currentName, offsetLabel, zoneLongName, zoneOffset, zoneOptions, zoneTitle } from "../lib/zones";
 import { icon, type IconName } from "../lib/icons";
-import { install, installHelp, installState, onInstallChange } from "../lib/install";
 import { host, refresh, status } from "../lib/store";
 import { setTheme, theme as currentTheme } from "../lib/theme";
 import { avatar } from "../lib/account-menu";
@@ -99,9 +98,9 @@ const SECTIONS: [string, string, IconName, string, string, string, string][] = [
     "app",
     "Appearance",
     "palette",
-    "Theme, time zone and install",
+    "Theme and time zone",
     "#bf5af2",
-    "How GP Sync looks, the time zone for days and times, and GP Sync as an app.",
+    "How GP Sync looks, and the time zone for days and times.",
     "App",
   ],
   [
@@ -124,7 +123,7 @@ function tileIcon(ic: IconName, color: string, size = ""): string {
 function sectionHead(key: string): string {
   const sec = SECTIONS.find(([k]) => k === key) ?? SECTIONS[0]!;
   const [, title, ic, , color, intro] = sec;
-  return `<header class="set-head">${tileIcon(ic, color, "lg")}<div class="min-w-0"><h2 class="text-lg font-semibold tracking-tight">${esc(title)}</h2><p class="text-sm text-ink-3">${esc(intro)}</p></div></header>`;
+  return `<header class="set-head">${tileIcon(ic, color, "lg")}<div class="min-w-0"><h2 class="text-lg font-medium">${esc(title)}</h2><p class="text-sm text-ink-3">${esc(intro)}</p></div></header>`;
 }
 
 /** One bar for a section's buttons: a short note on the left, actions on the right. */
@@ -183,7 +182,7 @@ function hoursBar(): string {
     (_, h) =>
       `<div class="relative h-9 flex-1 rounded-[4px] ${!draft.enabled ? "bg-s1/30" : allowed(h) ? "bg-s1" : "bg-panel-2"}" data-tip="${hour(h)}–${hour(h + 1)}: ${allowed(h) ? "uploads run" : "no uploads"}${h === now ? " (now)" : ""}">${h === now ? '<i class="absolute -bottom-2 left-1/2 size-1.5 -translate-x-1/2 rounded-full bg-ink"></i>' : ""}</div>`,
   ).join("")}</div>
-  <div class="mt-3 flex justify-between text-[10px] text-ink-3"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+  <div class="mt-3 flex justify-between text-[11px] text-ink-3"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
   <p class="mt-2 text-xs ${draft.enabled ? "text-ink-2" : "text-ink-3"}">${draft.enabled ? `Uploads run ${draft.start === draft.end ? "all day" : `from ${hour(draft.start)} until ${hour(draft.end)}`}.` : "Off: uploads run at any hour. Turn it on to use the hours below."}</p>`;
 }
 
@@ -352,7 +351,7 @@ function sectionAccounts(s: Status | null): string {
           <textarea class="input" id="set-auth" rows="3" placeholder="androidId=…"></textarea>
           <div class="mt-auto flex items-center justify-between gap-2"><span class="flex min-w-0 items-center gap-1.5 text-xs text-ink-3">${icon("lock", "size-3.5 shrink-0")}<span class="truncate">Stays on ${esc(host())}</span></span><button class="btn primary shrink-0" id="set-connect">${icon("key")}Connect</button></div>
         </div></section>
-      <section class="card flex flex-col">${cardHead("Let an AI assistant do it", "sparkles")}
+      <section class="card flex flex-col">${cardHead("Let an AI assistant do it", "logs")}
         <div class="card-b flex flex-1 flex-col gap-3 text-sm">
           <p class="text-ink-2">Paste this into Claude Code, Codex or a similar assistant on the computer your phone is plugged into. It runs the steps and hands you the <code class="rounded bg-panel-2 px-1">androidId=</code> line.</p>
           <pre class="prompt-box" id="set-prompt">${esc(AUTH_PROMPT)}</pre>
@@ -587,21 +586,6 @@ function sectionAlerts(): string {
   </div>`;
 }
 
-function installBadge(): string {
-  switch (installState()) {
-    case "installed":
-      return badge("Installed", "good", "ok");
-    case "ready":
-      return badge("Ready to install", "info", "download");
-    case "insecure":
-      return badge("Needs HTTPS to install", "warn", "lock", "Browsers install apps only from secure pages");
-    case "ios":
-      return badge("Add from Safari", "info", "phone");
-    default:
-      return isSecureContext ? badge("Secure page", "good", "lock") : "";
-  }
-}
-
 /** A small picture of the dashboard in one theme (fixed colors, so it looks the same in either theme). */
 function themeMock(kind: "dark" | "light"): string {
   const lines = (n: number) =>
@@ -666,7 +650,6 @@ function sectionApp(): string {
     ["dark", "Dark", "moon", themeMock("dark")],
     ["light", "Light", "sun", themeMock("light")],
   ];
-  const state = installState();
   const signIn = !!status()?.auth;
   return `<div class="flex flex-col gap-4">
     <section class="card">${cardHead("Theme", "palette", `<span id="set-theme-note">${themeNote(theme)}</span>`)}
@@ -679,22 +662,15 @@ function sectionApp(): string {
           .join("")}</div>
       </div></section>
     ${timeZoneCard()}
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <section class="card flex flex-col ${signIn ? "" : "md:col-span-2"}">${cardHead("Install as an app", "download", installBadge())}
-        <div class="card-b flex flex-1 flex-col gap-3 text-sm text-ink-2">
-          <div class="install-help" id="set-install-help">${installHelp()}</div>
-          ${state === "ready" ? `<button class="btn primary mt-auto self-start" id="set-install">${icon("download")}Install</button>` : ""}
-        </div></section>
-      ${
-        signIn
-          ? `<section class="card flex flex-col">${cardHead("Sign-in", "lock")}
+    ${
+      signIn
+        ? `<section class="card flex flex-col">${cardHead("Sign-in", "lock")}
         <form class="card-b flex flex-1 flex-col gap-3 text-sm text-ink-2" method="post" action="logout">
           <p>Signing out here doesn't sign out other devices.</p>
           <button class="btn danger mt-auto self-start" type="submit">${icon("logout")}Sign out</button>
         </form></section>`
-          : ""
-      }
-    </div>
+        : ""
+    }
   </div>`;
 }
 
@@ -730,7 +706,6 @@ function sectionApi(): string {
 }
 
 let drawnWithStatus = false;
-let offInstall: (() => void) | null = null;
 
 /** A known section key; anything else (an old or mistyped link) opens Sync. */
 function sectionKey(key: string | undefined): string {
@@ -1038,7 +1013,6 @@ function wire(): void {
   });
 
   // app
-  on("set-install", "click", () => void install());
   on("set-theme", "click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
     if (!b) return;
@@ -1074,11 +1048,6 @@ const settings: View = {
   subtitle: "How and when backups run",
   mount(el, args) {
     section = sectionKey(args[0]);
-    // The browser can offer installing a moment after the page opens: redraw the install card then.
-    offInstall?.();
-    offInstall = onInstallChange(() => {
-      if (section === "app" && cfg) renderSection();
-    });
     el.innerHTML = `
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
       <nav aria-label="Settings sections">
@@ -1105,10 +1074,6 @@ const settings: View = {
   route(args) {
     section = sectionKey(args[0]);
     if (cfg) renderSection();
-  },
-  unmount() {
-    offInstall?.();
-    offInstall = null;
   },
   update(s) {
     // Opened straight from a link: the section may have been drawn before the first status.

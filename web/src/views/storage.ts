@@ -425,13 +425,8 @@ function renderList(r: StorageReport): void {
           : `<div class="empty">${icon("shield")}No ${KIND_NAME[kind]} in this account count against storage</div>`
       }
     </section>
-    <section class="card mt-4">${cardHead("How it works", "info")}
-      <div class="card-b grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div class="flex gap-3"><span class="grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-xs">1</span><span class="text-sm"><b>Downloaded</b> here and checked against the checksum Google gives for it.</span></div>
-        <div class="flex gap-3"><span class="grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-xs">2</span><span class="text-sm"><b>Deleted in Google</b>, Trash included, only after the copy here is checked again.</span></div>
-        <div class="flex gap-3"><span class="grid size-6 shrink-0 place-items-center rounded-full bg-panel-2 text-xs">3</span><span class="text-sm"><b>Uploaded again</b> the free way, then Google is asked that it doesn't count.</span></div>
-      </div>
-      <div class="border-t border-line px-4 py-3 text-xs text-ink-3">${atOnceText(r.prefs?.workers ?? 0, r.pace).replace(/^u/, "U")} items at once (tap Moving now to change). Each item goes step by step and every step is saved, so an update or restart resumes safely. Keeps quality, date, favourite, archive and caption. Albums, shared links and comments are lost. A few videos download as a copy Google changed slightly (an edited date): that copy is used when it matches the checksum Google lists for it.</div>
+    <section class="card mt-4">
+      <div class="px-4 py-3 text-xs leading-5 text-ink-3">${atOnceText(r.prefs?.workers ?? 0, r.pace).replace(/^u/, "U")} items at once (tap Moving now to change). Each item goes step by step and every step is saved, so an update or restart resumes safely. Keeps quality, date, favourite, archive and caption. Albums, shared links and comments are lost. A few videos download as a copy Google changed slightly (an edited date): that copy is used when it matches the checksum Google lists for it.</div>
     </section>`,
   );
 }
@@ -800,6 +795,23 @@ function subOf(args: string[] | undefined): typeof sub {
 
 const storage: View = {
   subtitle: "What counts against your quota, and moving it off",
+  how: [
+    {
+      ic: "download",
+      title: "Downloaded",
+      text: "Downloaded here and checked against the checksum Google gives for it.",
+    },
+    {
+      ic: "trash",
+      title: "Deleted in Google",
+      text: "Deleted in Google, Trash included, only after the copy here is checked again.",
+    },
+    {
+      ic: "cloudUp",
+      title: "Uploaded again",
+      text: "Uploaded again the free way, then Google is asked that it doesn't count.",
+    },
+  ],
   mount(el, args) {
     opened = true; // the first load draws the last answer at once (peek), then the fresh one
     // Coming back opens the account that is freeing (or the one picked last), not always the main one.

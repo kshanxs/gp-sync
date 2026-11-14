@@ -396,16 +396,6 @@ function cameraInputs(): string {
     : `<input type="file" id="shoot" class="sr-only" accept="image/*,video/*" capture="environment">`;
 }
 
-/** Only where it can work: Android's Share menu lists the installed app on HTTPS. */
-function shareTip(): string {
-  if (!ANDROID) return "";
-  return `<p class="flex gap-2">${icon("upload", "mt-0.5 size-4 shrink-0 text-ink-3")}<span>${
-    isSecureContext
-      ? "Installed as an app, GP Sync appears in the gallery's <b>Share</b> menu: share photos straight to it."
-      : "Open this page over HTTPS and install it to share photos to it from the gallery."
-  }</span></p>`;
-}
-
 // Keep the screen on while uploading (phones stop web pages when the screen locks).
 let wakeLock: { release: () => Promise<void> } | null = null;
 async function keepAwake(on: boolean): Promise<void> {
@@ -434,11 +424,11 @@ const upload: View = {
     el.innerHTML = `
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-12">
       <section class="card flex flex-col lg:col-span-8">
-        <div id="drop" role="button" tabindex="0" aria-label="Choose photos and videos" class="group m-4 flex min-h-64 flex-1 cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed border-line p-6 text-center transition duration-300 hover:border-accent/60 hover:bg-accent/5 max-sm:min-h-52">
-          <span class="grid size-16 place-items-center rounded-2xl text-white shadow-xl transition-transform duration-300 group-hover:-translate-y-1 group-hover:scale-105" style="background:linear-gradient(150deg,var(--accent),var(--accent-2));box-shadow:inset 0 1px 0 rgb(255 255 255/.3),0 14px 30px -12px color-mix(in oklab,var(--accent) 80%,transparent)">${icon("cloudUp", "size-8")}</span>
-          <div><div class="text-lg font-semibold"><span class="pointer-coarse:hidden">Drop photos and videos here</span><span class="hidden pointer-coarse:inline">Add photos and videos</span></div><div class="mt-1 text-sm text-ink-3"><span class="pointer-coarse:hidden">or choose them from your computer.</span><span class="hidden pointer-coarse:inline">Pick from your gallery or take a new one.</span> Full quality, any size.</div></div>
+        <div id="drop" role="button" tabindex="0" aria-label="Choose photos and videos" class="group m-4 flex min-h-64 flex-1 cursor-pointer flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-line p-6 text-center transition-colors duration-150 hover:border-accent/60 hover:bg-accent/5 max-sm:min-h-52">
+          <span class="grid size-14 place-items-center rounded-xl bg-panel-2 text-accent">${icon("cloudUp", "size-7")}</span>
+          <div><div class="text-lg font-medium"><span class="pointer-coarse:hidden">Drop photos and videos here</span><span class="hidden pointer-coarse:inline">Add photos and videos</span></div><div class="mt-1 text-sm text-ink-3"><span class="pointer-coarse:hidden">or choose them from your computer.</span><span class="hidden pointer-coarse:inline">Pick from your gallery or take a new one.</span> Full quality, any size.</div></div>
           <div class="flex flex-wrap justify-center gap-2">
-            <!-- Labels open their file input natively: works in every phone browser and the installed app. -->
+            <!-- Labels open their file input natively: works in every phone browser. -->
             <label for="pick" class="btn primary">${icon("library")}Choose files</label>
             ${cameraButtons()}
           </div>
@@ -459,13 +449,12 @@ const upload: View = {
       </section>
 
       <section class="card lg:col-span-4">
-        ${cardHead("Tips", "phone")}
+        ${cardHead("Tips", "info")}
         <div class="card-b space-y-3 text-sm text-ink-2">
           <p class="flex gap-2">${icon("ok", "mt-0.5 size-4 shrink-0 text-good")}<span>Files are stored on ${esc(host())} first, then backed up to Google Photos in original quality.</span></p>
           <p class="flex gap-2">${icon("refresh", "mt-0.5 size-4 shrink-0 text-ink-3")}<span>Big videos go up in pieces. If Wi-Fi drops, the upload continues where it stopped.</span></p>
           <p class="flex gap-2">${icon("copy", "mt-0.5 size-4 shrink-0 text-ink-3")}<span>Photos already on ${esc(host())} are recognised and not stored twice.</span></p>
           <p class="flex gap-2">${icon("phone", "mt-0.5 size-4 shrink-0 text-ink-3")}<span>Keep this page open while uploading.</span></p>
-          ${shareTip()}
         </div>
       </section>
     </div>`;

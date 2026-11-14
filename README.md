@@ -33,7 +33,7 @@ Back up any folder on your server, NAS, Immich library or Umbrel in original qua
     <td width="33%" valign="top"><b>🔒 Read-only by design</b><br>Your folders are mounted read-only: nothing on your server is ever changed or deleted.</td>
   </tr>
   <tr>
-    <td valign="top"><b>📱 A real phone app</b><br>Install it on iPhone or Android, upload from the gallery or camera, and pick up where you left off if Wi-Fi drops.</td>
+    <td valign="top"><b>📱 Works on your phone</b><br>Upload from the gallery or camera, and pick up where you left off if Wi-Fi drops. Add it to the home screen from the browser's menu.</td>
     <td valign="top"><b>📊 Beautiful insights</b><br>Live progress, network and resource charts, history, upload times, duplicates, in dark and light.</td>
     <td valign="top"><b>🖥️ Runs anywhere</b><br>One small Docker image for Linux, Windows, macOS, NAS boxes, Raspberry Pi, Immich setups and Umbrel.</td>
   </tr>
@@ -126,9 +126,14 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
 - **Albums:** put new uploads in Google Photos albums named after their folder.
 - **Files:** search and filter everything that was backed up, with thumbnails (iPhone HEIC too) and
   a link to each item in Google Photos. A duplicates tab lists identical files.
-- **Folders and devices:** photos, videos, size and backup progress for any folder, or per phone
-  (the folders phone backup apps make), with daily arrivals and their waiting, backed-up and failed
-  counts. Arrival dates are inferred from filesystem timestamps, which can change.
+- **Folders:** a browser for everything that is backed up. On the left, one tree of the backed-up
+  folders with each one's share in Google Photos, and the folders set to **Back up first** pinned
+  on top, in order. Folders a backup app spreads over `00`…`ff` show as one folder. On the right, the open folder: its accounts,
+  a **Back up first** switch, and four numbers (photos, videos, waiting, failed) that filter its
+  photos when tapped. Tabs: **Photos** (by day, filtered by state, kind or a picked day), **Folders
+  inside**, and **Added** (arrivals per day; pick a day to see its photos). On small screens the
+  tree is the first screen and folds away when a folder opens. Arrival dates are inferred from filesystem
+  timestamps, which can change.
 - **Free storage:** lists what counts against your Google storage, biggest first, photos and videos
   apart. Free single items, the 10 biggest, or everything of a kind (photos only, videos only, or
   both). Several at once (dynamic, or a fixed number up to 8), GP Sync gets an item, checks it against
@@ -230,9 +235,15 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
 - **Time zone:** choose any time zone in **Settings → Appearance**, or keep the system default
   (for example India Standard Time). History, Insights, upload hours, the weekly summary and every
   time shown follow it, daylight saving included.
-- **Install as an app:** add the dashboard to a phone's home screen.
-- Sidebar on desktop, bottom tabs and a "More" menu on phones; dark and light themes. The phone
-  tabs show what's running: Sync gets a progress ring while files upload, and Overview turns into
+- **Labs:** Snapchat, Sources and Fix dates sit in their own Labs group in the menu. They work;
+  how they work may still change.
+- Every page opens the same way: a line saying what it is for (with a Labs tag on Labs pages and
+  a folded **How it works** where a page needs explaining), then its summary numbers, then a
+  toolbar with its filters, a count and search.
+- Sidebar on desktop, bottom tabs and a "More" menu on phones; dark and light themes. The
+  dashboard keeps its own chrome quiet (graphite at night, near-neutral paper by day) so your
+  photos and the backup's progress carry the colour, with one accent: moonlight blue at night,
+  amber by day. The phone tabs show what's running: Sync gets a progress ring while files upload, and Overview turns into
   the background work running now (freeing storage, copying, fixing dates) with its progress.
 
 ## Statistics and REST API
@@ -251,7 +262,7 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/history?days=365&tz=330` | Per-day totals; `tz` is minutes east of UTC (India = 330) |
 | `GET /api/totals` | All-time totals and fastest upload |
 | `GET /api/files?q=&status=all&folder=&sort=new&limit=60&offset=0` | Search backed-up files |
-| `GET /api/folders?group=folders&path=Photos&days=30&tz=330` | Counts and files added per day for a folder, or `group=devices` |
+| `GET /api/folders?group=folders&path=Photos&days=30&tz=330` | Counts and files added per day for a folder, or `group=devices` for the folders one level inside each backed-up folder |
 | `GET /api/copy?src=&dst=` | What one account has that another lacks, copying progress, the checker and Keep in sync |
 | `POST /api/copy/mirror` | Keep in sync: `{"src", "dst", "mode": "off"\|"one"\|"both"}` |
 | `GET /api/storage?account=` | What counts against Google storage, biggest first, progress of moving it, each account's status and the checker |
@@ -274,7 +285,7 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/logs?level=all&q=&before=&limit=200` | App log (`level` = all, info or error; error includes warnings) |
 | `GET /api/about` | Release, backend, build and package versions |
 | `GET /api/processes?days=371&tz=330` | Each process's items per day, by hour and by weekday |
-| `GET /api/upload` | Whether phone uploads are possible, and free space |
+| `GET /api/upload` | Whether the Upload page can save files, and free space |
 | `POST /api/upload?name=IMG_1.jpg&mtime=<ms>` | Upload one photo or video (raw file as the body) |
 
 Each day has `photos`, `videos`, `photo_bytes`, `video_bytes`, `existing`, `failed`,
@@ -351,7 +362,7 @@ services:
       - ./gp-sync-data:/data            # app data: accounts, state, statistics
       - /path/to/photos:/media/Photos:ro
       - /path/to/videos:/media/Videos:ro
-      - /path/to/photos/Uploads:/uploads   # optional: where phone uploads are saved
+      - /path/to/photos/Uploads:/uploads   # optional: where the Upload page saves files
 ```
 
 Run `docker compose up -d`, open `http://<server>:8527` and connect your Google account.
@@ -400,7 +411,7 @@ also skip its other folders: `EXCLUDE: "@eaDir,#recycle,encoded-video,thumbs,pro
 | `EXCLUDE` | `@eaDir,#recycle,#snapshot,$RECYCLE.BIN,System Volume Information,lost+found,encoded-video` | Folder and file names never backed up (`*` and `?` allowed). Hidden names are always skipped |
 | `SCAN_INTERVAL_MINUTES` | `5` | How often folders are checked |
 | `SETTLE_SECONDS` | `120` | A file must be unchanged this long before it's sent (skips half-copied files) |
-| `PUID` / `PGID` | `1000` | Owner of files saved from phone uploads |
+| `PUID` / `PGID` | `1000` | Owner of files saved from the Upload page |
 | `REDIS_URL` | none | Use a Redis or Valkey server as the cache (normally the app's own memory is used) |
 
 Folders:
@@ -409,7 +420,7 @@ Folders:
 |---|---|
 | `/data` | App data (writable): Google logins, upload state, statistics, thumbnails |
 | `/media/<name>` | Each folder to back up, read-only. The name is what the dashboard shows |
-| `/uploads` | Optional, writable: phone uploads. Mount a folder that is also inside a backed-up folder so they get backed up too |
+| `/uploads` | Optional, writable: files sent from the Upload page. Mount a folder that is also inside a backed-up folder so they get backed up too |
 
 Without `PASSWORD`, the dashboard has no login: keep it on your home network or behind a VPN
 such as Tailscale. It then answers only home-network addresses and refuses changes sent from other
@@ -439,7 +450,26 @@ VERSION         release version (backend and dashboard have their own); CHANGELO
 
 The sync engine and REST API are Python, in `backend/`. The dashboard is TypeScript in `web/`,
 styled with Tailwind CSS v4, with Lucide icons, hand-drawn SVG charts and the PhotoSwipe viewer, and built with
-[Vite+](https://viteplus.dev) (`vp`: Vite, Rolldown, Oxlint, Oxfmt and Vitest in one tool). In `web/`:
+[Vite+](https://viteplus.dev) (`vp`: Vite, Rolldown, Oxlint, Oxfmt and Vitest in one tool).
+
+Design rules for the dashboard (colours and components are in `web/src/style.css`):
+
+- Surfaces, borders and text come from one neutral ramp per theme; depth is a surface step and a
+  hairline, never a glow, a gradient or a coloured shadow.
+- One accent per theme (`--accent`, `--meter`), used rarely: the selection, progress bars and the
+  Sync ring. Chart series colours (`--s1`…`--s5`) only mean a series; green, amber and red only
+  mean a state.
+- Buttons, inputs and tabs share a 10px corner, cards 16px; the main button is `--primary`.
+- Labels in sentence case, weights 400 and 500 (600 only for bold words in a sentence), counters
+  in mono (`.meta`).
+- Lucide icons in the text colour; spacing on a 4px grid.
+- Motion is short and uses one curve (`--ease`). Nothing loops unless work is really running.
+- Pages are built from the same parts (`web/src/lib/page.ts`): the header comes from the View's
+  `subtitle` and `how` (main.ts draws it, with the Labs tag for routes in the Labs group), the
+  summary numbers from `statRow()` and `setTile()`, the filter bar from `toolbar()` or the
+  `.toolbar` classes. A new page uses these before adding its own.
+
+In `web/`:
 
 ```sh
 npm ci                     # exact versions from package-lock.json

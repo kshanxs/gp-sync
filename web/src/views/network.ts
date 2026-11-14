@@ -85,13 +85,13 @@ const network: View = {
   subtitle: "Speed and data used",
   mount(el) {
     el.innerHTML = `
-    <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
+    <div class="stat-row">
       <div class="card flex flex-col items-center p-4 text-center" id="n-up"></div>
       <div class="card flex flex-col items-center p-4 text-center" id="n-down"></div>
       ${tile({ id: "n-latency", label: "Google response", value: "–", ic: "zap", chart: "" })}
       ${tile({ id: "n-total", label: "Since start", value: "–", ic: "layers", chart: "" })}
     </div>
-    <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-12">
       <section class="card lg:col-span-12">
         ${cardHead("Upload and download", "wifi", `<span class="hidden items-center gap-3 sm:flex"><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s1"></i>Upload</span><span class="flex items-center gap-1.5"><i class="size-2 rounded-full bg-s2"></i>Download</span></span><div class="seg ml-2" id="n-range">${rangeButtons("live")}</div>`)}
         <div class="card-b"><div id="n-chart" data-chart class="h-[340px] w-full"></div></div>

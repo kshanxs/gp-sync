@@ -113,7 +113,7 @@ function settingsCard(r: SourcesReport, s: AppSourceId): string {
   const a = r.settings[s];
   const label = r.labels[s] ?? s;
   return `<section class="card mb-4 p-4" id="so-settings">
-    <div class="flex flex-wrap items-center gap-2"><h2 class="font-semibold">In Google Photos: ${esc(label)}</h2>
+    <div class="flex flex-wrap items-center gap-2"><h2 class="font-medium">In Google Photos: ${esc(label)}</h2>
       <span class="text-xs text-ink-3">${esc(actionSummary(r.settings, s))}</span></div>
     <div class="mt-3 grid gap-3 sm:grid-cols-2">
       <div class="space-y-2">
@@ -139,7 +139,7 @@ function firstRun(r: SourcesReport): string {
   if (!lines) return ""; // nothing saved from apps found (yet): no question to answer
   return `<section class="card mb-4 border-accent p-4" role="region" aria-labelledby="so-ask-title">
     <div class="flex items-center gap-3"><span class="grid size-10 place-items-center rounded-xl bg-panel-2 text-ink-2">${icon("sparkles", "size-5")}</span>
-      <h2 id="so-ask-title" class="text-lg font-semibold tracking-tight">Sort items saved from apps?</h2></div>
+      <h2 id="so-ask-title" class="text-lg font-medium">Sort items saved from apps?</h2></div>
     <p class="mt-3 text-sm text-ink-2">App saves often have no date, so they pile up on the day they were copied here.</p>
     <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-2">${lines}</ul>
     <p class="mt-2 text-xs text-ink-3">Albums group them, captions make them searchable, archive hides them from the timeline. Nothing changes in Google until you choose.</p>
@@ -179,7 +179,7 @@ function render(): void {
     ${isApp(r, r.source) ? settingsCard(r, r.source) : ""}
     <section class="card min-w-0 overflow-hidden">
       <div class="flex flex-wrap items-center gap-3 border-b border-line p-4">
-        <div class="min-w-0 flex-1 basis-64"><h2 class="font-semibold">${esc(r.labels[r.source] ?? r.source)}</h2>
+        <div class="min-w-0 flex-1 basis-64"><h2 class="font-medium">${esc(r.labels[r.source] ?? r.source)}</h2>
           <p class="mt-1 text-xs text-ink-3">${esc(SOURCE_HELP[r.source] ?? "")}</p></div>
         <span class="text-xs text-ink-3">${checking ? `Checking files… ${num(r.checked)} of ${num(r.total)} (${pct(r.checked, r.total)}%)` : `${num(r.total)} files checked`}${r.estimated ? ` · ${num(r.estimated)} Snapchat dates estimated` : ""}</span>
       </div>
@@ -364,6 +364,23 @@ function onChange(e: Event): void {
 
 const sources: View = {
   subtitle: "Where each photo and video came from",
+  how: [
+    {
+      ic: "search",
+      title: "Markers, not guesses",
+      text: "Only markers inside a file (or its name) are used, never a guess.",
+    },
+    {
+      ic: "layers",
+      title: "Saved from an app",
+      text: "Most app videos carry no app name: they show as “Saved from an app”.",
+    },
+    {
+      ic: "calendar",
+      title: "Snapchat saves",
+      text: "Snapchat saves are dated from the iOS version they were saved on, placed in time by your camera photos.",
+    },
+  ],
   mount(el) {
     opened = true; // the first load draws the last answer at once (peek), then the fresh one
     picked.clear();
@@ -371,14 +388,6 @@ const sources: View = {
     shown = 60;
     editing = false;
     el.innerHTML = `
-    <details class="mb-4 px-1 text-sm text-ink-3">
-      <summary class="cursor-pointer font-medium text-ink-2">How it works</summary>
-      <div class="mt-2 space-y-2 leading-relaxed">
-        <p>Only markers inside a file (or its name) are used, never a guess.</p>
-        <p>Most app videos carry no app name: they show as “Saved from an app”.</p>
-        <p>Snapchat saves are dated from the iOS version they were saved on, placed in time by your camera photos.</p>
-      </div>
-    </details>
     <div id="so-body"><div class="card skeleton h-72"></div></div>`;
     el.addEventListener("click", onClick);
     el.addEventListener("change", onChange);

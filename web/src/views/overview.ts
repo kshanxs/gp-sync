@@ -134,7 +134,7 @@ const UPLOAD: Record<UploadKind, { label: string; icon: IconName; color: string;
   backup: { label: "Backup", icon: "folder", color: "var(--s1)", href: "#/sync" },
   freed: { label: "Free storage", icon: "cloud", color: "var(--s2)", href: "#/storage" },
   copied: { label: "Copies", icon: "users", color: "var(--s3)", href: "#/copy" },
-  snapchat: { label: "Snapchat", icon: "sparkles", color: "var(--s5)", href: "#/snapchat" },
+  snapchat: { label: "Snapchat", icon: "ghost", color: "var(--s5)", href: "#/snapchat" },
 };
 const UPLOAD_KINDS = Object.keys(UPLOAD) as UploadKind[];
 
@@ -182,7 +182,7 @@ function uploadsBody(s: Status): string {
     const u = UPLOAD[k];
     const t = uploadedToday(k);
     return `<a href="${u.href}" class="sheet-row items-center hover:bg-panel-2/50" data-sheet-close>
-      <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2" style="color:${u.color}">${icon(u.icon, "size-4")}</span>
+      <span class="shrink-0 text-ink-3">${icon(u.icon, "size-4")}</span>
       <span class="min-w-0 flex-1"><span class="block text-sm font-medium">${esc(u.label)}</span>
         <span class="block text-xs text-ink-3"><b class="text-ink-2 tabular-nums">${num(t.count)}</b> today${t.bytes ? ` · ${bytes(t.bytes)}` : ""}${now[k] ? ` · <span class="text-accent">${num(now[k])} uploading now</span>` : ""}</span></span>
       <span class="h-8 w-20 shrink-0">${sparkline(last14([k]), u.color)}</span>
@@ -290,7 +290,7 @@ function renderProcs(s: Status): void {
       uploadsCard(
         s,
         el,
-        `<div class="flex items-center gap-2.5"><span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2" style="color:${p.color}">${icon(p.icon, "size-4")}</span>
+        `<div class="flex items-center gap-2"><span class="shrink-0 text-ink-3">${icon(p.icon, "size-4")}</span>
         <span class="min-w-0 flex-1 truncate font-medium">${esc(p.label)}</span>${state}</div>
       <div class="mt-3 flex items-end justify-between gap-3">
         <div class="min-w-0"><div class="num text-2xl">%COUNT%</div><div class="text-xs text-ink-3">%SUB%</div></div>
@@ -302,7 +302,7 @@ function renderProcs(s: Status): void {
     el.classList.toggle("is-running", l.running && !l.paused);
     html(
       el,
-      `<div class="flex items-center gap-2.5"><span class="grid size-9 shrink-0 place-items-center rounded-lg bg-panel-2" style="color:${p.color}">${icon(p.icon, "size-4")}</span>
+      `<div class="flex items-center gap-2"><span class="shrink-0 text-ink-3">${icon(p.icon, "size-4")}</span>
         <span class="min-w-0 flex-1 truncate font-medium">${esc(p.label)}</span>${state}</div>
       <div class="mt-3 flex items-end justify-between gap-3">
         <div class="min-w-0"><div class="num text-2xl">${procs ? num(count) : "–"}</div>
@@ -414,7 +414,7 @@ function renderSheet(): void {
   const l = layout();
   const title = new Map(CARDS);
   sheet.innerHTML = `<div class="card w-full max-w-md rounded-b-none bg-bg p-2 sm:rounded-2xl" style="padding-bottom:calc(.5rem + env(safe-area-inset-bottom))">
-    <div class="flex items-center gap-2 px-3 py-2"><span class="font-semibold">Customize overview</span><button class="btn sm ml-auto" data-reset>${icon("retry")}Reset</button><button class="btn sm primary" data-done>Done</button></div>
+    <div class="flex items-center gap-2 px-3 py-2"><span class="font-medium">Customize overview</span><button class="btn sm ml-auto" data-reset>${icon("retry")}Reset</button><button class="btn sm primary" data-done>Done</button></div>
     ${l.order
       .map((id, i) => {
         const on = !l.hidden.includes(id);
@@ -456,7 +456,7 @@ const overview: View = {
       </section>
 
       <section class="card lg:col-span-4" data-card="ov-glance">
-        ${cardHead("At a glance", "sparkles")}
+        ${cardHead("At a glance", "server")}
         <div class="px-4 py-1" id="ov-glance"></div>
       </section>
 

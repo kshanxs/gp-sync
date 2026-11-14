@@ -7199,7 +7199,7 @@ def upload_folders():
 
 
 def upload_folder_name():
-    """Where phone uploads show up among the backed-up folders (e.g. Photos/Uploads), or ""."""
+    """Where the Upload page's files show up among the backed-up folders (e.g. Photos/Uploads), or ""."""
     if str(UPLOAD_DIR).startswith(str(MEDIA) + os.sep):
         return rel(UPLOAD_DIR)
     # Mounted separately (as on Umbrel): find the same folder inside the media folders.
@@ -7385,7 +7385,7 @@ def _finish_upload(tmp, name, length, when, sha1_hex, folder=""):
         tmp.unlink(missing_ok=True)
         raise
     saved = rel(target)
-    log(f"Received {saved} from a phone ({fmt_bytes(length)})", "received", saved)
+    log(f"Received {saved} from the Upload page ({fmt_bytes(length)})", "received", saved)
     wake.set()
     return 200, {"ok": True, "saved": saved, "name": name}
 

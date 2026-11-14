@@ -16,6 +16,7 @@ import {
   copiesLeft,
   copiesText,
   lanePhaseText,
+  uploadSummary,
   uploadTitle,
   type AccountLane,
 } from "../lib/lanes";
@@ -28,7 +29,8 @@ let slowSynced = -1; // uploaded count the heat map and streak were last loaded 
 let slowAt = 0;
 let last: Status | null = null;
 
-// ---- where the photos are: pie charts per device (or folder) and photos vs videos
+// ---- where the photos are: pie charts per subfolder (or top folder) and photos vs videos
+// "devices" is the API's name for the folders one level inside each backed-up folder.
 let share: FolderReport | null = null;
 let shareBy: "devices" | "folders" = "devices";
 let shareMetric: "files" | "bytes" = "files";
@@ -87,7 +89,7 @@ function renderShare(): void {
   const rest = groups.slice(shown.length);
   const total = groups.reduce((a, g) => a + m(g), 0);
   const link = (g: (typeof groups)[number]) =>
-    `#/folders/${shareBy === "devices" || g.device ? "d" : "f"}/${(g.folders[0] ?? g.name).split("/").map(encodeURIComponent).join("/")}`;
+    `#/folders/f/${(g.folders[0] ?? g.name).split("/").map(encodeURIComponent).join("/")}`;
   const slices: Slice[] = shown.map((g, i) => ({
     label: g.name,
     value: m(g),
@@ -102,7 +104,7 @@ function renderShare(): void {
       value: restValue,
       color: OTHER,
       tip: `${rest.length} more\n${fmt(restValue)} · ${pctText(restValue, total)}\nClick to see all`,
-      href: shareBy === "devices" ? "#/folders" : "#/folders/f",
+      href: "#/folders",
     });
   const backed = (g: (typeof groups)[number]) => {
     const p = Math.round(pct(g.synced, g.files));
@@ -131,15 +133,15 @@ function renderShare(): void {
     `<div><div class="num text-xl">${shareMetric === "files" ? num(v) : bytes(v)}</div><div class="text-[11px] text-ink-3">${sub}</div></div>`;
   html(
     el,
-    // Side by side only on very wide screens: otherwise the device names get cut to a letter.
+    // Side by side only on very wide screens: otherwise the folder names get cut to a letter.
     `<div class="grid gap-6 2xl:grid-cols-2">
       <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
-        ${donut(slices, center(total, shareBy === "devices" ? "on devices" : "in folders"))}
-        <div class="w-full min-w-0 flex-1"><div class="label mb-1">${shareBy === "devices" ? "By device" : "By folder"}</div>
+        ${donut(slices, center(total, shareBy === "devices" ? "in subfolders" : "in folders"))}
+        <div class="w-full min-w-0 flex-1"><div class="label mb-1">${shareBy === "devices" ? "By subfolder" : "By folder"}</div>
           ${
             groups.length
-              ? `<ul>${shown.map((g, i) => legendRow(SLICE_COLORS[i]!, g.name, m(g), total, backed(g), link(g))).join("")}${rest.length ? legendRow(OTHER, `Other (${rest.length})`, restValue, total, "", shareBy === "devices" ? "#/folders" : "#/folders/f") : ""}</ul>`
-              : `<p class="py-2 text-sm text-ink-3">${share ? (shareBy === "devices" ? "No device folders found. Try Folders." : "No folders found.") : shareError ? "Couldn't load this view." : "Loading…"}</p>`
+              ? `<ul>${shown.map((g, i) => legendRow(SLICE_COLORS[i]!, g.name, m(g), total, backed(g), link(g))).join("")}${rest.length ? legendRow(OTHER, `Other (${rest.length})`, restValue, total, "", "#/folders") : ""}</ul>`
+              : `<p class="py-2 text-sm text-ink-3">${share ? (shareBy === "devices" ? "No subfolders found. Try Folders." : "No folders found.") : shareError ? "Couldn't load this view." : "Loading…"}</p>`
           }</div>
       </div>
       <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
@@ -276,7 +278,7 @@ function stepBadge(c: NonNullable<Status["current"]>): string {
     up && c.bytes_total
       ? `Uploading ${pct(c.bytes_done, c.bytes_total).toFixed(0)}%`
       : (STEPS[c.step] ?? c.step);
-  return `<span class="badge info">${icon(up ? "cloudUp" : "loader", up ? "bob" : "spin")}${esc(label)}</span>`;
+  return `<span class="badge info">${icon(up ? "cloudUp" : "loader", up ? "" : "spin")}${esc(label)}</span>`;
 }
 
 /** What the Now card says when no file is being sent. */
@@ -432,7 +434,7 @@ function nowCard(s: Status): string {
   const summary = uploadSummary(s);
   // One featured file jumps between accounts. With several uploading, the account cards are the list.
   if (summary.accounts > 1)
-    return `<div class="flex items-center gap-3"><span class="grid size-12 shrink-0 place-items-center rounded-xl bg-panel-2 text-accent">${icon("cloudUp", "size-6 bob")}</span>
+    return `<div class="flex items-center gap-3"><span class="grid size-12 shrink-0 place-items-center rounded-xl bg-panel-2 text-accent">${icon("cloudUp", "size-6")}</span>
       <div class="min-w-0 flex-1"><div class="font-medium">${esc(uploadTitle(s))}</div>
       <div class="truncate text-xs text-ink-3">${s.total ? `${num(s.done)} of ${num(s.total)} done this round` : "Sending files"} · ${speed(s.net.up_now)}</div></div></div>
       <p class="mt-3 text-xs text-ink-3">Each account's files are in the cards below. They share one speed limit.</p>`;
@@ -467,7 +469,12 @@ function heroBadges(s: Status): string {
           s.paused ? "Waiting until uploads resume" : "Waiting for upload",
         )
       : s.copies_pending
-        ? badge("Main library in", "info", "copy", "The backup account has every file. Other accounts are still catching up.")
+        ? badge(
+            "Main library in",
+            "info",
+            "copy",
+            "The backup account has every file. Other accounts are still catching up.",
+          )
         : badge("All backed up", "good", "ok"),
     eta ? badge(`~${eta} left`, "info", "clock", "At the current upload speed") : "",
     ...copiesLeft(s).map(([a, n]) =>
@@ -514,10 +521,10 @@ const sync: View = {
       <!-- Phones: progress, Now, then the tiles. Wider: progress with the tiles under it, beside Now. -->
       <div class="contents lg:col-span-5 lg:flex lg:flex-col lg:gap-4">
       <section class="card overview-hero relative order-1 overflow-hidden p-5 lg:order-none" id="sy-hero">
-        <div class="flex items-center justify-between gap-2"><div><span class="label">Your library</span><h2 class="mt-1 text-lg font-semibold tracking-tight">Backup progress</h2></div><span id="sy-rate" class="text-xs text-ink-3 tabular-nums"></span></div>
-        <div class="mt-4 flex items-center gap-4 sm:gap-5">
-          <div class="ring-box relative shrink-0">${ring(0, 148, 12)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-3xl" id="sy-pct">–</div><div class="text-[11px] text-ink-3" id="sy-pct-sub">of files</div></div></div></div>
-          <div class="min-w-0 space-y-1.5" id="sy-hero-text"></div>
+        <div class="flex items-center justify-between gap-2"><div><span class="label">Your library</span><h2 class="mt-1 text-base font-medium">Backup progress</h2></div><span id="sy-rate" class="text-xs text-ink-3 tabular-nums"></span></div>
+        <div class="mt-6 flex items-center gap-6">
+          <div class="ring-box relative shrink-0">${ring(0, 148, 8)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-[32px] leading-9" id="sy-pct">–</div><div class="meta mt-1" id="sy-pct-sub">of files</div></div></div></div>
+          <div class="min-w-0 space-y-2" id="sy-hero-text"></div>
         </div>
         <div class="even mt-4" id="sy-badges"></div>
       </section>
@@ -529,7 +536,7 @@ const sync: View = {
       </section>
       </div>
       <section class="card order-2 lg:order-none lg:col-span-7">
-        ${cardHead("Now", "cloudUp", '<span id="sy-pace"></span><a href="#/upload" class="ml-2 hover:text-ink">Upload from phone ›</a>')}
+        ${cardHead("Now", "cloudUp", '<span id="sy-pace"></span><a href="#/upload" class="ml-2 hover:text-ink">Add files ›</a>')}
         <div class="card-b" id="sy-now"><div class="skeleton h-24"></div></div>
       </section>
 
@@ -545,7 +552,7 @@ const sync: View = {
       </section>
 
       <section class="card order-5 lg:order-none lg:col-span-12">
-        ${cardHead("Where your photos are", "chart", `<div class="seg" id="sy-share-by"><button data-by="devices">Devices</button><button data-by="folders">Folders</button></div><div class="seg ml-2" id="sy-share-metric"><button data-m="files">Files</button><button data-m="bytes">Size</button></div>`)}
+        ${cardHead("Where your photos are", "chart", `<div class="seg" id="sy-share-by"><button data-by="devices">Subfolders</button><button data-by="folders">Folders</button></div><div class="seg ml-2" id="sy-share-metric"><button data-m="files">Files</button><button data-m="bytes">Size</button></div>`)}
         <div class="card-b" id="sy-share-body" aria-live="polite"><div class="skeleton h-44"></div></div>
       </section>
 
@@ -616,7 +623,7 @@ const sync: View = {
     $("#sy-pct-sub").textContent = copying ? "main library" : "of files";
     html(
       $("#sy-hero-text"),
-      `<div class="num text-xl">${num(lib.synced_files)} <span class="text-sm font-normal text-ink-3">of ${num(lib.files)} files</span></div>
+      `<div><div class="font-mono text-lg whitespace-nowrap tabular-nums sm:text-xl">${num(lib.synced_files)}<span class="text-ink-3"> / ${num(lib.files)}</span></div><div class="mt-1 text-xs text-ink-3">files in Google Photos</div></div>
        <div class="text-sm text-ink-2">${bytes(lib.synced_bytes)} of ${bytes(lib.bytes)} <span class="text-ink-3">(${pctText(lib.synced_bytes, lib.bytes)} of the space)</span></div>
        <div class="text-xs text-ink-3">${left ? `${bytes(lib.bytes - lib.synced_bytes)} still to back up` : copying ? `Main library is in. Still copying to ${esc(copying)}` : "Every file is in Google Photos"}</div>`,
     );

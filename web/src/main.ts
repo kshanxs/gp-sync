@@ -16,7 +16,7 @@ import {
   startPolling,
   status,
 } from "./lib/store";
-import { install, installState, onInstallChange } from "./lib/install";
+import { pageHead, toggleHow } from "./lib/page";
 import { openViewer } from "./lib/viewer";
 import { initTheme } from "./lib/theme";
 import { glassToggle, wireGlassToggles } from "./lib/glass-toggle";
@@ -61,12 +61,13 @@ const ROUTES: Route[] = [
   { id: "storage", title: "Free storage", ic: "cloud", view: storage, group: "Backup" },
   { id: "downloads", title: "Downloads", ic: "download", view: downloads, group: "Backup" },
   { id: "copy", title: "Copy accounts", ic: "users", view: copyView, group: "Backup" },
-  { id: "dates", title: "Fix dates", ic: "clock", view: dates, group: "Backup" },
-  { id: "sources", title: "Sources", ic: "layers", view: sources, group: "Backup" },
-  { id: "snapchat", title: "Snapchat", ic: "sparkles", view: snapchat, group: "Backup" },
   { id: "folders", title: "Folders", ic: "folder", view: folders, group: "Insights" },
   { id: "insights", title: "Insights", ic: "chart", view: insights, group: "Insights" },
   { id: "network", title: "Network", ic: "wifi", view: network, group: "Insights" },
+  // Labs: specialised or newer tools. They work; how they work may still change.
+  { id: "snapchat", title: "Snapchat", ic: "ghost", view: snapchat, group: "Labs" },
+  { id: "sources", title: "Sources", ic: "layers", view: sources, group: "Labs" },
+  { id: "dates", title: "Fix dates", ic: "clock", view: dates, group: "Labs" },
   { id: "health", title: "Health", ic: "health", view: health, group: "System" },
   { id: "settings", title: "Settings", ic: "settings", view: settings, group: "System" },
   { id: "about", title: "About", ic: "info", view: about, group: "System" },
@@ -89,15 +90,15 @@ function shell(): string {
   return `
   <div class="flex h-dvh overflow-hidden">
     <aside class="app-sidebar hidden w-64 shrink-0 flex-col border-r border-line lg:flex">
-      <a href="#/overview" class="flex items-center gap-3 px-5 pt-6 pb-5">
-        <img src="icon.svg" alt="" class="brand-icon size-11 rounded-[14px]">
-        <div class="min-w-0"><div class="truncate text-base font-semibold tracking-tight">GP Sync</div><div class="text-xs text-ink-3" id="side-version"></div></div>
+      <a href="#/overview" class="flex h-16 shrink-0 items-center gap-3 px-5">
+        <span class="brand-mark">${icon("imageUp")}</span>
+        <div class="min-w-0"><div class="truncate text-[15px] leading-5 font-medium">GP Sync</div><div class="meta" id="side-version"></div></div>
       </a>
-      <nav class="scroll-thin flex-1 space-y-4 overflow-y-auto px-3 py-2">
+      <nav class="scroll-thin flex-1 space-y-6 overflow-y-auto px-3 pt-4 pb-2">
         ${groups
           .map(
             (g) =>
-              `<div><div class="label px-3 pb-1.5">${g}</div><div class="space-y-0.5">${ROUTES.filter(
+              `<div><div class="label px-3 pb-2">${g}</div><div class="space-y-0.5">${ROUTES.filter(
                 (r) => r.group === g,
               )
                 .map(navLink)
@@ -105,8 +106,7 @@ function shell(): string {
           )
           .join("")}
       </nav>
-      <button class="nav-item mx-3 hidden" id="side-install">${icon("download")}<span>Install app</span></button>
-      <div class="side-status m-3 card p-4" id="side-status">
+      <div class="side-status m-3 rounded-xl border border-line bg-panel p-4" id="side-status">
         <div class="skeleton h-5 w-24"></div><div class="skeleton mt-3 h-2"></div><div class="skeleton mt-3 h-10"></div>
       </div>
     </aside>
@@ -114,12 +114,11 @@ function shell(): string {
     <div class="flex min-w-0 flex-1 flex-col">
       <header id="topbar" class="app-topbar z-30 flex shrink-0 items-center gap-3 border-b border-line px-4 lg:px-6" style="padding-top:env(safe-area-inset-top);height:calc(4rem + env(safe-area-inset-top))">
         <div class="min-w-0 flex-1">
-          <h1 class="keep-line truncate text-lg font-semibold tracking-tight" id="page-title">Overview</h1>
+          <h1 class="keep-line truncate text-lg font-medium" id="page-title">Overview</h1>
         </div>
         <span class="lg:hidden max-[420px]:hidden" id="top-phase"></span>
         <span class="hidden lg:block"><span id="live" class="badge good hidden" data-tip="Updates arrive the moment something happens"><span class="dot live"></span>Live</span></span>
         <span class="hidden" id="offline">${'<span class="badge bad">' + icon("cloudOff") + "Offline</span>"}</span>
-        <button class="btn icon hidden" id="btn-install" title="Install app" aria-label="Install app">${icon("download")}</button>
         ${glassToggle("sm")}
         <a class="btn primary hidden sm:inline-flex" id="btn-add" href="#/upload" aria-label="Add photos and videos from this device" title="Add photos and videos from this device">${icon("upload")}<span>Add files</span></a>
       </header>
@@ -143,13 +142,13 @@ function shell(): string {
 
   <div id="sheet" class="fixed inset-0 z-50 hidden lg:hidden" role="dialog" aria-label="More pages">
     <div class="sheet-bg absolute inset-0 bg-black/50" data-close></div>
-    <div class="sheet-panel app-sheet absolute inset-x-0 bottom-0 rounded-t-3xl border-t border-line p-4 shadow-2xl" style="padding-bottom:calc(1rem + env(safe-area-inset-bottom))">
+    <div class="sheet-panel app-sheet absolute inset-x-0 bottom-0 rounded-t-2xl border-t border-line p-4" style="padding-bottom:calc(1rem + env(safe-area-inset-bottom))">
       <div class="mx-auto mb-3 h-1 w-10 rounded-full bg-panel-2"></div>
       <div class="grid grid-cols-3 gap-2">
         ${ROUTES.filter((r) => !TABS.includes(r.id))
           .map(
             (r) =>
-              `<a href="#/${r.id}" class="card sheet-item relative flex flex-col items-center gap-2 py-4 text-sm">${icon(r.ic, "size-6 text-ink-2")}${r.title}<span class="count absolute top-2 right-2 hidden" data-count="${r.id}"></span></a>`,
+              `<a href="#/${r.id}" class="card relative flex flex-col items-center gap-2 py-4 text-sm">${icon(r.ic, "size-6 text-ink-2")}${r.title}<span class="count absolute top-2 right-2 hidden" data-count="${r.id}"></span></a>`,
           )
           .join("")}
       </div>
@@ -201,8 +200,8 @@ function mountView(r: Route, rest: string[]): void {
   active = r;
   const el = $("#view");
   el.scrollTop = 0;
-  // The page's one-line description sits above its content, not in the header.
-  el.innerHTML = r.view.subtitle ? `<p class="page-intro">${esc(r.view.subtitle)}</p>` : "";
+  // The same header on every page: what it is for, Labs, and "How it works".
+  el.innerHTML = pageHead(r.id, r.view.subtitle ?? "", { labs: r.group === "Labs", how: r.view.how });
   const page = document.createElement("div");
   el.append(page);
   document.title = `${r.title} · GP Sync`;
@@ -215,12 +214,21 @@ function mountView(r: Route, rest: string[]): void {
 
 function updateShell(s: Status): void {
   const p = phaseInfo(s);
-  $("#side-version").textContent = `Version ${s.version}`;
+  $("#side-version").textContent = `v${s.version}`;
   const done = pct(s.library.synced_files, s.library.files);
+  // The phase in words (it can be long: "Uploading · 2 accounts · 2 files"), cut to fit, and the
+  // share backed up as a counter beside it.
+  const tint = {
+    good: "text-good",
+    warn: "text-warn",
+    bad: "text-bad",
+    info: "text-accent",
+    "": "text-ink-3",
+  }[p.tone];
   html(
     $("#side-status"),
-    `<div class="flex items-center justify-between gap-2">${phaseBadge(s)}<span class="text-xs text-ink-3 tabular-nums">${done.toFixed(done < 100 && done > 99 ? 1 : 0)}%</span></div>
-     <div class="bar mt-2.5 ${s.phase === "uploading" ? "active" : ""}"><i style="width:${done}%"></i></div>
+    `<div class="flex items-center gap-2" data-tip="${esc(p.detail)}"><span class="${tint} shrink-0">${icon(p.icon, s.phase === "scanning" || s.phase === "starting" ? "size-4 spin" : "size-4")}</span><span class="min-w-0 flex-1 truncate text-sm font-medium">${esc(p.label)}</span><span class="meta shrink-0">${done.toFixed(done < 100 && done > 99 ? 1 : 0)}%</span></div>
+     <div class="bar mt-3 ${s.phase === "uploading" ? "active" : ""}"><i style="width:${done}%"></i></div>
      <div class="mt-2 truncate text-xs text-ink-3" title="${esc(p.detail)}">${esc(p.detail)}</div>
      <div class="mt-3 flex flex-wrap gap-1">${syncChips(s)}</div>`,
   );
@@ -324,33 +332,6 @@ function haptic(): void {
   if (matchMedia("(pointer: coarse)").matches) navigator.vibrate?.(8);
 }
 
-/** Touch feedback: a ripple from where the finger lands. */
-function ripples(): void {
-  const SEL = ".btn, .nav-item, .set-item, .set-tab, a.card, .row.clickable, .seg button, figure[data-open]";
-  document.addEventListener(
-    "pointerdown",
-    (e) => {
-      const host = (e.target as Element | null)?.closest?.<HTMLElement>(SEL);
-      if (!host || (host as HTMLButtonElement).disabled) return;
-      const r = host.getBoundingClientRect();
-      const size = Math.max(r.width, r.height) * 2;
-      const dot = document.createElement("span");
-      dot.className = "ripple";
-      dot.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX - r.left - size / 2}px;top:${e.clientY - r.top - size / 2}px`;
-      host.append(dot);
-      dot.addEventListener("animationend", () => dot.remove(), { once: true });
-      setTimeout(() => dot.remove(), 900);
-    },
-    { passive: true },
-  );
-}
-
-function installButtons(): void {
-  const show = installState() === "ready";
-  $("#btn-install").classList.toggle("hidden", !show);
-  $("#side-install").classList.toggle("hidden", installState() === "installed");
-}
-
 /** Tell the server this device's time zone: it is the system default when the app wasn't given
  * one (TZ), and Settings › Appearance can choose another. */
 async function saveTimeZone(): Promise<void> {
@@ -388,28 +369,7 @@ function boot(): void {
   document.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && openFrom(e.target as HTMLElement)) e.preventDefault();
   });
-  // A soft light follows the mouse over cards: at most once per frame, never for touch.
-  let lightFrame = 0;
-  let lastMove: PointerEvent | null = null;
-  document.addEventListener(
-    "pointermove",
-    (e) => {
-      if (e.pointerType !== "mouse") return;
-      lastMove = e;
-      if (lightFrame) return;
-      lightFrame = requestAnimationFrame(() => {
-        lightFrame = 0;
-        const ev = lastMove;
-        const card = (ev?.target as Element | null)?.closest?.<HTMLElement>(".card");
-        if (!ev || !card) return;
-        const r = card.getBoundingClientRect();
-        card.style.setProperty("--mx", `${ev.clientX - r.left}px`);
-        card.style.setProperty("--my", `${ev.clientY - r.top}px`);
-      });
-    },
-    { passive: true },
-  );
-  // Library pictures fade in once decoded, and their placeholder stops shimmering.
+  // Library pictures fade in once decoded.
   document.addEventListener(
     "load",
     (e) => {
@@ -444,11 +404,10 @@ function boot(): void {
     if (b) void runControl(b);
   });
   onPageControls(paintControls);
-  $("#btn-install").addEventListener("click", () => void install());
-  $("#side-install").addEventListener("click", () => void install());
-  installButtons();
-  onInstallChange(installButtons);
-  ripples();
+  $("#view").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-how]");
+    if (b && active) toggleHow(active.id, b);
+  });
   wireGlassToggles();
   const offline = $("#offline");
   new MutationObserver(() =>

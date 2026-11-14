@@ -43,7 +43,7 @@ function render(): void {
           .map(
             (
               a,
-            ) => `<div class="row"><span class="grid size-9 place-items-center rounded-full bg-panel-2 text-sm font-semibold uppercase">${esc(a.email[0] ?? "?")}</span>
+            ) => `<div class="row"><span class="grid size-9 place-items-center rounded-full bg-panel-2 text-sm font-medium uppercase">${esc(a.email[0] ?? "?")}</span>
             <div class="min-w-0 flex-1"><div class="truncate text-sm font-medium">${esc(a.email)}</div><div class="text-xs text-ink-3">Login saved ${a.login_saved ? date(a.login_saved, true) : "unknown"} · last upload ${ago(a.last_success)}</div></div>
             ${a.login_rejected ? badge("Rejected", "bad", "warn") : badge("OK", "good", "ok")}</div>`,
           )
@@ -53,7 +53,7 @@ function render(): void {
   const c = h.checks;
   const checks: [string, boolean, string][] = [
     ["Media folders readable (read-only)", c.media_readable, c.media_readable ? "OK" : "Not found"],
-    ["Phone upload folder", c.upload_folder, c.upload_folder ? "Writable" : "Not mounted"],
+    ["Upload folder", c.upload_folder, c.upload_folder ? "Writable" : "Not mounted"],
     ["Statistics database", c.turso, c.turso ? "Turso" : "SQLite fallback"],
     ["Errors in the last 24 h", c.errors_24h === 0, c.errors_24h ? String(c.errors_24h) : "None"],
   ];
@@ -126,10 +126,10 @@ const health: View = {
   subtitle: "Accounts, storage and logs",
   mount(el) {
     el.innerHTML = `
-    <div class="grid grid-cols-2 gap-4 xl:grid-cols-4" id="hl-tiles">
+    <div class="stat-row" id="hl-tiles">
       <div class="card p-4" id="hl-t1"></div><div class="card p-4" id="hl-t2"></div><div class="card p-4" id="hl-t3"></div><div class="card p-4" id="hl-t4"></div>
     </div>
-    <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <section class="card">${cardHead("CPU", "cpu", '<span id="hl-cpu-now" class="num text-sm text-ink"></span>')}<div class="card-b"><div id="hl-cpu" data-chart class="h-[160px]"></div></div></section>
       <section class="card">${cardHead("Memory", "memory", '<span id="hl-mem-now" class="num text-sm text-ink"></span>')}<div class="card-b"><div id="hl-mem" data-chart class="h-[160px]"></div></div></section>
       <section class="card">${cardHead("Disk", "disk", '<span id="hl-io-now" class="text-xs"></span>')}<div class="card-b"><div id="hl-io" data-chart class="h-[160px]"></div></div></section>

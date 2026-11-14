@@ -187,7 +187,7 @@ function row(i: WorkItem): string {
   return `<li data-key="${esc(i.key)}" style="--step:${colorOf(groupOf(i))}"><${tag} class="work-row"${i.href ? ` href="${esc(i.href)}"` : ""}>
     <span class="work-ic">${icon(ic, `size-4 ${spin ? "spin" : ""}`)}</span>
     <span class="min-w-0 flex-1">
-      <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium" title="${esc(i.title ?? i.name)}">${esc(i.name)}</span>${p != null && i.pct == null ? `<span class="ml-auto shrink-0 text-xs font-semibold tabular-nums">${Math.floor(p)}%</span>` : ""}</span>
+      <span class="flex items-baseline gap-2"><span class="truncate text-sm font-medium" title="${esc(i.title ?? i.name)}">${esc(i.name)}</span>${p != null && i.pct == null ? `<span class="ml-auto shrink-0 text-xs font-medium tabular-nums">${Math.floor(p)}%</span>` : ""}</span>
       <span class="bar mt-1.5 block h-1.5 ${p == null ? "indeterminate" : "active"}"><i style="width:${p ?? 35}%"></i></span>
       ${
         i.note

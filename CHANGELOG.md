@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+- **A calmer dashboard.** The chrome steps back so your photos and the backup's progress carry
+  the colour: graphite surfaces one step apart with hairlines (near-neutral paper by day), no dot
+  grid, glows, gradients or light that follows the mouse. Buttons, inputs and tabs share one
+  10px corner; cards 16px. The main button is off-white at night and ink by day; moonlight blue
+  (night) and amber (day) stay as the one accent, on the selection, the progress bars and the Sync
+  ring. Labels are in sentence case (no more spaced capitals), headings are lighter, counts next
+  to the menu are plain numbers (red only when something failed), and badges are quiet outlines,
+  with a fill only for warnings and errors.
+- Counters read like frame numbers: the version, the sidebar's share backed up, the menu counts
+  and Sync's "2,052 / 2,312 files in Google Photos" are set in mono.
+- Sync's backup ring is a flat, thinner arc; charts and sparklines lost their glow and 3D bars.
+  Overview's process cards and stat tiles show a plain icon instead of a coloured tile.
+- The sidebar has a flat mark (a photo with an arrow going up) in place of the glossy icon; the
+  app icon itself is unchanged. Snapchat has its own icon (a ghost) instead of sparkles.
+- Less motion: no ripple on tap, no bouncing upload icon, no pulsing Live dot, no zoom on hover
+  over photos and cards, no shimmer while pictures load. Spinners stay where work is running.
+- The sidebar's status card no longer spills its percentage past the edge when the status is long.
+- **Fix: Sync's Now card stayed empty while uploading** (a missing import threw on every update).
+- README: the dashboard's look and its design rules (Development).
+- **Labs.** Snapchat, Sources and Fix dates moved into a new Labs group in the menu (and the
+  phone's More sheet), with a small Labs tag on their pages.
+- **Every page opens the same way:** what the page is for, then a **How it works** button where a
+  page needs explaining (Free storage, Fix dates, Sources, Snapchat), with the same numbered
+  steps everywhere; the choice to keep it open is remembered on this device. Library and Activity
+  now start with summary numbers (Library: files here, in Google Photos, waiting, failed;
+  Activity: uploaded, already in Google, failed, since the app started), and Library, Activity,
+  Folders and History share one filter bar.
+- **Folders, reimagined as a browser.** One tree of your backed-up folders on the left, the open
+  folder on the right, so opening a folder never loses your place. Everything is a folder now:
+  the Devices/Folders switch and the "phone" labels are gone (GP Sync guessed phones from folders
+  a backup app fills with `00`…`ff`, which named ordinary folders as phones). On the Sync page,
+  "Where your photos are" says Subfolders instead of Devices. Folders set to back up first are pinned at the top,
+  numbered, with move and remove. The open folder has a compact **Back up first** switch beside its
+  name, its accounts, and four numbers (photos, videos, waiting, failed) that filter its photos when
+  tapped. The rest is in tabs: **Photos** (by day; a picked day shows as a chip you can clear),
+  **Folders inside** and **Added** (arrivals per day, with "Show these" for a picked day). On small
+  screens the tree is the first screen and folds away when a folder opens. Old links still open
+  the same folder.
+- **"Phone" only where it means a phone.** Files sent from the Upload page (from any phone or
+  computer) show in Activity as "Uploaded here" with the message "Received … from the Upload
+  page", not "from a phone". About and Health call it the Upload folder, and Sync's link to the
+  Upload page says "Add files", like the header. The README's phone highlight no longer promises
+  an install button.
+- **Install as an app is gone from the dashboard:** no Install buttons in the sidebar or header,
+  and no install card in Settings → Appearance. The browser can still add GP Sync to the home
+  screen from its own menu, and sharing from the gallery to an installed GP Sync still works.
+
 ## 1.7.5
 
 - **Security: other websites can no longer change GP Sync.** Without a password, a page on any
