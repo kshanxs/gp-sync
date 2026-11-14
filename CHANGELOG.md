@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.8.0
+
 - **A calmer dashboard.** The chrome steps back so your photos and the backup's progress carry
   the colour: graphite surfaces one step apart with hairlines (near-neutral paper by day), no dot
   grid, glows, gradients or light that follows the mouse. Buttons, inputs and tabs share one
