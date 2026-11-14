@@ -9,11 +9,13 @@ wins, and the Work log row says so. Written by the handoff skill (`handoff.py lo
 
 | Item | Owner | Status | Link |
 |---|---|---|---|
-| Release 1.8.0: on main, image not published yet | Claude | Blocked | main 8405e81 |
+| Nothing in progress right now | - | - | - |
 
 ## Next up
 
-1. Try two accounts on the Umbrel dashboard (pull main first).
+1. Update GP Sync to 1.8.0 on the Umbrel and look over the new dashboard (Folders, Labs, page frame).
+2. Dockerfile follow-up: install packages from a copy of pyproject.toml/uv.lock with the project version blanked, so a version-only release reuses the 165 MB packages layer. Tried 2026-11-14, couldn't be tested (PyPI downloads timed out on umbrel); test it when CI runs again.
+3. Try two accounts on the Umbrel dashboard (pull main first).
 2. After the fixes ship: on Umbrel, change a setting in the dashboard and confirm it saves.
 3. Docker users who open GP Sync by a domain name without a password need ALLOWED_HOSTS: say so in the release notes.
 
@@ -29,7 +31,7 @@ in their own words, and record the answer in the Work log row.
 
 What cannot move, and why.
 
-- GP Sync 1.8.0 is on main (8405e81) but not published: GitHub Actions won't start jobs ("account is locked due to a billing issue"), so CI can't build, tag or update the store. Building on umbrel works, but pushing the 165 MB Python layer to Docker Hub keeps dropping over umbrel's Wi-Fi (3 tries). No v1.8.0 tag, no GitHub release, store still on 1.7.5. 1.7.5 itself was also published by hand (no v1.7.5 tag). A push from homelab01 (owner-approved, image file built on umbrel at /home/umbrel/gp-sync-1.8.0.oci.tar, index sha256:7e19c2f0…) was refused: Docker Hub rejected umbrel's saved kshanxs token (it worked from umbrel earlier the same day) and then locked logins for a while. Needs a new Docker Hub access token, or GitHub billing fixed so CI uses its own secrets.
+- GitHub Actions won't start jobs ("account is locked due to a billing issue"): no CI, no automatic releases, and the store's hourly update can't run. Until it is fixed, releases are published by hand from umbrel (see the Work log row for 1.8.0). CLIProxyAPI 8.0.70 is waiting in the store for the same reason.
 
 ## Rules
 
@@ -53,6 +55,7 @@ Newest first. One row per session that changed anything; never edit another sess
 
 | Date | Entry | Agent | Area | What changed | Links | Next step | Status |
 |---|---|---|---|---|---|---|---|
+| 2026-11-14T19:45+05:30 | Release 1.8.0 shipped | Claude | Release | Full-image pushes from umbrel failed 13 times (Docker Hub drops the 165 MB packages layer; PyPI downloads also time out here), and a homelab01 push was refused (skopeo can't use umbrel's Docker login). Published instead with scripts/patch-release.Dockerfile: the 1.7.5 image as base (packages unchanged: only the version line differs in uv.lock/pyproject.toml) plus 1.8.0 app code and dashboard; smoke-tested on umbrel (reports 1.8.0, new dashboard). Docker Hub kshanxs/gp-sync:1.8.0 and latest = sha256:f37ce7a0… (amd64, arm64). Tag v1.8.0 at 0234df2, GitHub release made. Store: update_apps.py run on umbrel, kshan-gphotos-sync 1.7.5 -> 1.8.0 pushed (fca6d2c); CLIProxyAPI 8.0.70 left out. ghcr.io not updated (gh token has no package scope). Installed app not updated | v1.8.0, store fca6d2c | Owner: update the app on Umbrel; fix GitHub billing | Done |
 | 2026-11-14T13:00+05:30 | Release 1.8.0 (blocked at publish) | Claude | Release | Owner said merge as 1.8.0 and update the store. Merged PR #3, pushed GP Sync 1.8.0 to main after running CI's checks locally (326 backend + 58 web tests, ruff, uv lock, vp check, build). Actions is locked for billing, so built the amd64+arm64 image on umbrel; 3 pushes to Docker Hub failed on the 165 MB layer (connection dropped over Wi-Fi). Store untouched. | main 8405e81 | Owner: fix GitHub billing, plug umbrel into Ethernet, or allow pushing from another machine; then tag v1.8.0, GitHub release, store update | Blocked |
 | 2026-11-14T20:25+05:30 | Phone wording sweep | Claude | Dev | Checked every page and the backend's user-facing text for phone/device. Fixed where it didn't mean a phone: Upload page files are "Uploaded here" / "Received … from the Upload page" (backend log text), Upload folder in About and Health, Sync's link says Add files, README phone highlight no longer promises install, API table explains group=devices. Kept real phone references (Android login, phone alerts, iPhone formats, Google Photos app backups, camera models, this device's time zone). 326 backend + 58 web tests, ruff, vp check and the build pass on umbrel. Pushed to PR #3 | PR #3 | - | Waiting on owner |
 | 2026-11-14T20:05+05:30 | Folders: no phones, just folders | Claude | Dev | Owner: on their Umbrel, ordinary folders were labelled as phones (the 00..ff guess). The Folders page now shows every folder as a folder (no phone icons, no merging of "X (2)", no "Also from this device"); Sync's chart says Subfolders instead of Devices. The backend still sets device and merges names for group=devices (unchanged). vp check, 58 tests and the build pass on umbrel. Pushed to PR #3 | PR #3 | Possibly rename the API's group=devices later | Waiting on owner |
