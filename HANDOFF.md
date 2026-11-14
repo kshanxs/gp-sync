@@ -9,7 +9,7 @@ wins, and the Work log row says so. Written by the handoff skill (`handoff.py lo
 
 | Item | Owner | Status | Link |
 |---|---|---|---|
-| Unslop the web UI: PR open, not merged | Owner | Review | branch unslop-web-ui |
+| Release 1.8.0: on main, image not published yet | Claude | Blocked | main 8405e81 |
 
 ## Next up
 
@@ -29,7 +29,7 @@ in their own words, and record the answer in the Work log row.
 
 What cannot move, and why.
 
-- Nothing.
+- GP Sync 1.8.0 is on main (8405e81) but not published: GitHub Actions won't start jobs ("account is locked due to a billing issue"), so CI can't build, tag or update the store. Building on umbrel works, but pushing the 165 MB Python layer to Docker Hub keeps dropping over umbrel's Wi-Fi (3 tries). No v1.8.0 tag, no GitHub release, store still on 1.7.5. 1.7.5 itself was also published by hand (no v1.7.5 tag).
 
 ## Rules
 
@@ -53,6 +53,7 @@ Newest first. One row per session that changed anything; never edit another sess
 
 | Date | Entry | Agent | Area | What changed | Links | Next step | Status |
 |---|---|---|---|---|---|---|---|
+| 2026-11-14T13:00+05:30 | Release 1.8.0 (blocked at publish) | Claude | Release | Owner said merge as 1.8.0 and update the store. Merged PR #3, pushed GP Sync 1.8.0 to main after running CI's checks locally (326 backend + 58 web tests, ruff, uv lock, vp check, build). Actions is locked for billing, so built the amd64+arm64 image on umbrel; 3 pushes to Docker Hub failed on the 165 MB layer (connection dropped over Wi-Fi). Store untouched. | main 8405e81 | Owner: fix GitHub billing, plug umbrel into Ethernet, or allow pushing from another machine; then tag v1.8.0, GitHub release, store update | Blocked |
 | 2026-11-14T20:25+05:30 | Phone wording sweep | Claude | Dev | Checked every page and the backend's user-facing text for phone/device. Fixed where it didn't mean a phone: Upload page files are "Uploaded here" / "Received … from the Upload page" (backend log text), Upload folder in About and Health, Sync's link says Add files, README phone highlight no longer promises install, API table explains group=devices. Kept real phone references (Android login, phone alerts, iPhone formats, Google Photos app backups, camera models, this device's time zone). 326 backend + 58 web tests, ruff, vp check and the build pass on umbrel. Pushed to PR #3 | PR #3 | - | Waiting on owner |
 | 2026-11-14T20:05+05:30 | Folders: no phones, just folders | Claude | Dev | Owner: on their Umbrel, ordinary folders were labelled as phones (the 00..ff guess). The Folders page now shows every folder as a folder (no phone icons, no merging of "X (2)", no "Also from this device"); Sync's chart says Subfolders instead of Devices. The backend still sets device and merges names for group=devices (unchanged). vp check, 58 tests and the build pass on umbrel. Pushed to PR #3 | PR #3 | Possibly rename the API's group=devices later | Waiting on owner |
 | 2026-11-14T19:40+05:30 | Folders page as a browser | Claude | Dev | Owner chose: two-pane browser, photos first with tabs, priority pinned in the navigator. Rewrote web/src/views/folders.ts (one tree loaded a level at a time, phones merged as devices, numbers as filters, tabs Photos / Folders inside / Added); backup-priority.ts is now a compact switch with the same wording (its tests pass). Old #/folders links unchanged. vp check, 58 web tests and the build pass; checked in a headless browser on umbrel at desktop and phone width with test folders. Pushed to PR #3 | PR #3 | Owner: try it on the Umbrel with real phone folders | Waiting on owner |
