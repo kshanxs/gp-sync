@@ -396,16 +396,6 @@ function cameraInputs(): string {
     : `<input type="file" id="shoot" class="sr-only" accept="image/*,video/*" capture="environment">`;
 }
 
-/** Only where it can work: Android's Share menu lists the installed app on HTTPS. */
-function shareTip(): string {
-  if (!ANDROID) return "";
-  return `<p class="flex gap-2">${icon("upload", "mt-0.5 size-4 shrink-0 text-ink-3")}<span>${
-    isSecureContext
-      ? "Installed as an app, GP Sync appears in the gallery's <b>Share</b> menu: share photos straight to it."
-      : "Open this page over HTTPS and install it to share photos to it from the gallery."
-  }</span></p>`;
-}
-
 // Keep the screen on while uploading (phones stop web pages when the screen locks).
 let wakeLock: { release: () => Promise<void> } | null = null;
 async function keepAwake(on: boolean): Promise<void> {
@@ -438,7 +428,7 @@ const upload: View = {
           <span class="grid size-14 place-items-center rounded-xl bg-panel-2 text-accent">${icon("cloudUp", "size-7")}</span>
           <div><div class="text-lg font-medium"><span class="pointer-coarse:hidden">Drop photos and videos here</span><span class="hidden pointer-coarse:inline">Add photos and videos</span></div><div class="mt-1 text-sm text-ink-3"><span class="pointer-coarse:hidden">or choose them from your computer.</span><span class="hidden pointer-coarse:inline">Pick from your gallery or take a new one.</span> Full quality, any size.</div></div>
           <div class="flex flex-wrap justify-center gap-2">
-            <!-- Labels open their file input natively: works in every phone browser and the installed app. -->
+            <!-- Labels open their file input natively: works in every phone browser. -->
             <label for="pick" class="btn primary">${icon("library")}Choose files</label>
             ${cameraButtons()}
           </div>
@@ -465,7 +455,6 @@ const upload: View = {
           <p class="flex gap-2">${icon("refresh", "mt-0.5 size-4 shrink-0 text-ink-3")}<span>Big videos go up in pieces. If Wi-Fi drops, the upload continues where it stopped.</span></p>
           <p class="flex gap-2">${icon("copy", "mt-0.5 size-4 shrink-0 text-ink-3")}<span>Photos already on ${esc(host())} are recognised and not stored twice.</span></p>
           <p class="flex gap-2">${icon("phone", "mt-0.5 size-4 shrink-0 text-ink-3")}<span>Keep this page open while uploading.</span></p>
-          ${shareTip()}
         </div>
       </section>
     </div>`;

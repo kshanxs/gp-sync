@@ -364,6 +364,23 @@ function onChange(e: Event): void {
 
 const sources: View = {
   subtitle: "Where each photo and video came from",
+  how: [
+    {
+      ic: "search",
+      title: "Markers, not guesses",
+      text: "Only markers inside a file (or its name) are used, never a guess.",
+    },
+    {
+      ic: "layers",
+      title: "Saved from an app",
+      text: "Most app videos carry no app name: they show as “Saved from an app”.",
+    },
+    {
+      ic: "calendar",
+      title: "Snapchat saves",
+      text: "Snapchat saves are dated from the iOS version they were saved on, placed in time by your camera photos.",
+    },
+  ],
   mount(el) {
     opened = true; // the first load draws the last answer at once (peek), then the fresh one
     picked.clear();
@@ -371,14 +388,6 @@ const sources: View = {
     shown = 60;
     editing = false;
     el.innerHTML = `
-    <details class="mb-4 px-1 text-sm text-ink-3">
-      <summary class="cursor-pointer font-medium text-ink-2">How it works</summary>
-      <div class="mt-2 space-y-2 leading-relaxed">
-        <p>Only markers inside a file (or its name) are used, never a guess.</p>
-        <p>Most app videos carry no app name: they show as “Saved from an app”.</p>
-        <p>Snapchat saves are dated from the iOS version they were saved on, placed in time by your camera photos.</p>
-      </div>
-    </details>
     <div id="so-body"><div class="card skeleton h-72"></div></div>`;
     el.addEventListener("click", onClick);
     el.addEventListener("change", onChange);

@@ -17,7 +17,8 @@ import { ring } from "../lib/charts";
 import { icon } from "../lib/icons";
 import { choices, matchBadge, missingNote, offset, SNAP_ACTION_LABEL, SNAP_GROUPS } from "../lib/snapchat";
 import { setPageStatus, setPauseControl, setRefreshControl, status } from "../lib/store";
-import { openAttrs, thumb } from "../lib/ui";
+import { cardHead, openAttrs, thumb } from "../lib/ui";
+import { howSteps } from "../lib/page";
 import type { View } from "./view";
 
 // Snapchat: memories from a Snapchat export (made into a folder by scripts/snapchat_export.py, with
@@ -357,13 +358,25 @@ function render(): void {
     setRefreshControl(null);
     html(
       $("#sc-body"),
-      `<section class="card p-5 text-sm text-ink-2">
-        <h2 class="text-lg font-medium">Bring in your Snapchat Memories</h2>
-        <ol class="mt-4 grid gap-3 sm:grid-cols-3">
-          <li class="sc-step">${icon("download", "size-5")}<b>Download</b><span>Snapchat › Settings › My Data: tick Memories, download every zip.</span></li>
-          <li class="sc-step">${icon("code", "size-5")}<b>Run the script</b><span><code>python3 scripts/snapchat_export.py &lt;zips&gt; &lt;Photos/Snapchat&gt;</code></span></li>
-          <li class="sc-step">${icon("sparkles", "size-5")}<b>Review here</b><span>Each memory is found in Google before anything is uploaded.</span></li>
-        </ol>
+      `<section class="card">
+        ${cardHead("Bring in your Snapchat Memories", "ghost")}
+        <div class="card-b [&_.how]:mb-0">${howSteps([
+          {
+            ic: "download",
+            title: "Download",
+            text: "Snapchat › Settings › My Data: tick Memories, download every zip.",
+          },
+          {
+            ic: "code",
+            title: "Run the script",
+            text: "<code>python3 scripts/snapchat_export.py &lt;zips&gt; &lt;Photos/Snapchat&gt;</code>",
+          },
+          {
+            ic: "search",
+            title: "Review here",
+            text: "Each memory is found in Google before anything is uploaded.",
+          },
+        ])}</div>
       </section>`,
     );
     return;
@@ -551,6 +564,23 @@ async function onChange(e: Event): Promise<void> {
 
 const snapchat: View = {
   subtitle: "Snapchat Memories with their real date, without duplicates",
+  how: [
+    {
+      ic: "search",
+      title: "Find",
+      text: "Each memory is looked for in Google: the same file, the same second, or a picture that looks the same.",
+    },
+    {
+      ic: "calendar",
+      title: "Decide",
+      text: "Right date: into the album. Later date: replaced with Snapchat's. Missing: uploaded. Originals keep their date.",
+    },
+    {
+      ic: "copy",
+      title: "Clean up",
+      text: "Extra copies leave Google. Less certain ones are saved here first.",
+    },
+  ],
   mount(el) {
     opened = true; // the first load draws the last answer at once (peek), then the fresh one
     show = "replace";
@@ -558,14 +588,6 @@ const snapchat: View = {
     listHtml = "";
     el.innerHTML = `
     <div id="sc-chips"></div>
-    <details class="sc-how mb-4">
-      <summary>${icon("info", "size-4")}How it works</summary>
-      <ol class="mt-3 grid gap-3 sm:grid-cols-3">
-        <li class="sc-step">${icon("search", "size-5")}<b>Find</b><span>Each memory is looked for in Google: the same file, the same second, or a picture that looks the same.</span></li>
-        <li class="sc-step">${icon("calendar", "size-5")}<b>Decide</b><span>Right date: into the album. Later date: replaced with Snapchat's. Missing: uploaded. Originals keep their date.</span></li>
-        <li class="sc-step">${icon("copy", "size-5")}<b>Clean up</b><span>Extra copies leave Google. Less certain ones are saved here first.</span></li>
-      </ol>
-    </details>
     <div id="sc-body"><div class="card skeleton h-72"></div></div>`;
     el.addEventListener("click", onClick);
     el.addEventListener("keydown", (e) => {

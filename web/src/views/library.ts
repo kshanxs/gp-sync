@@ -4,6 +4,7 @@ import { ago, bytes, fileName, folderOf, num } from "../lib/format";
 import { icon } from "../lib/icons";
 import { host, status } from "../lib/store";
 import { badge, openAttrs, thumb } from "../lib/ui";
+import { setTile, statRow } from "../lib/page";
 import type { View } from "./view";
 
 const STATUS: Record<string, [string, "good" | "info" | "bad"]> = {
@@ -178,11 +179,17 @@ const library: View = {
     tab = args[0] === "duplicates" ? "dups" : "files";
     if (args[0] === "folder") folder = args.slice(1).map(decodeURIComponent).join("/");
     el.innerHTML = `
-    <section class="card mb-4 flex flex-wrap items-center gap-2 p-3">
+    ${statRow([
+      { id: "lib-t-files", label: "Files here", value: "–", ic: "library" },
+      { id: "lib-t-in", label: "In Google Photos", value: "–", ic: "cloudUp" },
+      { id: "lib-t-wait", label: "Waiting", value: "–", ic: "hourglass", href: "#/sync" },
+      { id: "lib-t-failed", label: "Failed", value: "–", ic: "error", href: "#/activity/failed" },
+    ])}
+    <section class="toolbar">
       <div class="seg" id="lib-tab"><button data-t="files">${icon("library")}Files</button><button data-t="dups">${icon("copy")}Duplicates</button></div>
-      <span class="text-sm text-ink-3" id="lib-count"></span>
-      <div class="flex w-full flex-wrap items-center gap-2 lg:ml-auto lg:w-auto" id="lib-tools">
-        <label class="relative min-w-48 flex-1">${icon("search", "absolute top-3 left-3 size-4 text-ink-3")}<input class="input pl-9" id="lib-q" placeholder="Search by name or folder"></label>
+      <span class="meta toolbar-count" id="lib-count"></span>
+      <div class="toolbar-end" id="lib-tools">
+        <label class="toolbar-search">${icon("search", "pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3")}<input class="input pl-9" id="lib-q" placeholder="Search by name or folder" aria-label="Search by name or folder"></label>
         <div class="seg" id="lib-st">${[
           ["all", "All"],
           ["uploaded", "Uploaded"],
@@ -238,6 +245,23 @@ const library: View = {
     loading = false;
   },
   update(s) {
+    const lib = s.library;
+    setTile(
+      "lib-t-files",
+      num(lib.files),
+      lib.photos != null ? `${num(lib.photos)} photos · ${num(lib.videos ?? 0)} videos` : bytes(lib.bytes),
+    );
+    setTile(
+      "lib-t-in",
+      num(lib.synced_files),
+      lib.files ? `${Math.floor((lib.synced_files / lib.files) * 100)}% · ${bytes(lib.synced_bytes)}` : "",
+    );
+    setTile(
+      "lib-t-wait",
+      num(Math.max(0, lib.files - lib.synced_files)),
+      bytes(Math.max(0, lib.bytes - lib.synced_bytes)),
+    );
+    setTile("lib-t-failed", num(s.counts.failed), s.counts.failed ? "See Activity" : "None");
     const sel = document.getElementById("lib-folder") as HTMLSelectElement | null;
     if (sel && sel.options.length <= (folder ? 2 : 1) && Object.keys(s.folders).length)
       sel.innerHTML = folderOptions(s);

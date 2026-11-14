@@ -21,6 +21,17 @@
 - The sidebar's status card no longer spills its percentage past the edge when the status is long.
 - **Fix: Sync's Now card stayed empty while uploading** (a missing import threw on every update).
 - README: the dashboard's look and its design rules (Development).
+- **Labs.** Snapchat, Sources and Fix dates moved into a new Labs group in the menu (and the
+  phone's More sheet), with a small Labs tag on their pages.
+- **Every page opens the same way:** what the page is for, then a **How it works** button where a
+  page needs explaining (Free storage, Fix dates, Sources, Snapchat), with the same numbered
+  steps everywhere; the choice to keep it open is remembered on this device. Library and Activity
+  now start with summary numbers (Library: files here, in Google Photos, waiting, failed;
+  Activity: uploaded, already in Google, failed, since the app started), and Library, Activity,
+  Folders and History share one filter bar.
+- **Install as an app is gone from the dashboard:** no Install buttons in the sidebar or header,
+  and no install card in Settings → Appearance. The browser can still add GP Sync to the home
+  screen from its own menu, and sharing from the gallery to an installed GP Sync still works.
 
 ## 1.7.5
 

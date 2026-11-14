@@ -230,7 +230,11 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
 - **Time zone:** choose any time zone in **Settings → Appearance**, or keep the system default
   (for example India Standard Time). History, Insights, upload hours, the weekly summary and every
   time shown follow it, daylight saving included.
-- **Install as an app:** add the dashboard to a phone's home screen.
+- **Labs:** Snapchat, Sources and Fix dates sit in their own Labs group in the menu. They work;
+  how they work may still change.
+- Every page opens the same way: a line saying what it is for (with a Labs tag on Labs pages and
+  a folded **How it works** where a page needs explaining), then its summary numbers, then a
+  toolbar with its filters, a count and search.
 - Sidebar on desktop, bottom tabs and a "More" menu on phones; dark and light themes. The
   dashboard keeps its own chrome quiet (graphite at night, near-neutral paper by day) so your
   photos and the backup's progress carry the colour, with one accent: moonlight blue at night,
@@ -455,6 +459,10 @@ Design rules for the dashboard (colours and components are in `web/src/style.css
   in mono (`.meta`).
 - Lucide icons in the text colour; spacing on a 4px grid.
 - Motion is short and uses one curve (`--ease`). Nothing loops unless work is really running.
+- Pages are built from the same parts (`web/src/lib/page.ts`): the header comes from the View's
+  `subtitle` and `how` (main.ts draws it, with the Labs tag for routes in the Labs group), the
+  summary numbers from `statRow()` and `setTile()`, the filter bar from `toolbar()` or the
+  `.toolbar` classes. A new page uses these before adding its own.
 
 In `web/`:
 

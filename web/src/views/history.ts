@@ -353,12 +353,12 @@ const historyView: View = {
   subtitle: "Every process, day by day",
   mount(el) {
     el.innerHTML = `
-    <div class="seg mb-4" id="h-proc" aria-label="Which process">${[
+    <section class="toolbar"><div class="seg" id="h-proc" aria-label="Which process">${[
       ...PROCESS_KEYS.map((k) => [k, PROCESS[k].label]),
       ["all", "Everything"],
     ]
       .map(([k, l]) => `<button data-p="${k}" aria-pressed="${k === proc}">${l}</button>`)
-      .join("")}</div>
+      .join("")}</div></section>
     <div class="grid grid-cols-2 gap-4 md:grid-cols-3 2xl:grid-cols-6" id="h-tiles">${'<div class="card skeleton h-28"></div>'.repeat(6)}</div>
     <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
       <section class="card xl:col-span-12">

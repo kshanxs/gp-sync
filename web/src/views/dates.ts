@@ -442,6 +442,23 @@ function linkedAccount(args: string[] | undefined): string {
 
 const dates: View = {
   subtitle: "Photos and videos Google gave the wrong day",
+  how: [
+    {
+      ic: "shield",
+      title: "Only exact files",
+      text: "A fix runs only if the file here is exactly what was uploaded.",
+    },
+    {
+      ic: "retry",
+      title: "Deleted and sent again",
+      text: "Press Fix: GP Sync deletes the item in Google Photos (and its Trash) and uploads it again with the right date.",
+    },
+    {
+      ic: "ok",
+      title: "What comes back",
+      text: "Quality, favourite, archive, caption and GP Sync albums come back. Shared links and comments don't.",
+    },
+  ],
   mount(el, args) {
     opened = true; // the first load draws the last answer at once (peek), then the fresh one
     account = linkedAccount(args);
@@ -455,13 +472,6 @@ const dates: View = {
       <span id="dt-acc" class="page-bar-main"></span>
       <span class="page-bar-when" id="dt-when"></span>
     </section>
-    <details class="mb-4 px-1 text-sm text-ink-3">
-      <summary class="cursor-pointer font-medium text-ink-2">How it works</summary>
-      <div class="mt-2 space-y-2 leading-relaxed">
-        <p>Press Fix: GP Sync deletes the item in Google Photos (and its Trash) and uploads it again with the right date. Only if the file here is exactly what was uploaded.</p>
-        <p>Quality, favourite, archive, caption and GP Sync albums come back. Shared links and comments don't.</p>
-      </div>
-    </details>
     <div id="dt-body"><div class="card skeleton h-72"></div></div>`;
     el.addEventListener("click", onClick);
     el.addEventListener("change", (e) => {

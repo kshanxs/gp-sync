@@ -126,10 +126,10 @@ const health: View = {
   subtitle: "Accounts, storage and logs",
   mount(el) {
     el.innerHTML = `
-    <div class="grid grid-cols-2 gap-4 xl:grid-cols-4" id="hl-tiles">
+    <div class="stat-row" id="hl-tiles">
       <div class="card p-4" id="hl-t1"></div><div class="card p-4" id="hl-t2"></div><div class="card p-4" id="hl-t3"></div><div class="card p-4" id="hl-t4"></div>
     </div>
-    <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
       <section class="card">${cardHead("CPU", "cpu", '<span id="hl-cpu-now" class="num text-sm text-ink"></span>')}<div class="card-b"><div id="hl-cpu" data-chart class="h-[160px]"></div></div></section>
       <section class="card">${cardHead("Memory", "memory", '<span id="hl-mem-now" class="num text-sm text-ink"></span>')}<div class="card-b"><div id="hl-mem" data-chart class="h-[160px]"></div></div></section>
       <section class="card">${cardHead("Disk", "disk", '<span id="hl-io-now" class="text-xs"></span>')}<div class="card-b"><div id="hl-io" data-chart class="h-[160px]"></div></div></section>

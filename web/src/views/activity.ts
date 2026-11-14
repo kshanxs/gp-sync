@@ -4,12 +4,13 @@ import { ago, bytes, clock, dayLabel, fileName, folderOf, num } from "../lib/for
 import { icon } from "../lib/icons";
 import { refresh } from "../lib/store";
 import { badge, cardHead, eventMeta, openAttrs, thumb } from "../lib/ui";
+import { setTile, statRow } from "../lib/page";
 import type { View } from "./view";
 
 const FILTERS: [string, string, string][] = [
   ["all", "All", "layers"],
   ["uploaded", "Uploaded", "cloudUp"],
-  ["google", "Google changes", "sparkles"],
+  ["google", "Google changes", "cloud"],
   ["exists", "Already in Google", "verified"],
   ["failed", "Problems", "warn"],
   ["system", "System", "settings"],
@@ -77,18 +78,29 @@ const activity: View = {
     kind = FILTERS.some(([k]) => k === args[0]) ? (args[0] as string) : "all";
     query = "";
     el.innerHTML = `
+    ${statRow([
+      { id: "act-t-up", label: "Uploaded", value: "–", ic: "cloudUp", href: "#/activity/uploaded" },
+      {
+        id: "act-t-exists",
+        label: "Already in Google",
+        value: "–",
+        ic: "verified",
+        href: "#/activity/exists",
+      },
+      { id: "act-t-failed", label: "Failed", value: "–", ic: "error", href: "#/activity/failed" },
+      { id: "act-t-session", label: "Since the app started", value: "–", ic: "timer" },
+    ])}
+    <section class="toolbar">
+      <div class="seg" id="act-filter">${FILTERS.map(([k, l, ic]) => `<button data-k="${k}" aria-pressed="${k === kind}">${icon(ic as "layers")}${l}</button>`).join("")}</div>
+      <div class="toolbar-end"><label class="toolbar-search">${icon("search", "pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3")}<input class="input pl-9" id="act-q" placeholder="Search files and messages" aria-label="Search files and messages"></label></div>
+    </section>
     <div class="grid grid-cols-1 gap-4 xl:grid-cols-12">
       <section class="card flex min-h-[70vh] flex-col overflow-hidden xl:col-span-8">
-        <div class="flex flex-wrap items-center gap-2 border-b border-line p-3">
-          <div class="seg" id="act-filter">${FILTERS.map(([k, l, ic]) => `<button data-k="${k}" aria-pressed="${k === kind}">${icon(ic as "layers")}${l}</button>`).join("")}</div>
-          <label class="relative ml-auto w-full sm:w-64">${icon("search", "absolute top-3 left-3 size-4 text-ink-3")}<input class="input pl-9" id="act-q" placeholder="Search files and messages"></label>
-        </div>
         <div id="act-list" class="scroll-thin flex-1 overflow-y-auto" data-gallery><div class="space-y-2 p-4">${'<div class="skeleton h-10"></div>'.repeat(6)}</div></div>
         <div class="border-t border-line p-3 text-center"><button class="btn sm" id="act-more">${icon("history")}Load older</button></div>
       </section>
       <div class="flex flex-col gap-4 xl:col-span-4">
         <section class="card">${cardHead("Problems", "warn", '<button class="btn sm" id="act-retry">' + icon("retry") + "Retry all</button>")}<div id="act-failed" data-gallery></div></section>
-        <section class="card">${cardHead("Totals", "chart")}<div class="grid grid-cols-2 gap-2 p-4" id="act-totals"></div></section>
       </div>
     </div>`;
     $("#act-filter").addEventListener("click", (e) => {
@@ -128,26 +140,13 @@ const activity: View = {
         : `<div class="empty">${icon("shield")}No problems</div>`,
     );
     $("#act-retry").classList.toggle("hidden", !s.failed.length);
-    const t: [string, string, string][] = [
-      ["Uploaded", num(s.counts.uploaded), "cloudUp"],
-      ["Already in Google", num(s.counts.exists), "verified"],
-      ["Failed", num(s.counts.failed), "error"],
-      [
-        "Since the app started",
-        s.session.uploaded_files
-          ? `${num(s.session.uploaded_files)} · ${bytes(s.session.uploaded_bytes)}`
-          : "None yet",
-        "timer",
-      ],
-    ];
-    html(
-      $("#act-totals"),
-      t
-        .map(
-          ([l, v, ic]) =>
-            `<div class="stat-tile"><div class="flex items-center gap-1.5 text-xs text-ink-3">${icon(ic as "cloudUp", "size-3.5")}${l}</div><div class="num truncate text-lg">${v}</div></div>`,
-        )
-        .join("") + `<div class="col-span-2 text-xs text-ink-3">Last scan ${ago(s.last_scan, s.now)}</div>`,
+    setTile("act-t-up", num(s.counts.uploaded), `Last scan ${ago(s.last_scan, s.now)}`);
+    setTile("act-t-exists", num(s.counts.exists), "Skipped, already there");
+    setTile("act-t-failed", num(s.counts.failed), s.counts.failed ? "Retry them under Problems" : "None");
+    setTile(
+      "act-t-session",
+      s.session.uploaded_files ? num(s.session.uploaded_files) : "None yet",
+      s.session.uploaded_files ? bytes(s.session.uploaded_bytes) : "",
     );
     // New entries arrived: refresh the first page quietly when the user is at the top.
     const top = s.log[0]?.time ?? 0;

@@ -16,7 +16,7 @@ import {
   startPolling,
   status,
 } from "./lib/store";
-import { install, installState, onInstallChange } from "./lib/install";
+import { pageHead, toggleHow } from "./lib/page";
 import { openViewer } from "./lib/viewer";
 import { initTheme } from "./lib/theme";
 import { glassToggle, wireGlassToggles } from "./lib/glass-toggle";
@@ -61,12 +61,13 @@ const ROUTES: Route[] = [
   { id: "storage", title: "Free storage", ic: "cloud", view: storage, group: "Backup" },
   { id: "downloads", title: "Downloads", ic: "download", view: downloads, group: "Backup" },
   { id: "copy", title: "Copy accounts", ic: "users", view: copyView, group: "Backup" },
-  { id: "dates", title: "Fix dates", ic: "clock", view: dates, group: "Backup" },
-  { id: "sources", title: "Sources", ic: "layers", view: sources, group: "Backup" },
-  { id: "snapchat", title: "Snapchat", ic: "ghost", view: snapchat, group: "Backup" },
   { id: "folders", title: "Folders", ic: "folder", view: folders, group: "Insights" },
   { id: "insights", title: "Insights", ic: "chart", view: insights, group: "Insights" },
   { id: "network", title: "Network", ic: "wifi", view: network, group: "Insights" },
+  // Labs: specialised or newer tools. They work; how they work may still change.
+  { id: "snapchat", title: "Snapchat", ic: "ghost", view: snapchat, group: "Labs" },
+  { id: "sources", title: "Sources", ic: "layers", view: sources, group: "Labs" },
+  { id: "dates", title: "Fix dates", ic: "clock", view: dates, group: "Labs" },
   { id: "health", title: "Health", ic: "health", view: health, group: "System" },
   { id: "settings", title: "Settings", ic: "settings", view: settings, group: "System" },
   { id: "about", title: "About", ic: "info", view: about, group: "System" },
@@ -105,7 +106,6 @@ function shell(): string {
           )
           .join("")}
       </nav>
-      <button class="nav-item mx-3 hidden" id="side-install">${icon("download")}<span>Install app</span></button>
       <div class="side-status m-3 rounded-xl border border-line bg-panel p-4" id="side-status">
         <div class="skeleton h-5 w-24"></div><div class="skeleton mt-3 h-2"></div><div class="skeleton mt-3 h-10"></div>
       </div>
@@ -119,7 +119,6 @@ function shell(): string {
         <span class="lg:hidden max-[420px]:hidden" id="top-phase"></span>
         <span class="hidden lg:block"><span id="live" class="badge good hidden" data-tip="Updates arrive the moment something happens"><span class="dot live"></span>Live</span></span>
         <span class="hidden" id="offline">${'<span class="badge bad">' + icon("cloudOff") + "Offline</span>"}</span>
-        <button class="btn icon hidden" id="btn-install" title="Install app" aria-label="Install app">${icon("download")}</button>
         ${glassToggle("sm")}
         <a class="btn primary hidden sm:inline-flex" id="btn-add" href="#/upload" aria-label="Add photos and videos from this device" title="Add photos and videos from this device">${icon("upload")}<span>Add files</span></a>
       </header>
@@ -201,8 +200,8 @@ function mountView(r: Route, rest: string[]): void {
   active = r;
   const el = $("#view");
   el.scrollTop = 0;
-  // The page's one-line description sits above its content, not in the header.
-  el.innerHTML = r.view.subtitle ? `<p class="page-intro">${esc(r.view.subtitle)}</p>` : "";
+  // The same header on every page: what it is for, Labs, and "How it works".
+  el.innerHTML = pageHead(r.id, r.view.subtitle ?? "", { labs: r.group === "Labs", how: r.view.how });
   const page = document.createElement("div");
   el.append(page);
   document.title = `${r.title} · GP Sync`;
@@ -333,12 +332,6 @@ function haptic(): void {
   if (matchMedia("(pointer: coarse)").matches) navigator.vibrate?.(8);
 }
 
-function installButtons(): void {
-  const show = installState() === "ready";
-  $("#btn-install").classList.toggle("hidden", !show);
-  $("#side-install").classList.toggle("hidden", installState() === "installed");
-}
-
 /** Tell the server this device's time zone: it is the system default when the app wasn't given
  * one (TZ), and Settings › Appearance can choose another. */
 async function saveTimeZone(): Promise<void> {
@@ -411,10 +404,10 @@ function boot(): void {
     if (b) void runControl(b);
   });
   onPageControls(paintControls);
-  $("#btn-install").addEventListener("click", () => void install());
-  $("#side-install").addEventListener("click", () => void install());
-  installButtons();
-  onInstallChange(installButtons);
+  $("#view").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-how]");
+    if (b && active) toggleHow(active.id, b);
+  });
   wireGlassToggles();
   const offline = $("#offline");
   new MutationObserver(() =>

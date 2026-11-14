@@ -692,7 +692,7 @@ const folders: View = {
     filesOpened = true;
     parse(args);
     el.innerHTML = `
-    <section class="card mb-4 flex flex-wrap items-center gap-2 p-3">
+    <section class="toolbar">
       <div class="seg" id="fo-group"><button data-g="devices">${icon("devices")}Devices</button><button data-g="folders">${icon("folder")}Folders</button></div>
       <div class="order-first w-full min-w-0 px-1 pb-1 sm:order-none sm:w-auto sm:flex-1 sm:pb-0" id="fo-crumbs"></div>
     </section>

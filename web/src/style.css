@@ -749,40 +749,6 @@ strong {
       @apply hidden;
     }
   }
-
-  /* Install steps sit in a soft well. */
-  .install-help {
-    @apply space-y-2 rounded-xl p-4 text-sm leading-relaxed;
-    background: var(--panel-2);
-  }
-
-  /* What works on this device. */
-  .cap-list {
-    @apply grid grid-cols-1 gap-x-8 px-4 py-1 md:grid-cols-2 md:py-2;
-  }
-  @media (min-width: 768px) {
-    .cap-list .cap {
-      @apply border-b-0 py-2;
-    }
-  }
-  .cap {
-    @apply flex items-start gap-3 border-b border-line py-2.5 last:border-b-0;
-  }
-  .cap-ic {
-    @apply mt-0.5 grid size-5 shrink-0 place-items-center rounded-full;
-  }
-  .cap-ic svg {
-    @apply size-3;
-    stroke-width: 3;
-  }
-  .cap.ok .cap-ic {
-    color: var(--good);
-    background: color-mix(in oklab, var(--good) 16%, transparent);
-  }
-  .cap.no .cap-ic {
-    @apply text-ink-3;
-    background: var(--panel-2);
-  }
 }
 
 .scroll-thin {
@@ -1339,9 +1305,50 @@ svg:hover .donut-arc:not(:hover) {
   }
 }
 
-/* One line under the header saying what the page is for. */
+/* ---- The page frame (lib/page.ts): every page opens the same way. */
+/* Header: what the page is for, a Labs note, and "How it works" on the right. */
+.page-head {
+  @apply mb-4 flex min-h-8 items-center gap-2;
+}
 .page-intro {
-  @apply -mt-0.5 mb-4 text-sm text-ink-3;
+  @apply min-w-0 text-sm text-ink-3;
+}
+.page-tag {
+  @apply inline-flex h-5 shrink-0 items-center rounded-md border border-line px-1.5 font-mono text-[11px] text-ink-2;
+}
+/* "How it works": numbered steps, folded until asked for. */
+.how {
+  @apply mb-4 grid gap-3 sm:grid-cols-3;
+}
+.how[hidden] {
+  display: none;
+}
+.how-step {
+  @apply flex gap-3 rounded-xl border border-line bg-panel p-4;
+}
+.how-n {
+  @apply grid size-6 shrink-0 place-items-center rounded-md bg-panel-2 font-mono text-xs text-ink-2;
+}
+/* Summary numbers: two per row on phones, four on wide screens, one height. */
+.stat-row {
+  @apply mb-4 grid grid-cols-2 gap-4 xl:grid-cols-4;
+}
+/* Filter bar: segmented controls, a count, then search and selects pushed to the right. */
+.toolbar {
+  @apply mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-panel p-2;
+  box-shadow: var(--shadow);
+}
+.toolbar-count {
+  @apply px-2;
+}
+.toolbar-end {
+  @apply flex w-full flex-wrap items-center gap-2 lg:ml-auto lg:w-auto;
+}
+.toolbar-search {
+  @apply relative min-w-48 flex-1 lg:w-64 lg:flex-none;
+}
+.toolbar .input {
+  @apply h-9;
 }
 
 /* ---- Glass light toggle (lib/glass-toggle.ts). One number, --p: 0 = night, 1 = day. */
@@ -1688,26 +1695,6 @@ svg:hover .donut-arc:not(:hover) {
 .sc-off.older {
   @apply bg-panel-2 font-normal text-ink-3;
 }
-/* "How it works" and the first-run steps: three short cards with an icon. */
-.sc-how > summary {
-  @apply inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md px-1 text-sm font-medium text-ink-3 hover:text-ink-2;
-}
-.sc-how > summary::-webkit-details-marker {
-  display: none;
-}
-.sc-step {
-  @apply flex flex-col gap-1 rounded-xl border border-line bg-panel-2/40 p-3 text-xs text-ink-3;
-}
-.sc-step > svg {
-  @apply mb-1 text-accent;
-}
-.sc-step > b {
-  @apply text-sm text-ink;
-}
-.sc-step code {
-  @apply break-all;
-}
-
 /* ---- Sheets: settings for what is on screen, over the page (lib/sheet.ts). A sheet from the
    bottom on phones, a centred window from sm up. */
 .sheet-wrap {

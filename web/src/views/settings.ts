@@ -3,7 +3,6 @@ import { $, $$, copyText, esc, html, toast } from "../lib/dom";
 import { bytes, clock, hour, num } from "../lib/format";
 import { currentName, offsetLabel, zoneLongName, zoneOffset, zoneOptions, zoneTitle } from "../lib/zones";
 import { icon, type IconName } from "../lib/icons";
-import { install, installHelp, installState, onInstallChange } from "../lib/install";
 import { host, refresh, status } from "../lib/store";
 import { setTheme, theme as currentTheme } from "../lib/theme";
 import { avatar } from "../lib/account-menu";
@@ -99,9 +98,9 @@ const SECTIONS: [string, string, IconName, string, string, string, string][] = [
     "app",
     "Appearance",
     "palette",
-    "Theme, time zone and install",
+    "Theme and time zone",
     "#bf5af2",
-    "How GP Sync looks, the time zone for days and times, and GP Sync as an app.",
+    "How GP Sync looks, and the time zone for days and times.",
     "App",
   ],
   [
@@ -587,21 +586,6 @@ function sectionAlerts(): string {
   </div>`;
 }
 
-function installBadge(): string {
-  switch (installState()) {
-    case "installed":
-      return badge("Installed", "good", "ok");
-    case "ready":
-      return badge("Ready to install", "info", "download");
-    case "insecure":
-      return badge("Needs HTTPS to install", "warn", "lock", "Browsers install apps only from secure pages");
-    case "ios":
-      return badge("Add from Safari", "info", "phone");
-    default:
-      return isSecureContext ? badge("Secure page", "good", "lock") : "";
-  }
-}
-
 /** A small picture of the dashboard in one theme (fixed colors, so it looks the same in either theme). */
 function themeMock(kind: "dark" | "light"): string {
   const lines = (n: number) =>
@@ -666,7 +650,6 @@ function sectionApp(): string {
     ["dark", "Dark", "moon", themeMock("dark")],
     ["light", "Light", "sun", themeMock("light")],
   ];
-  const state = installState();
   const signIn = !!status()?.auth;
   return `<div class="flex flex-col gap-4">
     <section class="card">${cardHead("Theme", "palette", `<span id="set-theme-note">${themeNote(theme)}</span>`)}
@@ -679,22 +662,15 @@ function sectionApp(): string {
           .join("")}</div>
       </div></section>
     ${timeZoneCard()}
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <section class="card flex flex-col ${signIn ? "" : "md:col-span-2"}">${cardHead("Install as an app", "download", installBadge())}
-        <div class="card-b flex flex-1 flex-col gap-3 text-sm text-ink-2">
-          <div class="install-help" id="set-install-help">${installHelp()}</div>
-          ${state === "ready" ? `<button class="btn primary mt-auto self-start" id="set-install">${icon("download")}Install</button>` : ""}
-        </div></section>
-      ${
-        signIn
-          ? `<section class="card flex flex-col">${cardHead("Sign-in", "lock")}
+    ${
+      signIn
+        ? `<section class="card flex flex-col">${cardHead("Sign-in", "lock")}
         <form class="card-b flex flex-1 flex-col gap-3 text-sm text-ink-2" method="post" action="logout">
           <p>Signing out here doesn't sign out other devices.</p>
           <button class="btn danger mt-auto self-start" type="submit">${icon("logout")}Sign out</button>
         </form></section>`
-          : ""
-      }
-    </div>
+        : ""
+    }
   </div>`;
 }
 
@@ -730,7 +706,6 @@ function sectionApi(): string {
 }
 
 let drawnWithStatus = false;
-let offInstall: (() => void) | null = null;
 
 /** A known section key; anything else (an old or mistyped link) opens Sync. */
 function sectionKey(key: string | undefined): string {
@@ -1038,7 +1013,6 @@ function wire(): void {
   });
 
   // app
-  on("set-install", "click", () => void install());
   on("set-theme", "click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
     if (!b) return;
@@ -1074,11 +1048,6 @@ const settings: View = {
   subtitle: "How and when backups run",
   mount(el, args) {
     section = sectionKey(args[0]);
-    // The browser can offer installing a moment after the page opens: redraw the install card then.
-    offInstall?.();
-    offInstall = onInstallChange(() => {
-      if (section === "app" && cfg) renderSection();
-    });
     el.innerHTML = `
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
       <nav aria-label="Settings sections">
@@ -1105,10 +1074,6 @@ const settings: View = {
   route(args) {
     section = sectionKey(args[0]);
     if (cfg) renderSection();
-  },
-  unmount() {
-    offInstall?.();
-    offInstall = null;
   },
   update(s) {
     // Opened straight from a link: the section may have been drawn before the first status.
