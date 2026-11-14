@@ -29,7 +29,8 @@ let slowSynced = -1; // uploaded count the heat map and streak were last loaded 
 let slowAt = 0;
 let last: Status | null = null;
 
-// ---- where the photos are: pie charts per device (or folder) and photos vs videos
+// ---- where the photos are: pie charts per subfolder (or top folder) and photos vs videos
+// "devices" is the API's name for the folders one level inside each backed-up folder.
 let share: FolderReport | null = null;
 let shareBy: "devices" | "folders" = "devices";
 let shareMetric: "files" | "bytes" = "files";
@@ -88,7 +89,7 @@ function renderShare(): void {
   const rest = groups.slice(shown.length);
   const total = groups.reduce((a, g) => a + m(g), 0);
   const link = (g: (typeof groups)[number]) =>
-    `#/folders/${shareBy === "devices" || g.device ? "d" : "f"}/${(g.folders[0] ?? g.name).split("/").map(encodeURIComponent).join("/")}`;
+    `#/folders/f/${(g.folders[0] ?? g.name).split("/").map(encodeURIComponent).join("/")}`;
   const slices: Slice[] = shown.map((g, i) => ({
     label: g.name,
     value: m(g),
@@ -103,7 +104,7 @@ function renderShare(): void {
       value: restValue,
       color: OTHER,
       tip: `${rest.length} more\n${fmt(restValue)} · ${pctText(restValue, total)}\nClick to see all`,
-      href: shareBy === "devices" ? "#/folders" : "#/folders/f",
+      href: "#/folders",
     });
   const backed = (g: (typeof groups)[number]) => {
     const p = Math.round(pct(g.synced, g.files));
@@ -132,15 +133,15 @@ function renderShare(): void {
     `<div><div class="num text-xl">${shareMetric === "files" ? num(v) : bytes(v)}</div><div class="text-[11px] text-ink-3">${sub}</div></div>`;
   html(
     el,
-    // Side by side only on very wide screens: otherwise the device names get cut to a letter.
+    // Side by side only on very wide screens: otherwise the folder names get cut to a letter.
     `<div class="grid gap-6 2xl:grid-cols-2">
       <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
-        ${donut(slices, center(total, shareBy === "devices" ? "on devices" : "in folders"))}
-        <div class="w-full min-w-0 flex-1"><div class="label mb-1">${shareBy === "devices" ? "By device" : "By folder"}</div>
+        ${donut(slices, center(total, shareBy === "devices" ? "in subfolders" : "in folders"))}
+        <div class="w-full min-w-0 flex-1"><div class="label mb-1">${shareBy === "devices" ? "By subfolder" : "By folder"}</div>
           ${
             groups.length
-              ? `<ul>${shown.map((g, i) => legendRow(SLICE_COLORS[i]!, g.name, m(g), total, backed(g), link(g))).join("")}${rest.length ? legendRow(OTHER, `Other (${rest.length})`, restValue, total, "", shareBy === "devices" ? "#/folders" : "#/folders/f") : ""}</ul>`
-              : `<p class="py-2 text-sm text-ink-3">${share ? (shareBy === "devices" ? "No device folders found. Try Folders." : "No folders found.") : shareError ? "Couldn't load this view." : "Loading…"}</p>`
+              ? `<ul>${shown.map((g, i) => legendRow(SLICE_COLORS[i]!, g.name, m(g), total, backed(g), link(g))).join("")}${rest.length ? legendRow(OTHER, `Other (${rest.length})`, restValue, total, "", "#/folders") : ""}</ul>`
+              : `<p class="py-2 text-sm text-ink-3">${share ? (shareBy === "devices" ? "No subfolders found. Try Folders." : "No folders found.") : shareError ? "Couldn't load this view." : "Loading…"}</p>`
           }</div>
       </div>
       <div class="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
@@ -551,7 +552,7 @@ const sync: View = {
       </section>
 
       <section class="card order-5 lg:order-none lg:col-span-12">
-        ${cardHead("Where your photos are", "chart", `<div class="seg" id="sy-share-by"><button data-by="devices">Devices</button><button data-by="folders">Folders</button></div><div class="seg ml-2" id="sy-share-metric"><button data-m="files">Files</button><button data-m="bytes">Size</button></div>`)}
+        ${cardHead("Where your photos are", "chart", `<div class="seg" id="sy-share-by"><button data-by="devices">Subfolders</button><button data-by="folders">Folders</button></div><div class="seg ml-2" id="sy-share-metric"><button data-m="files">Files</button><button data-m="bytes">Size</button></div>`)}
         <div class="card-b" id="sy-share-body" aria-live="polite"><div class="skeleton h-44"></div></div>
       </section>
 

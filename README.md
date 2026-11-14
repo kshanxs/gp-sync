@@ -126,14 +126,13 @@ from [docs/PROMPTS.md](docs/PROMPTS.md) into Claude Code or Codex (laptop, serve
 - **Albums:** put new uploads in Google Photos albums named after their folder.
 - **Files:** search and filter everything that was backed up, with thumbnails (iPhone HEIC too) and
   a link to each item in Google Photos. A duplicates tab lists identical files.
-- **Folders and devices:** a browser for everything that is backed up. On the left, one tree of the
-  backed-up folders with each one's share in Google Photos; phones (the folders phone backup apps
-  make) show as devices, a phone that paired again (`Pixel`, `Pixel (2)`) as one, and the folders
-  set to **Back up first** are pinned on top, in order. On the right, the open folder: its accounts,
+- **Folders:** a browser for everything that is backed up. On the left, one tree of the backed-up
+  folders with each one's share in Google Photos, and the folders set to **Back up first** pinned
+  on top, in order. Folders a backup app spreads over `00`…`ff` show as one folder. On the right, the open folder: its accounts,
   a **Back up first** switch, and four numbers (photos, videos, waiting, failed) that filter its
   photos when tapped. Tabs: **Photos** (by day, filtered by state, kind or a picked day), **Folders
-  inside**, and **Added** (arrivals per day; pick a day to see its photos). On a phone the tree is
-  the first screen and folds away when a folder opens. Arrival dates are inferred from filesystem
+  inside**, and **Added** (arrivals per day; pick a day to see its photos). On small screens the
+  tree is the first screen and folds away when a folder opens. Arrival dates are inferred from filesystem
   timestamps, which can change.
 - **Free storage:** lists what counts against your Google storage, biggest first, photos and videos
   apart. Free single items, the 10 biggest, or everything of a kind (photos only, videos only, or

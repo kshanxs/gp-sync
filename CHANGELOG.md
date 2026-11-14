@@ -30,14 +30,15 @@
   Activity: uploaded, already in Google, failed, since the app started), and Library, Activity,
   Folders and History share one filter bar.
 - **Folders, reimagined as a browser.** One tree of your backed-up folders on the left, the open
-  folder on the right, so opening a folder never loses your place. The Devices/Folders switch is
-  gone: phones show in the tree as devices, and a phone that paired again (`Pixel`, `Pixel (2)`)
-  is one entry that unfolds into its folders. Folders set to back up first are pinned at the top,
+  folder on the right, so opening a folder never loses your place. Everything is a folder now:
+  the Devices/Folders switch and the "phone" labels are gone (GP Sync guessed phones from folders
+  a backup app fills with `00`…`ff`, which named ordinary folders as phones). On the Sync page,
+  "Where your photos are" says Subfolders instead of Devices. Folders set to back up first are pinned at the top,
   numbered, with move and remove. The open folder has a compact **Back up first** switch beside its
   name, its accounts, and four numbers (photos, videos, waiting, failed) that filter its photos when
   tapped. The rest is in tabs: **Photos** (by day; a picked day shows as a chip you can clear),
-  **Folders inside** and **Added** (arrivals per day, with "Show these" for a picked day). On a
-  phone the tree is the first screen and folds away when a folder opens. Old links still open
+  **Folders inside** and **Added** (arrivals per day, with "Show these" for a picked day). On small
+  screens the tree is the first screen and folds away when a folder opens. Old links still open
   the same folder.
 - **Install as an app is gone from the dashboard:** no Install buttons in the sidebar or header,
   and no install card in Settings → Appearance. The browser can still add GP Sync to the home

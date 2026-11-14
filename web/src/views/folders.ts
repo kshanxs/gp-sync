@@ -17,13 +17,12 @@ import { host } from "../lib/store";
 import { openAttrs, thumb, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
-// A two-pane browser: the navigator on the left (one tree of the backed-up folders, phones shown
-// as devices, the "Back up first" folders pinned on top), the open folder on the right (its
-// header, four numbers, then tabs: Photos, Folders inside, Added).
+// A two-pane browser: the navigator on the left (one tree of the backed-up folders, the "Back up
+// first" folders pinned on top), the open folder on the right (its header, four numbers, then
+// tabs: Photos, Folders inside, Added).
 //
 // #/folders                → everything on this server
-// #/folders/f/Photos/x     → a folder
-// #/folders/d/Photos/Pixel → a phone's folder (the same page; it opens as that device)
+// #/folders/f/Photos/x     → a folder (#/folders/d/… from older links opens the same)
 // A trailing /~photo or /~video opens the Photos tab filtered to that kind.
 
 /** Whole percent; 99 until the very last file is in, so "100%" always means done. */
@@ -35,7 +34,6 @@ const percent = (part: number, whole: number) => {
 type Tab = "photos" | "folders" | "added";
 
 let path = "";
-let deviceRoute = false;
 let days = 30;
 let tab: Tab = "photos";
 let report: FolderReport | null = null;
@@ -43,7 +41,7 @@ let opened = false;
 let filesOpened = false;
 let request = 0;
 let refreshTimer = 0;
-/** Phones and tablets: the navigator is folded away while a folder is open. */
+/** Small screens: the navigator is folded away while a folder is open. */
 let navOpen = false;
 
 // the photos and videos of the open folder
@@ -57,8 +55,6 @@ let fRequest = 0;
 let fLoading = false;
 let observer: IntersectionObserver | null = null;
 
-/** "I2220 (2)" -> "I2220": a phone that paired again is still the same device. */
-const deviceName = (folder: string) => folder.replace(/ \(\d+\)$/, "");
 const lastPart = (p: string) => p.split("/").at(-1) ?? p;
 const enc = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 
@@ -96,84 +92,31 @@ function saveExpanded(): void {
   }
 }
 
-/** One navigator entry: a folder, or a phone whose folders were numbered when it paired again. */
+/** One navigator entry: a folder. */
 interface NavNode {
   name: string;
-  /** The folder it opens (a device opens its first folder). */
   path: string;
-  /** Every folder it stands for (a device can have several). */
-  folders: string[];
   files: number;
   synced: number;
   failed: number;
-  device: boolean;
   uploads: boolean;
   hasSub: boolean;
 }
 
-/** A level of the tree as navigator entries: a phone's numbered folders become one device. */
+/** A level of the tree as navigator entries. */
 function nodesOf(parent: string): NavNode[] {
-  const out: NavNode[] = [];
-  const devices = new Map<string, NavNode>();
-  for (const c of tree.get(parent) ?? []) {
-    if (!c.name) continue; // loose files: they are in the folder's own photos
-    const p = c.folders[0] ?? (parent ? `${parent}/${c.name}` : c.name);
-    if (c.device) {
-      const key = deviceName(c.name);
-      const d = devices.get(key);
-      if (d) {
-        d.folders.push(p);
-        d.files += c.files;
-        d.synced += c.synced;
-        d.failed += c.failed ?? 0;
-        continue;
-      }
-      const n: NavNode = {
-        name: key,
-        path: p,
-        folders: [p],
-        files: c.files,
-        synced: c.synced,
-        failed: c.failed ?? 0,
-        device: true,
-        uploads: c.uploads,
-        hasSub: false, // a phone's 00..ff folders mean nothing to a person
-      };
-      devices.set(key, n);
-      out.push(n);
-      continue;
-    }
-    out.push({
+  return (tree.get(parent) ?? [])
+    .filter((c) => c.name) // loose files: they are in the folder's own photos
+    .map((c) => ({
       name: c.name,
-      path: p,
-      folders: [p],
+      path: c.folders[0] ?? (parent ? `${parent}/${c.name}` : c.name),
       files: c.files,
       synced: c.synced,
       failed: c.failed ?? 0,
-      device: false,
       uploads: c.uploads,
-      hasSub: c.has_sub,
-    });
-  }
-  // A device with several folders opens like a folder: its folders are its children.
-  for (const d of devices.values()) d.folders.sort();
-  for (const d of devices.values()) d.path = d.folders[0]!;
-  return out;
-}
-
-/** One of a device's folders, with its own numbers from the level it sits in. */
-function folderNode(f: string, device: NavNode): NavNode {
-  const c = tree.get(f.split("/").slice(0, -1).join("/"))?.find((x) => x.folders.includes(f));
-  return {
-    ...device,
-    name: lastPart(f),
-    path: f,
-    folders: [f],
-    hasSub: false,
-    files: c?.files ?? 0,
-    synced: c?.synced ?? 0,
-    failed: c?.failed ?? 0,
-  };
+      // A backup app spreads some folders over 00..ff: those inner folders aren't listed.
+      hasSub: c.has_sub && !c.device,
+    }));
 }
 
 async function loadLevel(parent: string, background = false): Promise<void> {
@@ -207,8 +150,8 @@ function revealPath(): void {
   saveExpanded();
 }
 
-function hrefOf(n: { path: string; device?: boolean }): string {
-  return `#/folders/${n.device ? "d" : "f"}/${enc(n.path)}`;
+function hrefOf(p: string): string {
+  return `#/folders/f/${enc(p)}`;
 }
 
 function pctBadge(synced: number, files: number, failed: number): string {
@@ -218,24 +161,17 @@ function pctBadge(synced: number, files: number, failed: number): string {
 
 function navRow(n: NavNode, depth: number): string {
   const open = expanded.has(n.path);
-  const many = n.device && n.folders.length > 1;
-  const twisty = n.hasSub || many;
-  // A device with several folders: its row is "here" while folded, its folder's row when unfolded.
-  const here = n.folders.includes(path) && (!many || !open);
-  const ic: IconName = n.uploads ? "upload" : n.device ? "phone" : open && twisty ? "folderOpen" : "folder";
-  let kids = "";
-  if (twisty && open) {
-    kids = many
-      ? n.folders.map((f) => navRow(folderNode(f, n), depth + 1)).join("")
-      : tree.has(n.path)
-        ? nodesOf(n.path)
-            .map((c) => navRow(c, depth + 1))
-            .join("") || `<div class="fo-empty" style="--d:${depth + 1}">No folders inside</div>`
-        : `<div class="fo-empty" style="--d:${depth + 1}"><span class="skeleton h-3 w-24"></span></div>`;
-  }
+  const ic: IconName = n.uploads ? "upload" : open && n.hasSub ? "folderOpen" : "folder";
+  const kids = !(n.hasSub && open)
+    ? ""
+    : tree.has(n.path)
+      ? nodesOf(n.path)
+          .map((c) => navRow(c, depth + 1))
+          .join("") || `<div class="fo-empty" style="--d:${depth + 1}">No folders inside</div>`
+      : `<div class="fo-empty" style="--d:${depth + 1}"><span class="skeleton h-3 w-24"></span></div>`;
   return `<div class="fo-node" style="--d:${depth}">
-    ${twisty ? `<button type="button" class="fo-twisty" data-twisty="${esc(n.path)}" data-many="${many ? "1" : ""}" aria-expanded="${open}" aria-label="${open ? "Fold" : "Unfold"} ${esc(n.name)}">${icon("chevron", "size-3.5")}</button>` : `<span class="fo-twisty-gap"></span>`}
-    <a class="fo-row" href="${hrefOf(n)}"${here ? ' aria-current="page"' : ""} title="${esc(n.folders.join(", "))}">${icon(ic)}<span class="min-w-0 flex-1 truncate">${esc(n.name)}</span>${n.files ? pctBadge(n.synced, n.files, n.failed) : ""}</a>
+    ${n.hasSub ? `<button type="button" class="fo-twisty" data-twisty="${esc(n.path)}" aria-expanded="${open}" aria-label="${open ? "Fold" : "Unfold"} ${esc(n.name)}">${icon("chevron", "size-3.5")}</button>` : `<span class="fo-twisty-gap"></span>`}
+    <a class="fo-row" href="${hrefOf(n.path)}"${n.path === path ? ' aria-current="page"' : ""} title="${esc(n.path)}">${icon(ic)}<span class="min-w-0 flex-1 truncate">${esc(n.name)}</span>${n.files ? pctBadge(n.synced, n.files, n.failed) : ""}</a>
   </div>${kids}`;
 }
 
@@ -247,7 +183,7 @@ function renderNav(): void {
     .map(
       (p, i) => `<li class="fo-prio">
         <span class="fo-prio-n">${i + 1}</span>
-        <a class="min-w-0 flex-1 truncate" href="#/folders/${p.split("/").length === 2 ? "d" : "f"}/${enc(p)}" title="${esc(p)}">${esc(prioName(p))}</a>
+        <a class="min-w-0 flex-1 truncate" href="${hrefOf(p)}" title="${esc(p)}">${esc(prioName(p))}</a>
         <span class="fo-prio-tools">
           <button type="button" class="fo-mini" data-prio-move="${esc(p)}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Earlier">${icon("up", "size-3.5")}</button>
           <button type="button" class="fo-mini" data-prio-move="${esc(p)}" data-dir="1" ${i === prio.length - 1 ? "disabled" : ""} aria-label="Later">${icon("down", "size-3.5")}</button>
@@ -307,11 +243,8 @@ async function savePrio(next: string[], message: string): Promise<void> {
   if (report) renderHead(report);
 }
 
-/** "Photos/I2220 (2)" -> "I2220", "Photos/trip/day2" -> "day2". */
-function prioName(p: string): string {
-  const parts = p.split("/");
-  return parts.length === 2 ? deviceName(parts[1]!) : (parts.at(-1) ?? p);
-}
+/** "Photos/trip/day2" -> "day2". */
+const prioName = lastPart;
 
 const RANGES: [number, string][] = [
   [7, "7 d"],
@@ -332,15 +265,7 @@ function parse(args: string[]): void {
   const last = args[args.length - 1] ?? "";
   linkedKind = last === "~photo" || last === "~video" ? last.slice(1) : "all";
   if (linkedKind !== "all") args = args.slice(0, -1);
-  deviceRoute = args[0] === "d";
   path = args[0] === "f" || args[0] === "d" ? args.slice(1).map(decodeURIComponent).join("/") : "";
-}
-
-/** Is the open folder a phone's? Known from the navigator, or from a #/folders/d/ link. */
-function openDevice(): boolean {
-  const parent = path.split("/").slice(0, -1).join("/");
-  const c = tree.get(parent)?.find((x) => x.folders.includes(path));
-  return c ? !!c.device : deviceRoute;
 }
 
 /** Backup apps name files by a long code; a date says more about such a photo. */
@@ -449,15 +374,8 @@ function renderHead(r: FolderReport): void {
   const done = percent(t.synced, t.files);
   const failed = t.failed ?? 0;
   const waiting = Math.max(0, t.files - t.synced - failed);
-  const device = !!path && openDevice();
-  const parts = path.split("/").filter(Boolean);
-  const title = !path ? "Everything" : device ? deviceName(parts.at(-1) ?? path) : (parts.at(-1) ?? path);
-  const siblings = device
-    ? (nodesOf(parts.slice(0, -1).join("/")).find((n) => n.folders.includes(path))?.folders ?? []).filter(
-        (f) => f !== path,
-      )
-    : [];
-  const ic: IconName = !path ? "library" : device ? "phone" : "folder";
+  const title = !path ? "Everything" : lastPart(path);
+  const ic: IconName = !path ? "library" : "folder";
   html(
     $("#fo-head"),
     `<div class="flex items-center gap-2">
@@ -468,13 +386,12 @@ function renderHead(r: FolderReport): void {
        <span class="grid size-10 shrink-0 place-items-center rounded-[10px] bg-panel-2 text-ink-2">${icon(ic, "size-5")}</span>
        <div class="min-w-0 flex-1">
          <h2 class="truncate text-xl leading-7 font-medium">${esc(title)}</h2>
-         <p class="mt-0.5 text-xs text-ink-3">${device ? "Phone · " : ""}${num(t.files)} files · ${bytes(t.bytes)}${t.last_added ? ` · last added ${ago(t.last_added)}` : ""}${!path ? ` · every backed-up folder on ${esc(host())}` : ""}</p>
+         <p class="mt-0.5 text-xs text-ink-3">${num(t.files)} files · ${bytes(t.bytes)}${t.last_added ? ` · last added ${ago(t.last_added)}` : ""}${!path ? ` · every backed-up folder on ${esc(host())}` : ""}</p>
        </div>
        ${path ? backupPriorityControl(path, prio.indexOf(path), waiting + failed > 0) : ""}
      </div>
      <div class="mt-4 flex items-center gap-3"><div class="bar flex-1"><i style="width:${done}%"></i></div><span class="meta shrink-0">${done}% in Google Photos</span></div>
-     ${t.accounts?.length ? `<div class="mt-3">${accountChips(t.accounts)}</div>` : ""}
-     ${siblings.length ? `<div class="mt-3 flex flex-wrap items-center gap-x-2 text-xs text-ink-3">Also from this device:${siblings.map((f) => `<a class="link-btn sm" href="#/folders/d/${enc(f)}">${esc(lastPart(f))}</a>`).join("")}</div>` : ""}`,
+     ${t.accounts?.length ? `<div class="mt-3">${accountChips(t.accounts)}</div>` : ""}`,
   );
   renderStats(r, waiting, failed);
 }
@@ -538,8 +455,8 @@ function renderTabs(r: FolderReport | null): void {
 function rowHtml(c: FolderGroup): string {
   const done = percent(c.synced, c.files);
   const to = c.folders[0] ?? (path ? `${path}/${c.name}` : c.name);
-  const href = `#/folders/${c.device ? "d" : "f"}/${enc(to)}`;
-  const ic: IconName = c.uploads ? "upload" : c.device ? "phone" : "folder";
+  const href = hrefOf(to);
+  const ic: IconName = c.uploads ? "upload" : "folder";
   const thumbs = (c.recent ?? [])
     .map(
       (n) =>
@@ -549,8 +466,8 @@ function rowHtml(c: FolderGroup): string {
   return `<a href="${href}" class="row clickable flex-wrap gap-y-2">
     <span class="grid size-10 shrink-0 place-items-center rounded-[10px] bg-panel-2 text-ink-2">${icon(ic, "size-5")}</span>
     <div class="min-w-0 flex-1 basis-40">
-      <div class="flex items-center gap-2"><span class="truncate text-sm font-medium">${esc(c.device ? deviceName(c.name) : c.name)}</span>${c.new ? `<span class="meta" title="Added in ${rangeText()}">+${num(c.new)}</span>` : ""}</div>
-      <div class="truncate text-xs text-ink-3">${c.uploads ? "Sent from the Upload page" : `${c.device ? "Phone · " : ""}${num(c.photos)} photos · ${num(c.videos)} videos`}</div>
+      <div class="flex items-center gap-2"><span class="truncate text-sm font-medium">${esc(c.name)}</span>${c.new ? `<span class="meta" title="Added in ${rangeText()}">+${num(c.new)}</span>` : ""}</div>
+      <div class="truncate text-xs text-ink-3">${c.uploads ? "Sent from the Upload page" : `${num(c.photos)} photos · ${num(c.videos)} videos`}</div>
       <div class="mt-2 flex items-center gap-2"><div class="bar max-w-48 flex-1"><i style="width:${done}%"></i></div><span class="meta">${done}%</span>${c.failed ? `<span class="text-xs text-bad">${num(c.failed)} failed</span>` : ""}</div>
     </div>
     ${thumbs ? `<div class="hidden gap-2 md:flex">${thumbs}</div>` : ""}
@@ -810,7 +727,7 @@ function open(): void {
   if (linkedKind !== "all") tab = "photos";
   observer?.disconnect();
   revealPath();
-  setNav(!path); // phones: the navigator is the first screen; a folder folds it away
+  setNav(!path); // small screens: the navigator is the first screen; a folder folds it away
   skeleton();
   renderTabs(null);
   renderNav();
@@ -832,7 +749,7 @@ function filterPhotos(next: { status?: string; kind?: string; day?: string }): v
 }
 
 const folders: View = {
-  subtitle: "Every backed-up folder and phone, and how much of each is in Google Photos",
+  subtitle: "Every backed-up folder, and how much of each is in Google Photos",
   mount(el, args) {
     opened = true; // the first load draws the last answer at once (peek), then the fresh one
     filesOpened = true;
@@ -862,7 +779,7 @@ const folders: View = {
         if (expanded.has(p)) expanded.delete(p);
         else {
           expanded.add(p);
-          if (!tw.dataset.many && !tree.has(p)) void loadLevel(p);
+          if (!tree.has(p)) void loadLevel(p);
         }
         saveExpanded();
         renderNav();
