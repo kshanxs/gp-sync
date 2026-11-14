@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Check first, then sync.** Adding an account to a folder that is already backed up no longer
+  queues every file as an upload. GP Sync reads that account's Google library and compares it with
+  the folder's files by SHA-1 (Google's own test), without uploading: what it already has is marked
+  Already in Google straight away, and the rest waits as new to sync. Sync's account card and the
+  folder's header show the check ("Checking Photos · 3,200 of 12,480 compared"), then what it found
+  ("already has 9,100 of 12,480 · 3,380 new to sync · 4.2 GB · about 2 h") with **Start syncing**
+  and **Not now**. A failed check offers Try again or Sync without checking. Checks wait while
+  everything is paused. A folder backed up for the first time just syncs, as before.
+- **Choose accounts where you look at them.** Folders has a **Sends to** row on the open folder (tap
+  an account to turn it on or off, Make main), saved at once. Each account's card on Sync says what
+  it gets with a **Change** button that opens every folder × account in one sheet; an account with
+  no folders gets **Choose folders**. Connecting an account opens that sheet for it straight away.
+  Settings › Folders stays.
+- API: `/api/status` has `prechecks`; `POST /api/prechecks/start` and `/api/prechecks/retry`.
+  Files fingerprinted for a check are cached in a new `hashes` table, so they are read once.
+
 ## 1.8.1
 
 - **A new app icon** to match the dashboard: the sidebar's mark (a photo with an arrow going up)

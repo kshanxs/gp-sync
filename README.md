@@ -109,7 +109,14 @@ Immich, every setting and the full example are in [Run it anywhere](#run-it-anyw
 
 - **Every folder you choose, to the accounts you choose.** Connect up to 5 Google accounts and pick,
   per folder, one account or several at once: the first is the main backup, the others get copies.
-  Photos and Videos go to the first account by default (or every folder, if those don't exist).
+  Choose right where you look: the **Sends to** chips on a folder in Folders, **Change** on an
+  account's card in Sync, or the step that opens as soon as you connect an account. Photos and
+  Videos go to the first account by default (or every folder, if those don't exist).
+- **Check first, then sync.** Add an account to a folder that is already backed up and GP Sync first
+  reads that account's Google library and compares it with the folder's files by checksum, the same
+  test Google uses, without uploading anything. Files it already has are marked **Already in
+  Google** at once; you see how many are new, their size and the time it would take, and nothing is
+  sent until you press **Start syncing**. Checks wait while GP Sync is paused.
 - **Safe by default.** A file is sent only after it has stopped changing for 2 minutes, files
   already in Google Photos are skipped, and a failed file is retried on later scans, up to 5 times
   (**Retry failed** resets the count).
@@ -453,11 +460,13 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/status` | Live status, library progress, current file, speeds, failures, activity |
+| `GET /api/status` | Live status, library progress, current file, speeds, failures, activity, and `prechecks` (accounts added to folders: being checked, or checked and waiting to start) |
 | `GET /api/history?days=365&tz=330` | Per-day totals; `tz` is minutes east of UTC (India = 330) |
 | `GET /api/totals` | All-time totals and fastest upload |
 | `GET /api/files?q=&status=all&folder=&sort=new&limit=60&offset=0` | Search backed-up files |
 | `GET /api/folders?group=folders&path=Photos&days=30&tz=330` | Counts and files added per day for a folder, or `group=devices` for the folders one level inside each backed-up folder. Each account row has `files`, `done`, `uploaded`, `exists`, `waiting` and `failed`; the folder's own total adds `per_hour` (files done in the last hour) |
+| `POST /api/prechecks/start` | Sync what a check left waiting (or sync without checking): `{"account", "folder"}` (no folder: all of that account's) |
+| `POST /api/prechecks/retry` | Check again after a failed check: `{"account", "folder"}` |
 | `GET /api/folders/files?path=Photos&status=all&kind=all&sort=new&account=` | A folder's photos and videos with their state; with `account`, only the files that account should get, and `status` can also be `uploaded` or `exists` |
 | `GET /api/copy?src=&dst=` | What one account has that another lacks, copying progress, the checker and Keep in sync |
 | `POST /api/copy/mirror` | Keep in sync: `{"src", "dst", "mode": "off"\|"one"\|"both"}` |
@@ -559,6 +568,10 @@ Colours and components are in `web/src/style.css`.
   `accountBreakdown()` in `web/src/lib/account-breakdown.ts`, from the account rows of
   `/api/folders`; Sync and Folders both use it. The Overview's "Since your last visit" line is
   `web/src/lib/since-visit.ts` (kept in the browser's storage, no backend).
+- Choosing a folder's accounts goes through `web/src/lib/folder-accounts.ts` (the chips, the sheet,
+  `saveFolders()`, which always sends every folder: one left out would stop being backed up). The
+  check before syncing is shown by `web/src/lib/prechecks.ts`; the backend side is
+  `queue_prechecks()` and `run_precheck()` in `sync.py`.
 - The phone tabs show what's running: Sync gets a progress ring while files upload, and Overview
   turns into the background work running now with its progress.
 </details>

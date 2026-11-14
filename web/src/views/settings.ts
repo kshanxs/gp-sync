@@ -9,6 +9,7 @@ import { avatar } from "../lib/account-menu";
 import { badge, cardHead, syncChips } from "../lib/ui";
 import { atOnceOptions } from "../lib/pace";
 import { accountLanes, folderOrder, lanePhaseText } from "../lib/lanes";
+import { folderChips, openFoldersSheet, saveFolders } from "../lib/folder-accounts";
 import type { View } from "./view";
 
 // [key, title, icon, short line for the menu, icon tile color (iOS system colors), page intro, group]
@@ -363,17 +364,6 @@ function sectionAccounts(s: Status | null): string {
 
 /** A folder's account chips. `order`: the accounts it goes to, main (the backup) first: picked with
  * Make main, never from the chips' order on the page. */
-function folderChips(accs: string[], order: string[]): string {
-  if (!accs.length) return '<span class="text-xs text-ink-3">Connect a Google account first</span>';
-  return accs
-    .map((a) => {
-      const i = order.indexOf(a);
-      const main = i === 0 && order.length > 1;
-      return `<span class="inline-flex items-center gap-1"><button type="button" class="chip" data-acc="${esc(a)}" aria-pressed="${i >= 0}">${icon("ok", "size-3.5")}${esc(a)}${main ? '<span class="opacity-70">· main</span>' : ""}</button>${i > 0 ? `<button type="button" class="link-btn" data-main="${esc(a)}" title="Make ${esc(a)} the backup. The others get copies of the same files.">Make main</button>` : ""}</span>`;
-    })
-    .join("");
-}
-
 function sectionFolders(s: Status | null): string {
   const accs = s?.accounts ?? [];
   const folders = Object.entries(s?.folders ?? {});
@@ -893,9 +883,11 @@ function wire(): void {
     });
     const d = (await r.json().catch(() => ({}))) as { email?: string; error?: string };
     if (r.ok && d.email) {
-      toast(`Connected ${d.email}. Turn it on for folders in Settings › Folders.`, "good");
+      toast(`Connected ${d.email}`, "good");
       await refresh();
       renderSection();
+      // The next step right away: which folders go to it (checked against its library first).
+      openFoldersSheet(d.email);
     } else toast(d.error || "That doesn't look like a Google Photos login. Copy the whole line.", "bad");
   });
   on("set-copy-prompt", "click", () => void copyText(AUTH_PROMPT));
@@ -937,7 +929,7 @@ function wire(): void {
     $$<HTMLElement>("[data-folder]").forEach((row) => {
       folders[row.dataset.folder ?? ""] = orderOf(row);
     });
-    void save({ folders }, "Folders saved. Scanning now.");
+    void saveFolders(folders);
   });
 
   // albums
