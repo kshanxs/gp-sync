@@ -131,3 +131,31 @@ def test_settings_and_start_over_http(two, server):
         assert [c["account"] for c in json.load(r)["prechecks"]] == [TWO]
     assert post("/api/prechecks/start", {"account": TWO})["started"] == 1
     assert sync.precheck_list() == []
+
+
+def test_an_accounts_library_is_read_once_for_all_its_folders(two, monkeypatch):
+    add_two({"Photos": [MAIN, TWO], "Videos": [MAIN, TWO]})
+    lib = Lib(sync._library_db(TWO), [b"x" * 100])
+    monkeypatch.setattr(sync, "_reclaim_client", lambda a: lib)
+    sync._precheck_account(TWO, ["Photos", "Videos"])
+    assert lib.reads == 1
+    assert [(c["folder"], c["state"]) for c in sync.precheck_list()] == [("Photos", "ready"), ("Videos", "ready")]
+    assert {c["folder"]: c["matched"] for c in sync.precheck_list()}["Photos"] == 1
+
+
+def test_a_failed_read_is_tried_again_for_the_next_folder(two, monkeypatch):
+    add_two({"Photos": [MAIN, TWO], "Videos": [MAIN, TWO]})
+    libs = iter([Lib(sync._library_db(TWO), [], fail=RuntimeError("busy")), Lib(sync._library_db(TWO), [])])
+    monkeypatch.setattr(sync, "_reclaim_client", lambda a: next(libs))
+    sync._precheck_account(TWO, ["Photos", "Videos"])
+    assert [c["state"] for c in sync.precheck_list()] == ["failed", "ready"]
+
+
+def test_unreadable_files_are_left_out_not_fatal(two, monkeypatch):
+    add_two({"Photos": [MAIN, TWO], "Videos": [MAIN]})
+    real = sync.media.sha1_file
+    monkeypatch.setattr(
+        sync.media, "sha1_file", lambda p: (_ for _ in ()).throw(OSError()) if p.endswith("HEIC") else real(p)
+    )
+    c = run(TWO, Lib(sync._library_db(TWO), [b"x" * 100]))
+    assert (c["state"], c["total"], c["matched"], c["new"]) == ("ready", 1, 1, 0)

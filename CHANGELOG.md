@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **Checks are faster.** Before, a check read one file at a time and saved each fingerprint on
+  its own. Now it reads several files at once (up to 4) and saves them in batches of 200. An
+  account's Google library is read once for all the folders it was added to, not once per folder,
+  and different accounts' libraries are read at the same time.
+- **Folders on phones.** Back up first moved to its own row under the folder's name. "Sends to" sits
+  above its accounts. The five numbers are now four small ones in a row, with Last added as one line
+  under them, instead of five tall cards. The sort menu sits beside Both / Photos / Videos
+  (Newest, Oldest), and the photo grid shows just the time under each photo.
+- **Folders, polished (unslop pass).** The open folder leads with one big figure, how much of it is
+  in Google (71% in Google Photos), with Back up first beside it. Photos and videos moved into the
+  folder's subtitle ("144 photos · 3.3 MB", leaving out a kind there is none of). Waiting, Failed
+  and Last added share one card, so there are three numbers instead of five tall cards. The tabs
+  no longer repeat counts. Under each photo, the time no longer gets cut off on wide screens (it
+  shows the size instead when you sort by size). Folders inside puts "last added 1 d ago · 40 new
+  in the last 30 days" on the folder's line, instead of a lone "+40" and an age floating to the
+  right. The Added tab drops its second "Today", and Everything's icon lines up with the folders
+  under it.
+- The theme switch in the top bar no longer glows onto the page around it.
+
 ## 1.8.2
 
 - **Check first, then sync.** Adding an account to a folder that is already backed up no longer

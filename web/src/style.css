@@ -1377,8 +1377,6 @@ svg:hover .donut-arc:not(:hover) {
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   transition: --p 0.75s cubic-bezier(0.65, 0, 0.25, 1);
-  /* A little of the light spills onto the page around the switch. */
-  filter: drop-shadow(0 0 calc(6px * var(--gt-spill, 1)) color-mix(in oklab, var(--light) 20%, transparent));
 }
 .gt.dragging {
   transition: none;
@@ -1459,14 +1457,9 @@ svg:hover .donut-arc:not(:hover) {
     linear-gradient(#000 0 0) content-box exclude,
     linear-gradient(#000 0 0);
 }
+/* No glow around the switch: the strip of light stays on the glass's edge. */
 .gt-glow {
-  inset: -3px;
-  filter: blur(5px);
-  opacity: 0.85;
-}
-.gt-lg .gt-glow {
-  inset: -6px;
-  filter: blur(9px);
+  display: none;
 }
 .gt-shine {
   position: absolute;
@@ -2161,9 +2154,6 @@ button.col[aria-pressed="true"]::after {
   @apply pl-6;
 }
 /* The four numbers are filters: the chosen one gets the selection's edge. */
-#fo-stats [aria-pressed="true"] {
-  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
-}
 
 /* "Back up first" beside a folder's name (lib/backup-priority.ts). */
 .prio-switch {
@@ -2252,13 +2242,6 @@ button.col[aria-pressed="true"]::after {
 .sheet-sec:first-child {
   @apply mt-0;
 }
-/* Folders' five numbers: one row on wide screens; on smaller ones Last added takes a full row. */
-#fo-stats {
-  @apply xl:grid-cols-5;
-}
-#fo-stats > :last-child {
-  @apply col-span-2 xl:col-span-1;
-}
 
 /* Check first, then sync (lib/prechecks.ts): one line per folder an account was added to. */
 .pc-list {
@@ -2283,4 +2266,82 @@ button.col[aria-pressed="true"]::after {
 /* The words take the row; on a narrow card the buttons go under them instead of squeezing them. */
 .pc-row > span:not(.pc-actions) {
   flex-basis: 14rem;
+}
+
+/* ---- Folders on phones: the open folder's header, numbers and filters take less room. */
+.fo-prio-slot {
+  @apply shrink-0;
+}
+@media (max-width: 639px) {
+  /* "Back up first" gets its own row under the folder's name instead of squeezing it. */
+  .fo-prio-slot {
+    @apply order-4 basis-full border-t border-line pt-3;
+  }
+  .fo-prio-slot .prio-switch {
+    @apply justify-between;
+  }
+  .fo-prio-slot .prio-switch > span:first-child {
+    @apply flex items-baseline gap-2 text-left;
+  }
+  /* "Sends to" above its accounts, so the chips start on the same edge. */
+  .sends-label {
+    @apply basis-full;
+  }
+  /* Filters: tighter, the sort beside Both / Photos / Videos. */
+  #fo-files-tools {
+    @apply gap-1.5 p-2;
+  }
+  #fo-files {
+    @apply p-2;
+  }
+  #fo-fsort {
+    @apply h-9 pr-7 pl-2.5;
+  }
+}
+
+/* The open folder's one big figure: how much of it is in Google. */
+.fo-figure {
+  @apply flex items-baseline gap-2;
+}
+.fo-figure > .num {
+  @apply text-4xl leading-none font-normal text-ink;
+}
+.fo-figure > .num small {
+  @apply text-xl text-ink-3;
+}
+/* The bar under the figure, before Back up first on phones (where that takes its own row). */
+.fo-figure-bar {
+  @apply order-3 basis-full;
+}
+.fo-figure-sub {
+  @apply text-sm text-ink-2;
+}
+/* Waiting, Failed, Last added: one card, three cells split by hairlines. */
+.fo-figs {
+  @apply mb-4 grid grid-cols-3 overflow-hidden;
+}
+.fo-fig {
+  @apply flex min-w-0 flex-col p-4 text-left transition-colors duration-150;
+}
+.fo-fig + .fo-fig {
+  @apply border-l border-line;
+}
+button.fo-fig:hover {
+  @apply bg-panel-2;
+}
+.fo-fig[aria-pressed="true"] {
+  background: var(--raised);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+/* Everything's icon in the same column as the top folders' (after their 24px twisty). */
+.fo-all {
+  @apply pl-8;
+}
+@media (max-width: 639px) {
+  .fo-fig {
+    @apply p-3;
+  }
+  .fo-figure > .num {
+    @apply text-3xl;
+  }
 }

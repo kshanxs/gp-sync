@@ -435,6 +435,14 @@ function crumbs(): string {
   return [`<a class="hover:text-ink" href="#/folders">${esc(host())}</a>`, ...steps].join(sep);
 }
 
+/** "40 photos · 3 videos", leaving out a kind there is none of. */
+function mediaText(photos: number, videos: number): string {
+  const parts = [photos ? `${num(photos)} photos` : "", videos ? `${num(videos)} videos` : ""].filter(
+    Boolean,
+  );
+  return parts.join(" · ") || "No photos or videos";
+}
+
 function renderHead(r: FolderReport): void {
   const t = r.total;
   const g = progressOf(t);
@@ -448,15 +456,22 @@ function renderHead(r: FolderReport): void {
        <button type="button" class="btn sm lg:hidden" id="fo-browse" aria-expanded="${navOpen}" aria-controls="fo-nav-wrap">${icon("layers")}Folders</button>
        <nav class="meta flex min-w-0 flex-wrap items-center gap-1.5" aria-label="Where you are">${crumbs()}</nav>
      </div>
-     <div class="mt-4 flex items-start gap-3">
+     <div class="mt-4 flex flex-wrap items-start gap-3">
        <span class="grid size-10 shrink-0 place-items-center rounded-[10px] bg-panel-2 text-ink-2">${icon(ic, "size-5")}</span>
        <div class="min-w-0 flex-1">
          <h2 class="truncate text-xl leading-7 font-medium">${esc(title)}</h2>
-         <p class="mt-0.5 text-xs text-ink-3">${num(t.files)} files · ${bytes(t.bytes)}${!path ? ` · every backed-up folder on ${esc(host())}` : ""}</p>
+         <p class="mt-0.5 text-xs text-ink-3">${mediaText(t.photos, t.videos)} · ${bytes(t.bytes)}${!path ? ` · every backed-up folder on ${esc(host())}` : ""}</p>
        </div>
-       ${path ? backupPriorityControl(path, prio.indexOf(path), waiting + failed > 0) : ""}
      </div>
-     <div class="mt-4 flex items-center gap-3"><div class="bar flex-1"><i style="width:${done}%"></i></div><span class="meta shrink-0">${g ? `${done}% in ${fAcc ? esc(short(fAcc)) : "Google Photos"}` : `Not sent to ${esc(short(fAcc))}`}</span></div>
+     <div class="mt-5 flex flex-wrap items-end gap-3">
+       ${
+         g
+           ? `<div class="fo-figure"><span class="num">${done}<small>%</small></span><span class="fo-figure-sub">in ${fAcc ? esc(short(fAcc)) : "Google Photos"}</span></div>`
+           : `<div class="text-sm text-ink-3">Not sent to ${esc(short(fAcc))}</div>`
+       }
+       ${path ? `<div class="fo-prio-slot ml-auto">${backupPriorityControl(path, prio.indexOf(path), waiting + failed > 0)}</div>` : ""}
+       ${g ? `<div class="bar fo-figure-bar"><i style="width:${done}%"></i></div>` : ""}
+     </div>
      <div id="fo-sends"></div>
      ${t.accounts?.length ? `<div class="mt-3 border-t border-line">${accountBreakdown(t.accounts, { pick: fAcc && SEGMENTS.some(([k]) => k === fStatus) ? { account: fAcc, part: fStatus } : null })}</div>` : ""}`,
   );
@@ -476,13 +491,13 @@ function renderSends(): void {
   let markup = "";
   if (!top) {
     markup = accs.length
-      ? `<div class="sends-to"><span class="text-xs text-ink-3">Choose which accounts each folder goes to</span><button type="button" class="btn sm ml-auto" data-folders-sheet="">${icon("folder")}Where each folder goes</button></div>`
+      ? `<div class="sends-to"><span class="sends-label text-xs text-ink-3">Choose which accounts each folder goes to</span><button type="button" class="btn sm ml-auto" data-folders-sheet="">${icon("folder")}Where each folder goes</button></div>`
       : "";
   } else if (s && top in (s.folders ?? {})) {
     const order = foldersMap(s)[top] ?? [];
     const checks = accs.flatMap((a) => prechecksFor(s, a, top));
     markup = `<div class="sends-to" data-sends-to="${esc(top)}" data-order="${esc(JSON.stringify(order))}">
-        <span class="mr-1 text-xs text-ink-3">${path === top ? "Sends to" : `Sends to (all of ${esc(top)})`}</span><span class="contents" data-sends-chips>${folderChips(accs, order)}</span>
+        <span class="sends-label mr-1 text-xs text-ink-3">${path === top ? "Sends to" : `Sends to (all of ${esc(top)})`}</span><span class="contents" data-sends-chips>${folderChips(accs, order)}</span>
       </div>${checks.length ? `<div class="mt-3">${precheckLines(s, checks, true)}</div>` : ""}`;
   }
   if (markup === sendsDrawn) return;
@@ -490,30 +505,27 @@ function renderSends(): void {
   html(box, markup);
 }
 
-/** The five numbers. The first four filter the photos below; Last added opens the Added tab. */
+/** Waiting, Failed and Last added in one row. The first two filter the photos below; Last added
+ * opens the Added tab. (Photos and videos are in the header; Both / Photos / Videos filters them.) */
 function renderStats(r: FolderReport, waiting: number, failed: number): void {
   const t = r.total;
-  const cell = (key: string, label: string, ic: IconName, value: string, sub: string, on: boolean) =>
-    `<button type="button" class="card metric-card lift flex min-w-0 flex-col p-4 text-left" data-stat="${key}" aria-pressed="${on}">
-      <span class="flex min-w-0 items-center gap-2"><span class="metric-icon shrink-0">${icon(ic)}</span><span class="label truncate">${esc(label)}</span></span>
-      <span class="num mt-4 truncate text-2xl">${value}</span>
-      <span class="mt-1 truncate text-xs text-ink-3">${sub}</span></button>`;
+  const cell = (key: string, label: string, value: string, sub: string, on: boolean) =>
+    `<button type="button" class="fo-fig" data-stat="${key}" aria-pressed="${on}">
+      <span class="text-xs text-ink-3">${esc(label)}</span>
+      <span class="num mt-1 truncate text-xl">${value}</span>
+      <span class="mt-0.5 truncate text-xs text-ink-3">${sub}</span></button>`;
   html(
     $("#fo-stats"),
-    cell("photo", "Photos", "photo", num(t.photos), bytes(t.photo_bytes), fKind === "photo") +
-      cell("video", "Videos", "video", num(t.videos), bytes(t.video_bytes), fKind === "video") +
-      cell(
-        "waiting",
-        "Waiting",
-        "hourglass",
-        num(waiting),
-        waiting ? (fAcc ? `Not in ${esc(short(fAcc))} yet` : "Not in Google yet") : "Nothing waiting",
-        fStatus === "waiting",
-      ) +
+    cell(
+      "waiting",
+      "Waiting",
+      num(waiting),
+      waiting ? (fAcc ? `Not in ${esc(short(fAcc))} yet` : "Not in Google yet") : "Nothing waiting",
+      fStatus === "waiting",
+    ) +
       cell(
         "failed",
         "Failed",
-        "error",
         failed ? `<span class="text-bad">${num(failed)}</span>` : "0",
         failed ? "Tap to see them" : "None",
         fStatus === "failed",
@@ -521,7 +533,6 @@ function renderStats(r: FolderReport, waiting: number, failed: number): void {
       cell(
         "added",
         "Last added",
-        "clock",
         t.last_added ? esc(ago(t.last_added)) : "–",
         t.last_added ? `${esc(date(t.last_added))} · ${num(t.new_day)} today` : "Nothing yet",
         false,
@@ -531,11 +542,10 @@ function renderStats(r: FolderReport, waiting: number, failed: number): void {
 
 function renderTabs(r: FolderReport | null): void {
   const inside = (r?.children ?? []).filter((c) => c.name).length;
-  const count = (n: number | undefined) => (n == null ? "" : `<span class="meta">${num(n)}</span>`);
-  const tabs: [Tab, string, IconName, string][] = [
-    ["photos", "Photos", "library", count(files?.counts.all ?? r?.total.files)],
-    ["folders", "Folders inside", "folder", count(inside)],
-    ["added", "Added", "chart", r ? `<span class="meta">${num(r.total.new)}</span>` : ""],
+  const tabs: [Tab, string, IconName][] = [
+    ["photos", "Photos", "library"],
+    ["folders", "Folders inside", "folder"],
+    ["added", "Added", "chart"],
   ];
   if (tab === "folders" && !inside) tab = "photos";
   html(
@@ -543,8 +553,8 @@ function renderTabs(r: FolderReport | null): void {
     tabs
       .filter(([k]) => k !== "folders" || inside)
       .map(
-        ([k, l, ic, n]) =>
-          `<button type="button" role="tab" data-tab="${k}" aria-selected="${k === tab}" class="whitespace-nowrap max-sm:px-2">${icon(ic, "size-4 max-sm:hidden")}<span>${k === "folders" ? '<span class="sm:hidden">Folders</span><span class="max-sm:hidden">Folders inside</span>' : l}</span>${n}</button>`,
+        ([k, l, ic]) =>
+          `<button type="button" role="tab" data-tab="${k}" aria-selected="${k === tab}" class="whitespace-nowrap max-sm:px-2">${icon(ic, "size-4 max-sm:hidden")}<span>${k === "folders" ? '<span class="sm:hidden">Folders</span><span class="max-sm:hidden">Folders inside</span>' : l}</span></button>`,
       )
       .join(""),
   );
@@ -569,8 +579,8 @@ function rowHtml(c: FolderGroup): string {
   return `<a href="${href}" class="row clickable flex-wrap gap-y-2">
     <span class="grid size-10 shrink-0 place-items-center rounded-[10px] bg-panel-2 text-ink-2">${icon(ic, "size-5")}</span>
     <div class="min-w-0 flex-1 basis-40">
-      <div class="flex items-center gap-2"><span class="truncate text-sm font-medium">${esc(c.name)}</span>${c.new ? `<span class="meta" title="Added in ${rangeText()}">+${num(c.new)}</span>` : ""}${c.last_added ? `<span class="fo-ago ml-auto ${Date.now() / 1000 - c.last_added > 30 * 86400 ? "old" : ""}" title="${esc(`${date(c.last_added, true)} ${clock(c.last_added)}`)}">${esc(ago(c.last_added))}</span>` : ""}</div>
-      <div class="truncate text-xs text-ink-3">${c.uploads ? "Sent from the Upload page" : `${num(c.photos)} photos · ${num(c.videos)} videos`}</div>
+      <div class="truncate text-sm font-medium">${esc(c.name)}</div>
+      <div class="truncate text-xs text-ink-3">${c.uploads ? "Sent from the Upload page" : mediaText(c.photos, c.videos)}${c.last_added ? ` · <span title="${esc(`${date(c.last_added, true)} ${clock(c.last_added)}`)}">last added ${esc(ago(c.last_added))}</span>` : ""}${c.new ? ` · ${num(c.new)} new in ${rangeText()}` : ""}</div>
       ${
         g
           ? `<div class="mt-2 flex items-center gap-2"><div class="bar max-w-48 flex-1"><i style="width:${done}%"></i></div><span class="meta">${done}%${fAcc ? ` in ${esc(short(fAcc))}` : ""}</span>${g.failed ? `<span class="text-xs text-bad">${num(g.failed)} failed</span>` : ""}</div>`
@@ -618,7 +628,7 @@ function fileTile(f: FolderFiles["items"][number]): string {
     <div class="shimmer relative aspect-square overflow-hidden rounded-lg">${thumb(f.name, "fade-img size-full object-cover", f.mtime)}
       <span class="ph-state ${tone}" aria-label="${esc(label)}">${icon(ic, "size-3")}</span>
       ${f.kind === "video" ? `<span class="ph-video">${icon("play", "size-3")}</span>` : ""}</div>
-    <figcaption class="mt-1 flex justify-between gap-1 px-0.5 text-[11px] text-ink-3 tabular-nums"><span class="keep-line truncate">${clock(f.added)}</span><span class="keep-line shrink-0">${bytes(f.size)}</span></figcaption></figure>`;
+    <figcaption class="mt-1 truncate px-0.5 text-[11px] text-ink-3 tabular-nums keep-line">${fSort === "size" ? bytes(f.size) : clock(f.added)}</figcaption></figure>`;
 }
 
 /** Newest or oldest first: a heading at each new day, like a photo library. */
@@ -680,9 +690,9 @@ function renderFilesTools(): void {
        .map(([k, l]) => `<button data-k="${k}" aria-pressed="${k === fKind}">${l}</button>`)
        .join("")}</div>
      ${fDay ? `<button type="button" class="chip" aria-pressed="true" id="fo-clear-day" title="Show every day">${icon("calendar")}Added ${esc(dayTitle(fDay, report?.today ?? "", true))}${icon("x")}</button>` : ""}
-     <select class="input ml-auto w-auto" id="fo-fsort" aria-label="Sort">${[
-       ["new", "Newest added"],
-       ["old", "Oldest added"],
+     <select class="input sm ml-auto w-auto" id="fo-fsort" aria-label="Sort">${[
+       ["new", "Newest"],
+       ["old", "Oldest"],
        ["size", "Largest"],
        ["name", "Name"],
      ]
@@ -789,8 +799,8 @@ function renderAdded(r: FolderReport): void {
   html(
     $("#fo-added"),
     `<div class="flex flex-wrap items-center gap-2">
-       <div class="min-w-0 flex-1"><div class="label">${fDay ? "Picked day" : "Today"}</div>
-         <div class="mt-1 text-lg font-medium">${esc(dayTitle(picked, r.today, true))} <span class="meta">${num(added)} added</span></div></div>
+       <div class="min-w-0 flex-1">${fDay ? '<div class="label">Picked day</div>' : ""}
+         <div class="${fDay ? "mt-1 " : ""}text-lg font-medium">${esc(dayTitle(picked, r.today, true))} <span class="meta">${num(added)} added</span></div></div>
        ${added && !weekly ? `<button type="button" class="btn sm" data-show-day="${picked}">${icon("library")}Show these ${num(added)}</button>` : ""}
        <div class="seg" id="fo-range">${RANGES.map(([n, l]) => `<button data-d="${n}" aria-pressed="${n === days}">${l}</button>`).join("")}</div>
      </div>
@@ -848,7 +858,7 @@ function skeleton(): void {
     $("#fo-head"),
     '<div class="skeleton h-4 w-40"></div><div class="skeleton mt-4 h-7 w-56"></div><div class="skeleton mt-4 h-2"></div>',
   );
-  html($("#fo-stats"), '<div class="card skeleton h-28"></div>'.repeat(5));
+  html($("#fo-stats"), '<div class="fo-fig"><div class="skeleton h-12"></div></div>'.repeat(3));
   html($("#fo-files-tools"), "");
   html(
     $("#fo-files"),
@@ -935,7 +945,7 @@ const folders: View = {
       <aside class="fo-nav-wrap" id="fo-nav-wrap" aria-label="Folders"><nav class="fo-nav scroll-thin" id="fo-nav"></nav></aside>
       <div class="min-w-0">
         <section class="card mb-4 p-4 sm:p-5" id="fo-head"></section>
-        <section class="stat-row" id="fo-stats"></section>
+        <section class="card fo-figs" id="fo-stats"></section>
         <div class="page-tabs mb-4" role="tablist" aria-label="Folder" id="fo-tabs"></div>
         <section class="card" id="fo-tab-photos" role="tabpanel">
           <div class="flex flex-wrap items-center gap-2 border-b border-line p-3" id="fo-files-tools"></div>
