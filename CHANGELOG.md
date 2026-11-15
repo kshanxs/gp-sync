@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.8.5
+
 - **Jobs card: main jobs only, lighter controls.** Date fixes is no longer in Overview's Jobs card
   (it has its own page). Each row's state is a small coloured dot and word ("● Paused · 12
   waiting") instead of a badge with a pause icon. Pause / Resume is a light outlined button with
