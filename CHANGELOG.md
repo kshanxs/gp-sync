@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 1.8.4
+
+- **Overview: one Jobs card.** The separate cards for uploads, Free storage, copies, date fixes
+  and Snapchat are now one card with a row per job. Each row shows what the job is doing, today's
+  count with its last 14 days, and its own Pause / Resume, which pauses that job in every account.
+  Copies are no longer counted twice: the uploads row is the folder backup only, without the
+  Backup and Copies badges.
+- **Folders: see what was last added.** Last added shows the three newest photos and videos.
+  Hovering one shows it bigger with its name and time; tapping one opens it in the viewer. On a
+  phone they sit under the time.
+- **Calmer badges in Folders.** The open folder (Everything too) is a quiet highlight instead of a
+  raised pill, and Everything sits flush with the tree. An account's role reads "· backup" or
+  "· also in" in plain text instead of a boxed badge.
 - **Pause finishes what's under way first, and says so.** Pausing uploads, Copy accounts, Free
   storage, Fix dates, Snapchat or Pause everything lets each file or step under way finish
   (checking, downloading or uploading), then stops before the next. The page says "Pausing ·
