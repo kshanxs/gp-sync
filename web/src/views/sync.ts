@@ -277,10 +277,10 @@ function renderSlow(): void {
     ];
     html(
       $("#sy-times"),
-      `<div class="grid grid-cols-2 gap-2">${rows
+      `<div class="grid flex-1 auto-rows-fr grid-cols-2 gap-2">${rows
         .map(
           ([l, v, ic]) =>
-            `<div class="stat-tile"><div class="flex items-center gap-1.5 text-xs text-ink-3">${icon(ic as "timer", "size-3.5")}${esc(l)}</div><div class="num text-lg">${esc(v)}</div></div>`,
+            `<div class="stat-tile flex flex-col justify-center"><div class="flex items-center gap-1.5 text-xs text-ink-3">${icon(ic as "timer", "size-3.5")}${esc(l)}</div><div class="num text-lg">${esc(v)}</div></div>`,
         )
         .join("")}</div>
        ${ins.timed_files < ins.uploaded ? `<p class="mt-3 text-xs text-ink-3">${icon("info", "inline size-3.5 -mt-0.5")} Upload times are known for ${num(ins.timed_files)} of ${num(ins.uploaded)} uploads (older ones weren't timed).</p>` : ""}`,
@@ -415,7 +415,7 @@ function controls(s: Status): void {
 }
 
 /** Files in flight, in the shared work panel: how many on each step, then a list that scrolls. */
-function flight(list: NonNullable<Status["uploading"]>): string {
+function flight(list: NonNullable<Status["uploading"]>, accounts: number): string {
   return workBox(
     list.map((u) => ({
       key: `${u.account}:${u.name}`,
@@ -423,12 +423,13 @@ function flight(list: NonNullable<Status["uploading"]>): string {
       step: u.step,
       done: u.bytes_done,
       total: u.bytes_total,
-      label: STEPS[u.step],
+      // With several accounts the list is shared: each file says where it goes.
+      label: accounts > 1 && u.account ? `${STEPS[u.step] ?? u.step} · to ${u.account}` : STEPS[u.step],
     })),
   );
 }
 
-/** One account's folder backup: what it is doing, its files in flight and how far it is. */
+/** One account's folder backup: what it is doing and how far it is (its files are listed under the cards). */
 function laneCard(l: AccountLane, s: Status): string {
   const held = !!s.paused_accounts?.includes(l.account);
   const tone = held
@@ -470,7 +471,6 @@ function laneCard(l: AccountLane, s: Status): string {
       ${parts}
       <div class="mt-1 flex items-center justify-between gap-2 text-xs text-ink-3 tabular-nums"><span>${has ? (l.roundTotal ? `This round: ${num(l.roundDone)} of ${num(l.roundTotal)}` : "") : `${num(l.done)} of ${num(l.total)} in this account${l.roundTotal ? ` · ${num(l.roundDone)} of ${num(l.roundTotal)} this round` : ""}`}</span>${pace}</div>
     </div>
-    ${l.uploading.length ? `<div class="border-t border-line">${flight(l.uploading)}</div>` : ""}
   </div>`;
 }
 
@@ -508,7 +508,16 @@ function lanesCard(s: Status): string {
     "Accounts",
     "users",
     `<span class="text-xs text-ink-3">${lanes.length > 1 ? "Each account uploads side by side; the speed limit is shared" : "Folder backup"}</span>`,
-  )}<div class="grid md:grid-cols-2">${lanes.map((l) => laneCard(l, s)).join("")}${idle.map(idleAccountCard).join("")}</div>`;
+  )}<div class="grid md:grid-cols-2">${lanes.map((l) => laneCard(l, s)).join("")}${idle.map(idleAccountCard).join("")}</div>${
+    // The files sending now, every account's in one list under the cards, so the cards stay the
+    // same height whichever account is busy.
+    lanes.some((l) => l.uploading.length)
+      ? flight(
+          lanes.flatMap((l) => l.uploading),
+          lanes.length,
+        )
+      : ""
+  }`;
 }
 
 function upNext(s: Status, current: string): string {
@@ -603,7 +612,17 @@ function folderList(s: Status): string {
         <span class="bar block"><i style="width:${fp}%"></i></span>
         <span class="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-xs text-ink-3"><span class="truncate">Backup: ${esc(f.account)}</span>${extra.length ? `<span>· Also in</span>${chips}` : ""}</span></a></li>`;
     })
-    .join("")}</ul>`;
+    .join("")}</ul>${foldersTotal(rows.map(([, f]) => f))}`;
+}
+
+/** Under the folder list, pinned to the card's bottom: every folder added up. */
+function foldersTotal(list: Status["folders"][string][]): string {
+  const files = list.reduce((a, f) => a + f.files, 0);
+  const done = list.reduce((a, f) => a + f.synced_files, 0);
+  const accs = new Set(list.flatMap((f) => f.accounts ?? (f.account ? [f.account] : [])));
+  return `<div class="mt-auto border-t border-line px-4 py-3">
+    <div class="flex items-center gap-2 text-xs text-ink-3"><span class="font-medium text-ink-2">All folders</span><span>${num(list.length)} folder${list.length === 1 ? "" : "s"} · ${num(accs.size)} account${accs.size === 1 ? "" : "s"}</span><span class="ml-auto tabular-nums">${num(done)} / ${num(files)} · ${Math.floor(pct(done, files))}%</span></div>
+    <span class="bar mt-1.5 block h-1.5"><i style="width:${pct(done, files)}%"></i></span></div>`;
 }
 
 const sync: View = {
@@ -635,13 +654,15 @@ const sync: View = {
 
       <section class="card order-2 min-w-0 overflow-hidden lg:order-none lg:col-span-12" id="sy-lanes" hidden></section>
 
-      <section class="card order-4 self-start lg:order-none lg:col-span-7">
+      <!-- Side by side on wide screens, the same height: the folder list keeps its total at the
+           bottom, and the time tiles grow to fill. -->
+      <section class="card order-4 flex flex-col lg:order-none lg:col-span-7">
         ${cardHead("Folders", "folder", '<a href="#/folders" class="hover:text-ink">All folders ›</a>')}
-        <div id="sy-folders"><div class="card-b"><div class="skeleton h-24"></div></div></div>
+        <div class="flex flex-1 flex-col" id="sy-folders"><div class="card-b"><div class="skeleton h-24"></div></div></div>
       </section>
-      <section class="card order-4 self-start lg:order-none lg:col-span-5">
+      <section class="card order-4 flex flex-col lg:order-none lg:col-span-5">
         ${cardHead("Upload times and sizes", "timer", '<a href="#/insights/patterns" class="hover:text-ink">Insights ›</a>')}
-        <div class="card-b" id="sy-times"><div class="skeleton h-40"></div></div>
+        <div class="card-b flex flex-1 flex-col" id="sy-times"><div class="skeleton h-40"></div></div>
       </section>
 
       <section class="card order-5 lg:order-none lg:col-span-12">

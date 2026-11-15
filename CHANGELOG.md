@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Sync's cards line up on wide screens.** The account cards stay the same height whichever
+  account is busy: the files sending now are one list under the cards, each saying which account
+  it goes to ("Uploading · to a@x.com"). Folders and Upload times and sizes are the same height
+  side by side: the folder list ends with an All folders total pinned to the bottom, and the time
+  tiles grow to fill their card.
+
 ## 1.8.5
 
 - **Jobs card: main jobs only, lighter controls.** Date fixes is no longer in Overview's Jobs card
