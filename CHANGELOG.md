@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.8.3
+
 - **Checks are faster.** Before, a check read one file at a time and saved each fingerprint on
   its own. Now it reads several files at once (up to 4) and saves them in batches of 200. An
   account's Google library is read once for all the folders it was added to, not once per folder,
