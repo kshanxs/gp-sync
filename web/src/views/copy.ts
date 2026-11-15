@@ -386,7 +386,7 @@ function render(): void {
       paused
         ? {
             tone: "warn",
-            title: moving ? `Pausing · ${num(moving)} finishing` : "Copying is paused",
+            title: moving ? `Pausing · stopping ${num(moving)}` : "Copying is paused",
             detail: `${src} → ${dst}${waiting ? ` · ${num(waiting)} waiting` : ""}`,
           }
         : moving
@@ -413,7 +413,9 @@ function render(): void {
             toggle: async () => {
               await post("copy/pause", { src, dst, paused: !paused });
               void load();
-              return paused ? "Copying resumed" : "Copying paused: items under way finish first";
+              return paused
+                ? "Copying resumed"
+                : "Copying paused: items under way stop now and go again on resume";
             },
           },
     );

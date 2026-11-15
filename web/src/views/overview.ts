@@ -107,7 +107,7 @@ function controls(s: Status): void {
     label: paused ? "Resume everything" : "Pause everything: uploads, Free storage, copies and date fixes",
     toggle: async () => {
       await post("pause-all", { paused: !paused });
-      return paused ? "Everything resumed" : "Everything paused: items under way finish their step";
+      return paused ? "Everything resumed" : "Everything paused: work under way stops now";
     },
   });
   setRefreshControl({

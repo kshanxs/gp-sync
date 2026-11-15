@@ -104,8 +104,8 @@ class Pace:
             self.bytes += max(0, size or 0)
 
     def finished(self, size, how, fixed=AUTO):
-        """A file is done: "ok", "slow" or "error". Dynamic grows after a clean run; a slow-down
-        halves the whole account (see slow_down)."""
+        """A file is done: "ok", "slow", "error" or "paused" (stopped part-way: counts as neither).
+        Dynamic grows after a clean run; a slow-down halves the whole account (see slow_down)."""
         with self.cond:
             self.running = max(0, self.running - 1)
             self.bytes = max(0, self.bytes - max(0, size or 0))

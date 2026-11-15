@@ -627,7 +627,7 @@ function render(): void {
       paused
         ? {
             tone: "warn",
-            title: moving ? `Pausing · ${num(moving)} finishing their step` : "Freeing storage is paused",
+            title: moving ? `Pausing · stopping ${num(moving)} under way` : "Freeing storage is paused",
             detail: `${account}${left ? ` · ${num(left)} waiting` : ""}`,
           }
         : moving
@@ -655,7 +655,7 @@ function render(): void {
               void load();
               return paused
                 ? "Freeing storage resumed"
-                : "Freeing storage paused: downloads stop now, uploads under way finish first";
+                : "Freeing storage paused: work under way stops now and carries on from its last step";
             },
           },
     );

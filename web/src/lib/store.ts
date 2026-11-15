@@ -139,6 +139,8 @@ export interface PauseControl {
   label: string;
   /** Work is running right now. */
   working?: boolean;
+  /** The button's words when not just Pause / Resume ("Pause all"). */
+  text?: string;
   /** Flips it; resolves with the toast to show. */
   toggle: () => Promise<string>;
 }

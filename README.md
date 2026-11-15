@@ -465,6 +465,7 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/totals` | All-time totals and fastest upload |
 | `GET /api/files?q=&status=all&folder=&sort=new&limit=60&offset=0` | Search backed-up files |
 | `GET /api/folders?group=folders&path=Photos&days=30&tz=330` | Counts and files added per day for a folder, or `group=devices` for the folders one level inside each backed-up folder. Each account row has `files`, `done`, `uploaded`, `exists`, `waiting` and `failed`; the folder's own total adds `per_hour` (files done in the last hour) |
+| `POST /api/pause` | Folder uploads: no body pauses or resumes every account (Resume also clears any account paused on its own); `{"account", "paused": true}` pauses or resumes one account. `GET /api/status` lists them in `paused_accounts` |
 | `POST /api/prechecks/start` | Sync what a check left waiting (or sync without checking): `{"account", "folder"}` (no folder: all of that account's) |
 | `POST /api/prechecks/retry` | Check again after a failed check: `{"account", "folder"}` |
 | `GET /api/folders/files?path=Photos&status=all&kind=all&sort=new&account=` | A folder's photos and videos with their state; with `account`, only the files that account should get, and `status` can also be `uploaded` or `exists` |

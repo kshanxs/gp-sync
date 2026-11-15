@@ -78,6 +78,20 @@ describe("account lanes", () => {
     expect(uploadTitle(s)).toBe("Uploading · 2 accounts · 3 files");
   });
 
+  it("an account paused on its own says so, stopping first if it was sending", () => {
+    const s = status({
+      accounts: ["me@x.com", "two@x.com"],
+      folders: {
+        Photos: { files: 2, synced_files: 0, accounts: ["me@x.com", "two@x.com"] },
+      } as unknown as Status["folders"],
+      uploading: [up("Photos/a.jpg", "two@x.com")],
+      paused_accounts: ["me@x.com", "two@x.com"],
+    });
+    const [me, two] = accountLanes(s);
+    expect(lanePhaseText(me!, s)).toBe("Paused");
+    expect(lanePhaseText(two!, s)).toBe("Pausing");
+  });
+
   it("no file n of m while several go at once: the badge says what the strip says", () => {
     const s = status({
       phase: "uploading",

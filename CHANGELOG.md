@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Pause stops work right away.** Before, a pause let the file or item under way finish first,
+  which could take minutes on a big video. Now pausing uploads, Copy accounts, Free storage, Fix
+  dates, Snapchat or Pause everything stops what is uploading or downloading where it is (within
+  half a second). Nothing half-sent is kept in Google and nothing is marked failed. A file that was
+  uploading goes again from the start when you resume. A Free storage item carries on from its last
+  finished step (its download, if that was done).
+- **Pause one account on Sync.** With more than one account, each account's card on Sync has its
+  own Pause / Resume button, so one account can wait while the others carry on (its checks wait
+  too). The button in the bar above is now **Pause all** / **Resume all**. Resume all also resumes
+  accounts paused on their own, and Pause everything on Overview does the same.
+
 ## 1.8.3
 
 - **Checks are faster.** Before, a check read one file at a time and saved each fingerprint on

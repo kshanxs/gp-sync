@@ -110,6 +110,8 @@ export interface Status {
   last_scan: number;
   interval: number;
   paused: boolean;
+  /** Accounts whose folder uploads are paused (all of them when `paused`). */
+  paused_accounts?: string[];
   stats_engine: string;
   account: string;
   accounts: string[];
