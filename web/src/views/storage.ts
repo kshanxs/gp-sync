@@ -421,7 +421,7 @@ function renderList(r: StorageReport): void {
               .map((i) => gridTile(i, r, working))
               .join(
                 "",
-              )}</div>${listed.length > shown ? `<div class="flex justify-center border-t border-line p-3"><button class="btn" id="st-more">${icon("plus")}Show more (${num(listed.length - shown)} left)</button></div>` : ""}`
+              )}</div>${listed.length > shown ? `<div class="flex justify-center border-t border-line p-3"><button class="btn" id="st-more">${icon("plus")}${num(listed.length - shown)} more</button></div>` : ""}`
           : `<div class="empty">${icon("shield")}No ${KIND_NAME[kind]} in this account count against storage</div>`
       }
     </section>
@@ -515,7 +515,7 @@ function renderFreed(): void {
               )
               .join(
                 "",
-              )}</div>${f.items.length > freedShown ? `<div class="flex justify-center border-t border-line p-3"><button class="btn" id="st-freed-more">${icon("plus")}Show more (${num(f.items.length - freedShown)} left)</button></div>` : ""}`
+              )}</div>${f.items.length > freedShown ? `<div class="flex justify-center border-t border-line p-3"><button class="btn" id="st-freed-more">${icon("plus")}${num(f.items.length - freedShown)} more</button></div>` : ""}`
           : `<div class="empty">${icon("sparkles")}Freed items show up here</div>`
       }
     </section>`,
@@ -681,7 +681,7 @@ function render(): void {
       `${accountStrip(r)}<section class="card p-6 text-center"><div class="mx-auto max-w-lg space-y-2">${icon("cloud", "mx-auto size-8 text-ink-3")}
         <div class="text-base font-medium">See what uses your Google storage</div>
         <p class="text-sm text-ink-3">GP Sync reads your library list (nothing changes) and shows what counts against storage. The first read can take a few minutes.</p>
-        <button class="btn primary mt-2" id="st-read" ${r.refreshing ? "disabled" : ""}>${r.refreshing ? `${icon("loader", "spin")}Reading your library…` : `${icon("refresh")}Read my library`}</button>
+        <button class="btn primary mt-2" id="st-read" ${r.refreshing ? "disabled" : ""}>${r.refreshing ? `${icon("loader", "spin")}Reading…` : `${icon("refresh")}Read library`}</button>
         ${r.error ? `<p class="text-sm text-bad">${esc(r.error)}</p>` : ""}</div></section>`,
     );
     return;

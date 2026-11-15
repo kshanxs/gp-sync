@@ -79,7 +79,7 @@ export function lanePhaseText(l: AccountLane, s: Status): string {
   if (s.paused_accounts?.includes(l.account)) return l.phase === "uploading" ? "Pausing" : "Paused";
   switch (l.phase) {
     case "uploading":
-      return `Uploading · ${l.uploading.length} file${l.uploading.length === 1 ? "" : "s"} at once`;
+      return `Uploading · ${l.uploading.length}`;
     case "waiting":
       return "Waiting to start";
     case "stopped":

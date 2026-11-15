@@ -491,7 +491,7 @@ function renderSends(): void {
   let markup = "";
   if (!top) {
     markup = accs.length
-      ? `<div class="sends-to"><span class="sends-label text-xs text-ink-3">Choose which accounts each folder goes to</span><button type="button" class="btn sm ml-auto" data-folders-sheet="">${icon("folder")}Where each folder goes</button></div>`
+      ? `<div class="sends-to"><span class="sends-label text-xs text-ink-3">Choose which accounts each folder goes to</span><button type="button" class="btn sm ml-auto" data-folders-sheet="">${icon("folder")}Edit</button></div>`
       : "";
   } else if (s && top in (s.folders ?? {})) {
     const order = foldersMap(s)[top] ?? [];
@@ -653,7 +653,7 @@ function tilesHtml(items: FolderFiles["items"], after?: FolderFiles["items"][num
 function moreHtml(): string {
   if (!files) return "";
   return shownFiles.length < files.total
-    ? `<button class="btn" id="fo-more">${icon("plus")}Show more (${num(files.total - shownFiles.length)} left)</button>`
+    ? `<button class="btn" id="fo-more">${icon("plus")}${num(files.total - shownFiles.length)} more</button>`
     : shownFiles.length > 60
       ? `<span class="meta">All ${num(files.total)} shown</span>`
       : "";

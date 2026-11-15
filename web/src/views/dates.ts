@@ -125,7 +125,7 @@ function stateOf(i: DateItem, r: DatesReport): { label: string; tone: Tone; ic: 
 
 function actions(i: DateItem, r: DatesReport): string {
   const open = i.google_url
-    ? `<a class="link-btn sm" href="${esc(i.google_url)}" target="_blank" rel="noopener noreferrer">${icon("external")}Open in Google Photos</a>`
+    ? `<a class="link-btn sm" href="${esc(i.google_url)}" target="_blank" rel="noopener noreferrer">${icon("external")}Google Photos</a>`
     : "";
   const cancel = `<button class="btn icon sm" data-cancel="${esc(i.name)}" title="Stop (nothing more changes in Google)" aria-label="Cancel">${icon("x")}</button>`;
   const edit = `<button class="btn sm" data-edit="${esc(i.name)}">${icon("calendar")}Set date</button>`;
@@ -145,7 +145,7 @@ function editor(i: DateItem): string {
   return `<div class="mt-2 flex flex-wrap items-center gap-2" data-editor="${esc(i.name)}">
     <input type="datetime-local" class="input w-auto" id="dt-input" value="${localInput(i.best)}" max="${localInput(Date.now() / 1000)}">
     <button class="btn sm primary" data-save="${esc(i.name)}">${icon("ok")}Save</button>
-    ${i.manual ? `<button class="btn sm" data-auto="${esc(i.name)}">${icon("refresh")}Back to automatic</button>` : ""}
+    ${i.manual ? `<button class="btn sm" data-auto="${esc(i.name)}">${icon("refresh")}Automatic</button>` : ""}
     <button class="btn sm" data-close>Cancel</button>
   </div>`;
 }
@@ -308,7 +308,7 @@ function render(): void {
                 .map((i) => row(i, r))
                 .join(
                   "",
-                )}</div>${list.length > shown ? `<div class="flex justify-center p-3"><button class="btn" id="dt-more">${icon("plus")}Show more (${num(list.length - shown)} left)</button></div>` : ""}`
+                )}</div>${list.length > shown ? `<div class="flex justify-center p-3"><button class="btn" id="dt-more">${icon("plus")}${num(list.length - shown)} more</button></div>` : ""}`
             : `<div class="empty">${icon("shield")}${empty[show]}</div>`
         }</div>
       </section>`,

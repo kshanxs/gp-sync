@@ -54,7 +54,7 @@ export function precheckLines(s: Status | null, checks: Precheck[], named = fals
           <span class="bar"><i style="width:${pct(c.done, c.total)}%"></i></span></div>`;
       if (c.state === "failed")
         return `<div class="pc-row">${icon("warn", "size-4 text-warn")}<span class="min-w-0 flex-1"><b>Couldn't check ${where}</b> · ${esc(c.error || "the library couldn't be read")}</span>
-          <span class="pc-actions"><button type="button" class="btn sm" data-precheck-retry="${arg}">Try again</button><button type="button" class="link-btn sm" data-precheck-start="${arg}">Sync without checking</button></span></div>`;
+          <span class="pc-actions"><button type="button" class="btn sm" data-precheck-retry="${arg}">Try again</button><button type="button" class="link-btn sm" data-precheck-start="${arg}" title="Sync without checking">Skip check</button></span></div>`;
       // ready
       const summary = `${who} already has <span class="num">${num(c.matched)}</span> of ${num(c.total)} files in ${where}. <span class="num">${num(c.new)}</span> new to sync · ${bytes(c.new_bytes)}${etaText(c, s)}`;
       if (!c.new)

@@ -1755,7 +1755,12 @@ svg:hover .donut-arc:not(:hover) {
 }
 /* The button that opens it, the same on every page. */
 .pace-btn {
-  @apply inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-ink-2 transition-colors duration-150 hover:text-ink;
+  @apply inline-flex shrink-0 items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-[11px] whitespace-nowrap text-ink-2 tabular-nums transition-colors duration-150 hover:text-ink;
+}
+/* Google asked to slow down: fewer run at once for a while. */
+.pace-btn.slowed,
+.pace-btn.slowed > svg {
+  @apply text-warn;
 }
 .pace-btn:hover {
   border-color: color-mix(in oklab, var(--ink) 18%, transparent);

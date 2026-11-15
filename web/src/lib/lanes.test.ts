@@ -73,7 +73,7 @@ describe("account lanes", () => {
     });
     expect(two).toMatchObject({ account: "two@x.com", also: ["Photos"], done: 4, total: 10, roundTotal: 6 });
     expect(two!.uploading).toHaveLength(2);
-    expect(lanePhaseText(two!, s)).toBe("Uploading · 2 files at once");
+    expect(lanePhaseText(two!, s)).toBe("Uploading · 2");
     expect(uploadSummary(s)).toEqual({ accounts: 2, files: 3 });
     expect(uploadTitle(s)).toBe("Uploading · 2 accounts · 3 files");
   });

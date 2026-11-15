@@ -449,7 +449,7 @@ function render(): void {
         r.items.length
           ? `<div class="divide-y divide-line" data-gallery>${r.items.map((i) => row(i, r)).join("")}</div>${
               r.more
-                ? `<div class="flex justify-center p-3"><button class="btn" id="sc-more">${icon("plus")}Show more (${num(r.more)} left)</button></div>`
+                ? `<div class="flex justify-center p-3"><button class="btn" id="sc-more">${icon("plus")}${num(r.more)} more</button></div>`
                 : ""
             }`
           : `<div class="empty">${icon("shield")}${r.searching ? "Still looking…" : "None here"}</div>`

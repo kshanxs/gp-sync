@@ -73,7 +73,7 @@ function tileHtml(f: FileItem): string {
 
 function moreHtml(): string {
   return items.length < total
-    ? `<button class="btn" id="lib-more">${icon("plus")}Show more (${num(total - items.length)} left)</button>`
+    ? `<button class="btn" id="lib-more">${icon("plus")}${num(total - items.length)} more</button>`
     : items.length > 60
       ? `<span class="text-xs text-ink-3">All ${num(total)} shown</span>`
       : "";
