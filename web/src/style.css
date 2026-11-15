@@ -2259,3 +2259,28 @@ button.col[aria-pressed="true"]::after {
 #fo-stats > :last-child {
   @apply col-span-2 xl:col-span-1;
 }
+
+/* Check first, then sync (lib/prechecks.ts): one line per folder an account was added to. */
+.pc-list {
+  @apply flex flex-col gap-2;
+}
+.pc-row {
+  @apply flex flex-wrap items-center gap-x-2 gap-y-2 rounded-[10px] border border-line bg-panel-2 px-3 py-2.5 text-sm text-ink-2;
+}
+.pc-row b {
+  @apply font-medium text-ink;
+}
+.pc-row.pc-ready {
+  @apply bg-raised;
+}
+.pc-actions {
+  @apply ml-auto flex shrink-0 items-center gap-2;
+}
+/* "Sends to": the open folder's accounts, right on Folders. */
+.sends-to {
+  @apply mt-3 flex flex-wrap items-center gap-1.5 border-t border-line pt-3;
+}
+/* The words take the row; on a narrow card the buttons go under them instead of squeezing them. */
+.pc-row > span:not(.pc-actions) {
+  flex-basis: 14rem;
+}

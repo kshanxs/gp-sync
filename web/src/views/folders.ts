@@ -14,7 +14,9 @@ import { backupPriorityControl, PRIORITY_MAX } from "../lib/backup-priority";
 import { $, esc, html, toast, touched } from "../lib/dom";
 import { ago, bytes, clock, date, dayKey, fileName, num, pct } from "../lib/format";
 import { icon, type IconName } from "../lib/icons";
-import { host } from "../lib/store";
+import { folderChips, foldersMap, orderAfterTap, saveFolders } from "../lib/folder-accounts";
+import { precheckLines, prechecksFor } from "../lib/prechecks";
+import { host, status } from "../lib/store";
 import { openAttrs, thumb, type Tone } from "../lib/ui";
 import type { View } from "./view";
 
@@ -43,6 +45,8 @@ let opened = false;
 let filesOpened = false;
 let request = 0;
 let refreshTimer = 0;
+/** What the "Sends to" row last drew (it is redrawn with every status, only when it changed). */
+let sendsDrawn = "";
 /** Small screens: the navigator is folded away while a folder is open. */
 let navOpen = false;
 
@@ -453,9 +457,37 @@ function renderHead(r: FolderReport): void {
        ${path ? backupPriorityControl(path, prio.indexOf(path), waiting + failed > 0) : ""}
      </div>
      <div class="mt-4 flex items-center gap-3"><div class="bar flex-1"><i style="width:${done}%"></i></div><span class="meta shrink-0">${g ? `${done}% in ${fAcc ? esc(short(fAcc)) : "Google Photos"}` : `Not sent to ${esc(short(fAcc))}`}</span></div>
+     <div id="fo-sends"></div>
      ${t.accounts?.length ? `<div class="mt-3 border-t border-line">${accountBreakdown(t.accounts, { pick: fAcc && SEGMENTS.some(([k]) => k === fStatus) ? { account: fAcc, part: fStatus } : null })}</div>` : ""}`,
   );
+  sendsDrawn = ""; // the header was just rebuilt, with an empty slot
+  renderSends();
   renderStats(r, waiting, failed);
+}
+
+/** "Sends to": the accounts the open folder's top folder goes to, changed with a tap, and any check
+ * of an account just added to it. Redrawn with every status (the check's progress). */
+function renderSends(): void {
+  const box = document.getElementById("fo-sends");
+  if (!box) return;
+  const s = status();
+  const top = path.split("/")[0] ?? "";
+  const accs = s?.accounts ?? [];
+  let markup = "";
+  if (!top) {
+    markup = accs.length
+      ? `<div class="sends-to"><span class="text-xs text-ink-3">Choose which accounts each folder goes to</span><button type="button" class="btn sm ml-auto" data-folders-sheet="">${icon("folder")}Where each folder goes</button></div>`
+      : "";
+  } else if (s && top in (s.folders ?? {})) {
+    const order = foldersMap(s)[top] ?? [];
+    const checks = accs.flatMap((a) => prechecksFor(s, a, top));
+    markup = `<div class="sends-to" data-sends-to="${esc(top)}" data-order="${esc(JSON.stringify(order))}">
+        <span class="mr-1 text-xs text-ink-3">${path === top ? "Sends to" : `Sends to (all of ${esc(top)})`}</span><span class="contents" data-sends-chips>${folderChips(accs, order)}</span>
+      </div>${checks.length ? `<div class="mt-3">${precheckLines(s, checks, true)}</div>` : ""}`;
+  }
+  if (markup === sendsDrawn) return;
+  sendsDrawn = markup;
+  html(box, markup);
 }
 
 /** The five numbers. The first four filter the photos below; Last added opens the Added tab. */
@@ -950,6 +982,27 @@ const folders: View = {
         else filterPhotos({ status: fStatus === k ? "all" : k });
         return;
       }
+      // Sends to: a tap turns an account on or off for this folder (or makes it main), saved at once
+      const sends = t.closest<HTMLElement>("[data-sends-to]");
+      if (sends) {
+        let order: string[] = [];
+        try {
+          order = JSON.parse(sends.dataset.order || "[]") as string[];
+        } catch {
+          /* keep [] */
+        }
+        const next = orderAfterTap(t, order);
+        if (!next) return;
+        const top = sends.dataset.sendsTo ?? "";
+        sends.dataset.order = JSON.stringify(next);
+        const chips = sends.querySelector("[data-sends-chips]");
+        if (chips) html(chips, folderChips(status()?.accounts ?? [], next));
+        void saveFolders({ ...foldersMap(status()), [top]: next }).then(() => {
+          sendsDrawn = "";
+          void load(true);
+        });
+        return;
+      }
       // what each account has: a part shows those files, for that account
       const seg = t.closest<HTMLElement>("[data-seg]");
       if (seg) {
@@ -1055,7 +1108,11 @@ const folders: View = {
     open();
     document.getElementById("view")?.scrollTo({ top: 0 });
   },
+  update() {
+    renderSends();
+  },
   unmount() {
+    sendsDrawn = "";
     clearInterval(refreshTimer);
     request++;
     fRequest++;

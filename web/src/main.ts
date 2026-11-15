@@ -40,6 +40,7 @@ import sources from "./views/sources";
 import snapchat from "./views/snapchat";
 import { askUndated } from "./lib/undated";
 import { noteVisit } from "./lib/since-visit";
+import { onPrecheckClick } from "./lib/prechecks";
 import { watchSegs } from "./lib/fit-segs";
 import storage from "./views/storage";
 import downloads from "./views/downloads";
@@ -426,6 +427,7 @@ function boot(): void {
   }, 4000);
   onStatus(askUndated);
   onStatus((s) => noteVisit(s));
+  document.addEventListener("click", onPrecheckClick);
   onMode((live) => $("#live").classList.toggle("hidden", !live));
   route();
   startPolling();

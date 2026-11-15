@@ -18,6 +18,22 @@ export interface Library {
   photo_bytes?: number;
   video_bytes?: number;
 }
+/** Check first, then sync: one folder and one account it was added to. */
+export interface Precheck {
+  folder: string;
+  account: string;
+  state: "waiting" | "reading" | "comparing" | "ready" | "failed";
+  /** Files compared so far, and in all. */
+  done: number;
+  total: number;
+  /** Already in the account's Google library, and still to send (with their size). */
+  matched: number;
+  new: number;
+  new_bytes: number;
+  error: string;
+  added: number;
+  finished: number | null;
+}
 export interface Folder {
   files: number;
   bytes: number;
@@ -105,6 +121,8 @@ export interface Status {
   copies_pending?: number;
   /** Folder copies still to go, per extra account ("Also in"). */
   copies_pending_by?: Record<string, number>;
+  /** Accounts added to folders already backed up: being checked, or checked and waiting to start. */
+  prechecks?: Precheck[];
   /** Background work right now, per account (and copy pair). */
   jobs?: Job[];
   /** Free storage per account: items waiting or under way, items freed, and whether it is paused. */

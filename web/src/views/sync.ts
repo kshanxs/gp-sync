@@ -4,6 +4,7 @@
 
 import { workBox } from "../lib/work-panel";
 import { accountBreakdown, openInFolders } from "../lib/account-breakdown";
+import { precheckLines, prechecksFor } from "../lib/prechecks";
 import { openUploadOptions, paceButton } from "../lib/pace-sheet";
 import { get, post, tz, type FolderReport, type History, type Insights, type Status } from "../lib/api";
 import { donut, heatLegend, heatmap, ring, setRing, sparkline, type Slice } from "../lib/charts";
@@ -421,6 +422,7 @@ function laneCard(l: AccountLane, s: Status): string {
     .filter(Boolean)
     .join(" · ");
   const pace = paceButton("upload", s.upload_workers ?? 0, s.pace?.[l.account]?.upload);
+  const checks = prechecksFor(s, l.account);
   // Uploaded, already in Google, new to sync and failed, once the folder report is in.
   const has = accReport?.total.accounts?.find((a) => a.account === l.account);
   const parts = has
@@ -429,7 +431,8 @@ function laneCard(l: AccountLane, s: Status): string {
   return `<div class="min-w-0 border-b border-line md:odd:border-r" data-lane="${esc(l.account)}">
     <div class="p-4">
       <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate text-sm font-medium" title="${esc(l.account)}">${esc(l.account)}</span>${badge(lanePhaseText(l, s), tone)}</div>
-      <div class="mt-1 truncate text-xs text-ink-3" title="${esc(what)}">${esc(what)}</div>
+      <div class="mt-1 flex min-w-0 items-center gap-2 text-xs text-ink-3"><span class="min-w-0 truncate" title="${esc(what)}">${esc(what)}</span><button type="button" class="link-btn sm shrink-0" data-folders-sheet="${esc(l.account)}">Change</button></div>
+      ${checks.length ? `<div class="mt-3">${precheckLines(s, checks)}</div>` : ""}
       ${parts}
       <div class="mt-1 flex items-center justify-between gap-2 text-xs text-ink-3 tabular-nums"><span>${has ? (l.roundTotal ? `This round: ${num(l.roundDone)} of ${num(l.roundTotal)}` : "") : `${num(l.done)} of ${num(l.total)} in this account${l.roundTotal ? ` · ${num(l.roundDone)} of ${num(l.roundTotal)} this round` : ""}`}</span>${pace}</div>
     </div>
@@ -437,14 +440,22 @@ function laneCard(l: AccountLane, s: Status): string {
   </div>`;
 }
 
+/** A connected account that gets no folder yet: one tap to choose some. */
+function idleAccountCard(account: string): string {
+  return `<div class="min-w-0 border-b border-line md:odd:border-r"><div class="flex flex-wrap items-center gap-2 p-4">
+    <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium" title="${esc(account)}">${esc(account)}</span><span class="text-xs text-ink-3">Gets no folders yet</span></span>
+    <button type="button" class="btn sm" data-folders-sheet="${esc(account)}">${icon("folder")}Choose folders</button></div></div>`;
+}
+
 function lanesCard(s: Status): string {
   const lanes = accountLanes(s);
-  if (!lanes.length) return "";
+  const idle = (s.accounts ?? []).filter((a) => !lanes.some((l) => l.account === a));
+  if (!lanes.length && !idle.length) return "";
   return `${cardHead(
     "Accounts",
     "users",
     `<span class="text-xs text-ink-3">${lanes.length > 1 ? "Each account uploads side by side; the speed limit is shared" : "Folder backup"}</span>`,
-  )}<div class="grid md:grid-cols-2">${lanes.map((l) => laneCard(l, s)).join("")}</div>`;
+  )}<div class="grid md:grid-cols-2">${lanes.map((l) => laneCard(l, s)).join("")}${idle.map(idleAccountCard).join("")}</div>`;
 }
 
 function upNext(s: Status, current: string): string {
