@@ -13,7 +13,7 @@ wins, and the Work log row says so. Written by the handoff skill (`handoff.py lo
 
 ## Next up
 
-1. Update GP Sync to 1.8.5 on the Umbrel (the store offers it, store 41ebcdf), try the Jobs card's Pause and the Sync account Pause during a real upload (each finishes its file first), look over Folders on the phone, then add a second account to a folder that is already backed up and watch the check on Sync (the real library read has only been tested with a fake client).
+1. Update GP Sync to 1.8.6 on the Umbrel (the store offers it), try the Jobs card's Pause and the Sync account Pause during a real upload (each finishes its file first), look over Folders on the phone, then add a second account to a folder that is already backed up and watch the check on Sync (the real library read has only been tested with a fake client).
    Then retake the README screenshots in docs/ from the real app (they still show 1.5.8).
 2. Dockerfile follow-up: install packages from a copy of pyproject.toml/uv.lock with the project version blanked, so a version-only release reuses the 165 MB packages layer. Tried 2026-11-14, couldn't be tested (PyPI downloads timed out on umbrel); test it when CI runs again.
 3. Try two accounts on the Umbrel dashboard (pull main first).
@@ -56,6 +56,7 @@ Newest first. One row per session that changed anything; never edit another sess
 
 | Date | Entry | Agent | Area | What changed | Links | Next step | Status |
 |---|---|---|---|---|---|---|---|
+| 2026-11-15T15:27+05:30 | Release 1.8.6 | Claude | Launch | Owner said release. Merged PR #9 (a7c0895): Sync account cards equal height with one shared file list, Folders and Upload times cards line up. Checks on umbrel: uv lock --check, ruff, 345 pytest, vp check/test (72)/build | PR #9, main | Owner updates the app on Umbrel | Done |
 | 2026-11-15T15:22+05:30 | Sync cards line up | Claude | Dev | Account cards no longer hold their files in flight (one shared workBox under the cards, labelled with the account), so paused and busy cards match. Folders and Upload times cards stretch to equal height (self-start removed, flex-col); folder list gets an All folders total at the bottom, time tiles auto-rows-fr. Checked: pace is dynamic per account (START 4, MAX 12), not hard-coded. vp check/test (72)/build on umbrel; desktop and phone screenshots | branch sync-layout-symmetry | Owner reviews the PR; release when asked | Waiting on owner |
 | 2026-11-15T15:02+05:30 | Release 1.8.5 | Claude | Launch | Owner said merge and release. Merged PR #8 (0bd7c1a): Jobs card without Date fixes, dot-and-word state and outlined Pause/Resume, same on Sync's account cards. Checks on umbrel: uv lock --check, ruff, 345 pytest, vp check/test (72)/build | PR #8, main | Owner updates the app on Umbrel | Done |
 | 2026-11-15T15:00+05:30 | Jobs card and Sync cards: lighter state and Pause | Claude | Dev | Date fixes row dropped from Overview's Jobs card. State is a dot plus a coloured word (.job-dot/.job-state) instead of a badge; Pause/Resume is an outlined .job-toggle button with its word. Sync's account cards use the same pieces. vp check/test (72)/build on umbrel; desktop and phone screenshots | branch jobs-card-polish | Owner reviews the PR; release when asked | Waiting on owner |

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.8.6
+
 - **Sync's cards line up on wide screens.** The account cards stay the same height whichever
   account is busy: the files sending now are one list under the cards, each saying which account
   it goes to ("Uploading · to a@x.com"). Folders and Upload times and sizes are the same height
