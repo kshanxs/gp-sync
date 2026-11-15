@@ -645,11 +645,8 @@ def test_freed_report_counts_time_and_days(library):
     assert r["items"][0]["key"] == "NEW" and r["items"][0]["old_key"] == "BIG"
 
 
-def test_pause_stops_a_download_in_progress(library, monkeypatch):
-    # Pausing doesn't wait for big downloads to finish: they stop, and the item stays queued.
-    clock = iter(range(0, 10**6, 2))
-    monkeypatch.setattr(sync.time, "monotonic", lambda: next(clock))
-
+def test_pause_lets_the_download_under_way_finish(library, monkeypatch):
+    # Pausing waits for the step under way: the download finishes and is saved, then nothing more.
     class Halfway(FakeResponse):
         def iter_content(self, n):
             yield DATA[:100]
@@ -660,9 +657,9 @@ def test_pause_stops_a_download_in_progress(library, monkeypatch):
     client = FakeClient(library, {b64(DATA)})
     sync.reclaim_queue(ACC, ["BIG"])
     try:
-        assert not step(client)
-        assert sync.q("SELECT state, local FROM reclaim WHERE media_key='BIG'")[0] == ("queued", None)
-        assert not list((sync.RECLAIM_DIR / ACC / "BIG").glob("*"))  # no half-downloaded file left
+        assert step(client)
+        assert sync.q("SELECT state FROM reclaim WHERE media_key='BIG'")[0] == ("downloaded",)
+        assert not step(client)  # paused: the next step (delete and upload) waits
         assert client.api.calls == []  # nothing touched in Google
         assert sync.reclaim_state[ACC]["jobs"] == {}
     finally:
@@ -670,8 +667,7 @@ def test_pause_stops_a_download_in_progress(library, monkeypatch):
 
 
 def test_diagnostics_list_items_being_moved(library):
-    sync.reclaim_state[ACC]["jobs"]["K"] = {"current": {"key": "K", "step": "downloading", "done": 1, "total": 2},
-                                            "stop": lambda: False}  # fmt: skip
+    sync.reclaim_state[ACC]["jobs"]["K"] = {"current": {"key": "K", "step": "downloading", "done": 1, "total": 2}}
     try:
         d = sync.diagnostics(1)
         json.dumps(d)  # nothing in it that can't be written out

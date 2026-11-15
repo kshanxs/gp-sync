@@ -2605,7 +2605,6 @@ def upload_all(client, todo, account="", st=None, lane=False):
     retried = collections.Counter()  # files put back after Google asked to slow down
     lock = threading.RLock()  # counters, the queue and album batches are shared by the workers
     stop = threading.Event()  # pause, upload window or an outage: no new file starts
-    held = _stop_check(lambda: uploads_paused(account))  # a pause also stops files part-way
 
     def next_item():
         with lock:
@@ -2663,13 +2662,8 @@ def upload_all(client, todo, account="", st=None, lane=False):
                 cur["bytes_done"] = ev.get("bytes_completed") or 0
                 throttle(cur["bytes_done"])
 
-        def hashed(n, cur=cur):
-            cur.update(bytes_done=n)
-            check_pause()
-
         try:
-            with stop_on_pause(held):
-                digest = media.sha1_file(path, on_progress=hashed)
+            digest = media.sha1_file(path, on_progress=lambda n, cur=cur: cur.update(bytes_done=n))
             cur.update(step="checking", bytes_done=0)
             # No date inside the file: Google uses the one sent with the upload, so send the
             # best one known (a date the user picked, or the earliest identical copy here).
@@ -2682,7 +2676,7 @@ def upload_all(client, todo, account="", st=None, lane=False):
                 when = best_date(path, size, mtime, digest.hex())[0]
             # Single-file upload raises on failure; the batch upload() only logs errors.
             # gpmc is pinned in pyproject.toml, so this internal method stays stable.
-            with Progress(disable=True) as bar, upload_date(client, when, mtime), stop_on_pause(held):
+            with Progress(disable=True) as bar, upload_date(client, when, mtime):
                 result = client._upload_file(
                     Path(path), digest, bar, force_upload=False, use_quota=False, saver=False,
                     progress_callback=progress,
@@ -2744,13 +2738,6 @@ def upload_all(client, todo, account="", st=None, lane=False):
             else:
                 add_stats(existing=1)
                 log(f"Already in Google Photos{f' ({account})' if copy else ''}: {name}", "exists", name)
-        except Paused:
-            # Paused part-way: nothing was committed in Google and nothing is marked failed. The
-            # file stays waiting and goes again from the start on resume.
-            with lock:
-                stop.set()
-            log(f"Paused part-way through {name}; it goes again when you resume", "pause", name)
-            return "paused"
         except Exception as e:
             err = f"{type(e).__name__}: {e}"[:500]
             problem = outage_kind(e)
@@ -4084,11 +4071,8 @@ def _from_local(key, dedup, name, size, taken, folder, track):
         digest = hashlib.sha1()
         done = 0
         try:
-            stop = track.get("stop")
             with open(source, "rb") as src, open(tmp, "wb") as f:
                 while block := src.read(1024 * 1024):
-                    if stop and stop():
-                        raise Paused
                     f.write(block)
                     digest.update(block)
                     done += len(block)
@@ -4120,75 +4104,6 @@ def _item_hashes(response, dedup):
             if isinstance(h, (bytes, bytearray)) and len(h) == 20 and _b64_hash(h) not in found:
                 found.append(_b64_hash(h))
     return found
-
-
-class Paused(Exception):
-    """The user paused this work: a download or upload in progress stops, and the item stays queued."""
-
-    def __init__(self, msg="paused by the user"):
-        super().__init__(msg)
-
-
-PAUSE_CHECK_SECONDS = 0.5  # how often work under way asks whether it was paused
-
-
-def _stop_check(paused):
-    """`paused()` asked at most every PAUSE_CHECK_SECONDS: called for every block sent or received."""
-    last = [-1e9, False]
-
-    def check():
-        now = time.monotonic()
-        if now - last[0] >= PAUSE_CHECK_SECONDS:
-            last[:] = [now, paused()]
-        return last[1]
-
-    return check
-
-
-_hold = threading.local()  # this thread's pause check, while it uploads or hashes a file for one
-
-
-@contextlib.contextmanager
-def stop_on_pause(check):
-    """While inside, an upload (or the hashing before it) on this thread stops part-way with Paused
-    once `check()` says the user paused this work, instead of finishing the file first. Nothing is
-    committed in Google then: the file is simply sent again from the start on resume."""
-    _install_upload_stop()
-    prev = getattr(_hold, "check", None)
-    _hold.check = check
-    try:
-        yield
-    finally:
-        _hold.check = prev
-
-
-def check_pause(*_):
-    """Raise Paused if this thread's work was paused (see stop_on_pause). Takes and ignores progress
-    arguments, so it can be a hashing progress callback."""
-    check = getattr(_hold, "check", None)
-    if check is not None and check():
-        raise Paused
-
-
-def _install_upload_stop():
-    """gpmc swallows errors raised by an upload's progress callback, so the pause check sits in the
-    reader requests pulls the upload's bytes from: raised there, it ends the request."""
-    try:
-        import gpmc.client as gc
-    except ImportError:
-        return
-    base = gc._ProgressReader
-    if getattr(base, "gp_sync_pause", False):
-        return
-
-    class PausableReader(base):
-        gp_sync_pause = True
-
-        def read(self, size=-1):
-            check_pause()
-            return super().read(size)
-
-    gc._ProgressReader = PausableReader
 
 
 COPY_SLACK = 256 * 1024  # how far Google's copy may be from the original's size: a few changed details
@@ -4236,10 +4151,7 @@ def _fetch(client, account, key, dedup, name, size, taken, folder, track, use_co
         try:
             with requests.get(url, headers=headers, stream=True, timeout=60) as r, open(tmp, "wb") as f:
                 r.raise_for_status()
-                stop = track.get("stop")
                 for block in r.iter_content(1024 * 1024):
-                    if stop and stop():
-                        raise Paused
                     f.write(block)
                     digest.update(block)
                     done += len(block)
@@ -4354,7 +4266,7 @@ def pause_all(paused):
     for a, _ in accounts():
         meta_set(f"reclaim_paused:{a}", flag)
         meta_set(f"dates_paused:{a}", flag)
-    log("Paused everything: work under way stops where it is" if paused else "Resumed everything",
+    log("Paused everything: work under way finishes first" if paused else "Resumed everything",
         "pause" if paused else "resume")  # fmt: skip
     for ev in (wake, reclaim_wake, copy_wake, mirror_wake):
         ev.set()
@@ -4375,8 +4287,7 @@ def split_pause():
 
 
 def reclaim_paused(account):
-    """The user paused Free storage for this account: items under way stop part-way (each keeps its last
-    finished step), nothing new starts."""
+    """The user paused Free storage for this account: items under way finish their step, nothing new starts."""
     return meta_get(f"reclaim_paused:{account}") == "1"
 
 
@@ -4401,7 +4312,7 @@ def _reclaim_item(account, row, make_client, out=None):
     key, dedup, name, size, taken, st_, local, fav, arch, cap, local_hash = row
     out = {} if out is None else out
     out["how"] = "ok"
-    track = {"current": None, "stop": _stop_check(lambda: reclaim_paused(account))}
+    track = {"current": None}
     with _reclaim_jobs_lock:
         reclaim_state[account]["jobs"][key] = track
     try:
@@ -4472,10 +4383,6 @@ def _reclaim_item(account, row, make_client, out=None):
         _set_reclaim(account, key, "checking", new_key=result, checks=0, uploaded_at=time.time())
         check_lanes.wake([account])
         return True
-    except Paused:  # stopped part-way: its saved step stands, and it carries on from there
-        out["how"] = "paused"
-        log(f"Paused part-way through {name}; it carries on from its last step when you resume", "pause")
-        return False
     except Exception as e:
         out["how"] = pace.outcome(e)
         msg = f"{type(e).__name__}: {e}"[:300]
@@ -4838,7 +4745,7 @@ def _reupload(client, path, dedup, size, key, track, when=None):
             }
 
     digest = base64.urlsafe_b64decode(dedup + "=" * (-len(dedup) % 4))
-    with Progress(disable=True) as bar, upload_date(client, when), stop_on_pause(track.get("stop")):
+    with Progress(disable=True) as bar, upload_date(client, when):
         result = client._upload_file(
             path, digest, bar, force_upload=False, use_quota=False, saver=False, progress_callback=progress
         )
@@ -5784,7 +5691,6 @@ def datefix_step(make_client=None, only=None):
             continue
         size, mtime, _account = found[0]
         track = dates_state[account]
-        track["stop"] = _stop_check(lambda account=account: dates_paused(account))  # stops an upload part-way
         name = rel(path)
         try:
             client = make_client(account)
@@ -5822,11 +5728,6 @@ def datefix_step(make_client=None, only=None):
                 name,
             )
             did = True
-        except Paused:  # stopped part-way through the upload: it stays waiting and goes again on resume
-            with _dates_checked_lock:
-                _dates_checked.pop(path, None)
-            log(f"Paused part-way through fixing the date of {name}; it goes again when you resume", "pause", name)
-            return did
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"[:300]
             print(f"Fix dates: {name}: {msg}", file=sys.stderr, flush=True)
@@ -6600,8 +6501,7 @@ def _snap_upload(client, account, path, taken, size, track):
 
     name = rel(path)
     track["current"] = {"key": name, "step": "hashing", "done": 0, "total": size}
-    with stop_on_pause(track.get("stop")):
-        digest = media.sha1_file(path, on_progress=check_pause)
+    digest = media.sha1_file(path)
     phases = []
 
     def progress(ev):
@@ -6610,7 +6510,7 @@ def _snap_upload(client, account, path, taken, size, track):
             track["current"] = {"key": name, "step": "uploading", "done": ev.get("bytes_completed") or 0,
                                 "total": size}  # fmt: skip
 
-    with Progress(disable=True) as bar, upload_date(client, taken), stop_on_pause(track.get("stop")):
+    with Progress(disable=True) as bar, upload_date(client, taken):
         result = client._upload_file(
             Path(path), digest, bar, force_upload=False, use_quota=False, saver=False, progress_callback=progress
         )
@@ -6732,8 +6632,6 @@ def _snap_slow_one(client, account, row, keep, drop, track):
         when = time.strftime("%Y-%m-%d %H:%M", time.gmtime(taken))
         log(f"Snapchat memory {name}: uploaded dated {when} UTC ({account})", "uploaded", name)
         return True
-    except Paused:
-        raise
     except Exception as e:
         if outage_kind(e):
             raise
@@ -6770,8 +6668,7 @@ def _snap_slow_pass(client, account, due, track):
             size = row[4] or 0
             if not gate.wait(size, fixed, lambda: stop.is_set() or time.monotonic() > deadline):
                 return
-            # This worker's progress, shown on the page; a pause stops its upload part-way.
-            slot = {"current": None, "stop": _stop_check(lambda: snapchat_paused(account))}
+            slot = {"current": None}  # this worker's progress, shown on the page
             with lock:
                 track["working"][row[0]] = slot
             how = "ok"
@@ -6779,11 +6676,6 @@ def _snap_slow_pass(client, account, due, track):
                 if _snap_slow_one(client, account, row, keep, drop, slot):
                     result["did"] = True
                     notify_change()
-            except Paused:  # it stays queued and goes again on resume
-                how = "paused"
-                log(f"Paused part-way through Snapchat memory {rel(row[0])}; it goes again when you resume",
-                    "pause", rel(row[0]))  # fmt: skip
-                return
             except Exception as e:
                 how = pace.outcome(e)
                 # Dynamic, and Google only asked to slow down: fewer at once, the rest go on (this
@@ -7524,8 +7416,7 @@ def _copy_one(row, make_client):
     gate, fixed = pace.get(dst, "copy"), get_settings()["reclaim"]["workers"]
     how = "error"
     gate.started(size)
-    held = _stop_check(lambda: meta_get("copy_paused") == "1")
-    track = state_["jobs"][key] = {"current": None, "stop": held}
+    track = state_["jobs"][key] = {"current": None}
     folder = COPY_DIR / f"{dst}-{key}"  # the same item can be copied to two accounts at once
     started = time.time()
     try:
@@ -7543,10 +7434,6 @@ def _copy_one(row, make_client):
         state_["error"] = ""
         how = "ok"
         return True
-    except Paused:  # stopped part-way (downloading or uploading): it stays queued
-        how = "paused"
-        log(f"Paused part-way through copying {name}; it starts again when you resume", "pause")
-        return False
     except Exception as e:
         how = pace.outcome(e)
         msg = f"{type(e).__name__}: {e}"[:300]

@@ -2,12 +2,12 @@
 
 ## Unreleased
 
-- **Pause stops work right away.** Before, a pause let the file or item under way finish first,
-  which could take minutes on a big video. Now pausing uploads, Copy accounts, Free storage, Fix
-  dates, Snapchat or Pause everything stops what is uploading or downloading where it is (within
-  half a second). Nothing half-sent is kept in Google and nothing is marked failed. A file that was
-  uploading goes again from the start when you resume. A Free storage item carries on from its last
-  finished step (its download, if that was done).
+- **Pause finishes what's under way first, and says so.** Pausing uploads, Copy accounts, Free
+  storage, Fix dates, Snapchat or Pause everything lets each file or step under way finish
+  (checking, downloading or uploading), then stops before the next. The page says "Pausing ·
+  finishing 2 files" (Overview, Sync and each account's card, Copy accounts, Free storage, Fix
+  dates, Snapchat) until they're done, then "Paused". Free storage and Copy accounts no longer
+  stop a download part-way and throw it away.
 - **Pause one account on Sync.** With more than one account, each account's card on Sync has its
   own Pause / Resume button, so one account can wait while the others carry on (its checks wait
   too). The button in the bar above is now **Pause all** / **Resume all**. Resume all also resumes

@@ -216,19 +216,21 @@ function render(): void {
   const paused = !!r.paused;
   const fixing = (status()?.jobs ?? []).some((j) => j.kind === "dates" && j.account === account);
   setPageStatus(
-    paused
-      ? {
-          tone: "warn",
-          title: "Fixing dates is paused",
-          detail: `${account}${r.waiting ? ` · ${num(r.waiting)} waiting` : ""} · nothing is deleted or uploaded again`,
-        }
-      : fixing
-        ? { tone: "run", title: "Fixing a date", detail: `${account} · ${num(r.waiting)} in progress` }
-        : r.refreshing
-          ? { tone: "run", title: "Checking dates with Google", detail: account }
-          : r.waiting
-            ? { tone: "idle", title: `${num(r.waiting)} waiting for Google`, detail: account }
-            : { tone: "good", title: "No date fixes running", detail: account },
+    paused && fixing
+      ? { tone: "warn", title: "Pausing · finishing this one", detail: `${account} · paused once it's done` }
+      : paused
+        ? {
+            tone: "warn",
+            title: "Fixing dates is paused",
+            detail: `${account}${r.waiting ? ` · ${num(r.waiting)} waiting` : ""} · nothing is deleted or uploaded again`,
+          }
+        : fixing
+          ? { tone: "run", title: "Fixing a date", detail: `${account} · ${num(r.waiting)} in progress` }
+          : r.refreshing
+            ? { tone: "run", title: "Checking dates with Google", detail: account }
+            : r.waiting
+              ? { tone: "idle", title: `${num(r.waiting)} waiting for Google`, detail: account }
+              : { tone: "good", title: "No date fixes running", detail: account },
   );
   // Pause only when there is something to pause.
   setPauseControl(
@@ -241,7 +243,7 @@ function render(): void {
           toggle: async () => {
             await post("dates/pause", { account, paused: !paused });
             void load();
-            return paused ? "Fixing dates resumed" : "Fixing dates paused";
+            return paused ? "Fixing dates resumed" : "Fixing dates paused: the one under way finishes first";
           },
         },
   );

@@ -53,11 +53,12 @@ function runningWork(s: Status): WorkItem[] {
     items.push({
       key: `${j.kind}:${j.account}:${j.to ?? ""}:${j.name ?? ""}`,
       name: (j.name ?? "").split("/").pop() || jobTitle(j),
-      step: j.kind === "library" ? "reading" : paused ? "waiting" : j.step || "working",
+      step: j.kind === "library" ? "reading" : j.step || "working",
       done: j.done,
       total: j.total,
       label: jobTitle(j),
-      note: paused ? "Paused" : undefined,
+      // Paused while it runs: this step finishes, then it stops.
+      note: paused ? "Pausing" : undefined,
       href: jobLink(j),
     });
   }
@@ -89,8 +90,9 @@ function controls(s: Status): void {
     paused
       ? {
           tone: "warn",
-          title: "Everything is paused",
-          detail: "Uploads, Free storage, copies and date fixes",
+          // Work under way finishes first, then everything stops.
+          title: busy.length ? `Pausing · finishing ${num(runningWork(s).length)}` : "Everything is paused",
+          detail: busy.length ? "Paused once they're done" : "Uploads, Free storage, copies and date fixes",
         }
       : busy.length
         ? {
@@ -107,7 +109,7 @@ function controls(s: Status): void {
     label: paused ? "Resume everything" : "Pause everything: uploads, Free storage, copies and date fixes",
     toggle: async () => {
       await post("pause-all", { paused: !paused });
-      return paused ? "Everything resumed" : "Everything paused: work under way stops now";
+      return paused ? "Everything resumed" : "Everything paused: work under way finishes first";
     },
   });
   setRefreshControl({

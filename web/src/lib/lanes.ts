@@ -76,7 +76,9 @@ export function accountLanes(s: Status): AccountLane[] {
 
 /** What a lane is doing, in words. */
 export function lanePhaseText(l: AccountLane, s: Status): string {
-  if (s.paused_accounts?.includes(l.account)) return l.phase === "uploading" ? "Pausing" : "Paused";
+  // Paused: the files under way finish first.
+  if (s.paused_accounts?.includes(l.account))
+    return l.uploading.length ? `Pausing · finishing ${l.uploading.length}` : "Paused";
   switch (l.phase) {
     case "uploading":
       return `Uploading · ${l.uploading.length}`;

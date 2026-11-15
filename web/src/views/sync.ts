@@ -340,50 +340,57 @@ function nowAction(s: Status): string {
 /** The control strip: uploads (status, Pause/Resume) and scanning the folders. */
 function controls(s: Status): void {
   const left = s.library.files - s.library.synced_files;
+  const finishing = s.uploading?.length ?? (s.current ? 1 : 0);
   setPageStatus(
-    s.phase === "uploading"
+    s.paused && s.phase === "uploading"
       ? {
-          tone: "run",
-          title: uploadTitle(s),
-          detail: s.total ? `${num(s.done)} of ${num(s.total)} done this round` : "",
+          tone: "warn",
+          title: `Pausing · finishing ${num(finishing)} file${finishing === 1 ? "" : "s"}`,
+          detail: "Paused once they're done",
         }
-      : s.phase === "scanning"
-        ? { tone: "run", title: "Scanning your folders" }
-        : s.paused
-          ? {
-              tone: "warn",
-              title: "Folder uploads are paused",
-              detail: left ? `${num(left)} files waiting` : "",
-            }
-          : s.paused_accounts?.length
+      : s.phase === "uploading"
+        ? {
+            tone: "run",
+            title: uploadTitle(s),
+            detail: s.total ? `${num(s.done)} of ${num(s.total)} done this round` : "",
+          }
+        : s.phase === "scanning"
+          ? { tone: "run", title: "Scanning your folders" }
+          : s.paused
             ? {
                 tone: "warn",
-                title: `Paused for ${s.paused_accounts.length === 1 ? s.paused_accounts[0] : `${num(s.paused_accounts.length)} accounts`}`,
-                detail: "The other accounts carry on",
+                title: "Folder uploads are paused",
+                detail: left ? `${num(left)} files waiting` : "",
               }
-            : s.phase === "scheduled"
-              ? { tone: "idle", title: "Waiting for upload hours", detail: phaseInfo(s).detail }
-              : s.phase === "setup"
-                ? { tone: "idle", title: "No Google account yet", detail: "Connect one in Settings" }
-                : s.phase === "error"
-                  ? { tone: "warn", title: "Something went wrong", detail: s.error }
-                  : left
-                    ? {
-                        tone: "idle",
-                        title: `${num(left)} files waiting`,
-                        detail: "They go at the next scan",
-                      }
-                    : s.copies_pending
+            : s.paused_accounts?.length
+              ? {
+                  tone: "warn",
+                  title: `Paused for ${s.paused_accounts.length === 1 ? s.paused_accounts[0] : `${num(s.paused_accounts.length)} accounts`}`,
+                  detail: "The other accounts carry on",
+                }
+              : s.phase === "scheduled"
+                ? { tone: "idle", title: "Waiting for upload hours", detail: phaseInfo(s).detail }
+                : s.phase === "setup"
+                  ? { tone: "idle", title: "No Google account yet", detail: "Connect one in Settings" }
+                  : s.phase === "error"
+                    ? { tone: "warn", title: "Something went wrong", detail: s.error }
+                    : left
                       ? {
                           tone: "idle",
-                          title: "Main library is in",
-                          detail: `Still copying to ${copiesText(s) || "your other accounts"}`,
+                          title: `${num(left)} files waiting`,
+                          detail: "They go at the next scan",
                         }
-                      : {
-                          tone: "good",
-                          title: "All backed up",
-                          detail: `Next scan ${s.interval ? `within ${num(s.interval)} min` : "soon"}`,
-                        },
+                      : s.copies_pending
+                        ? {
+                            tone: "idle",
+                            title: "Main library is in",
+                            detail: `Still copying to ${copiesText(s) || "your other accounts"}`,
+                          }
+                        : {
+                            tone: "good",
+                            title: "All backed up",
+                            detail: `Next scan ${s.interval ? `within ${num(s.interval)} min` : "soon"}`,
+                          },
   );
   // With several accounts each card has its own Pause; this one is every account at once.
   const several = (s.accounts?.length ?? 0) > 1;
@@ -394,7 +401,7 @@ function controls(s: Status): void {
     text: several ? (s.paused ? "Resume all" : "Pause all") : undefined,
     toggle: async () => {
       await post("pause");
-      return s.paused ? "Folder uploads resumed" : "Folder uploads paused: files under way stop now";
+      return s.paused ? "Folder uploads resumed" : "Folder uploads paused: files under way finish first";
     },
   });
   setRefreshControl({
@@ -475,7 +482,7 @@ async function pauseAccount(b: HTMLButtonElement): Promise<void> {
   try {
     await post("pause", { account, paused: pause });
     toast(
-      pause ? `Uploads to ${account} paused: files under way stop now` : `Uploads to ${account} resumed`,
+      pause ? `Uploads to ${account} paused: files under way finish first` : `Uploads to ${account} resumed`,
       "good",
     );
     await refresh();
