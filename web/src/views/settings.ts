@@ -266,7 +266,7 @@ function sectionSync(s: Status | null): string {
           )
           .join("")}
       </div></section>
-    ${actions("Hours and speed apply from the next file.", `<button class="btn primary" id="set-save-sync">${icon("ok")}Save hours and speed</button>`)}
+    ${actions("Hours and speed apply from the next file.", `<button class="btn primary" id="set-save-sync">${icon("ok")}Save</button>`)}
   </div>`;
 }
 

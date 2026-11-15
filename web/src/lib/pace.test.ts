@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { atOnceLabel, atOnceOptions, atOnceText } from "./pace";
+import { atOnceLabel, atOnceOptions, atOnceShort, atOnceText } from "./pace";
 
 describe("files at once", () => {
   it("offers dynamic first and fixed numbers up to 8", () => {
@@ -19,5 +19,11 @@ describe("files at once", () => {
       "up to 2 (dynamic, slowed down by Google)",
     );
     expect(atOnceText(0)).toBe("up to 4 (dynamic)");
+  });
+
+  it("keeps the button short", () => {
+    expect(atOnceShort(3)).toBe("3 at once");
+    expect(atOnceShort(0, { dynamic: true, now: 7, running: 7, calm: 0, slowdowns: 0 })).toBe("Auto · 7");
+    expect(atOnceShort(0)).toBe("Auto · 4");
   });
 });

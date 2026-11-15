@@ -68,6 +68,9 @@ const enc = (p: string) => p.split("/").map(encodeURIComponent).join("/");
 
 const ACC_KEY = "gp.foldersAccount";
 let fAcc = "";
+// The newest files in the open folder, for Last added: [path and account they are for, files].
+let latest: [string, FolderFiles["items"]] = ["", []];
+let latestRequest = "";
 try {
   fAcc = localStorage.getItem(ACC_KEY) ?? "";
 } catch {
@@ -491,7 +494,7 @@ function renderSends(): void {
   let markup = "";
   if (!top) {
     markup = accs.length
-      ? `<div class="sends-to"><span class="sends-label text-xs text-ink-3">Choose which accounts each folder goes to</span><button type="button" class="btn sm ml-auto" data-folders-sheet="">${icon("folder")}Where each folder goes</button></div>`
+      ? `<div class="sends-to"><span class="sends-label text-xs text-ink-3">Choose which accounts each folder goes to</span><button type="button" class="btn sm ml-auto" data-folders-sheet="">${icon("folder")}Edit</button></div>`
       : "";
   } else if (s && top in (s.folders ?? {})) {
     const order = foldersMap(s)[top] ?? [];
@@ -530,14 +533,46 @@ function renderStats(r: FolderReport, waiting: number, failed: number): void {
         failed ? "Tap to see them" : "None",
         fStatus === "failed",
       ) +
-      cell(
-        "added",
-        "Last added",
-        t.last_added ? esc(ago(t.last_added)) : "–",
-        t.last_added ? `${esc(date(t.last_added))} · ${num(t.new_day)} today` : "Nothing yet",
-        false,
-      ),
+      addedCell(t.last_added, t.new_day),
   );
+  void loadLatest();
+}
+
+/** Last added: when, and the newest three files. Hovering one shows it bigger (desktop); tapping
+ * opens it in the viewer. The rest of the cell opens the Added tab. */
+function addedCell(last: number | undefined, today: number): string {
+  const key = `${path}|${fAcc}`;
+  const items = latest[0] === key ? latest[1] : [];
+  const peeks = items
+    .map(
+      (
+        f,
+      ) => `<span class="fo-latest" ${openAttrs(f.name)} aria-label="${esc(`Open ${fileName(f.name)}`)}">${thumb(f.name, "thumb size-9")}
+        <span class="fo-peek" aria-hidden="true">${thumb(f.name, "thumb size-44")}<span class="block truncate pt-1.5 text-xs text-ink-2">${esc(fileName(f.name))}</span><span class="block text-[11px] text-ink-3">${esc(`${date(f.added, true)} ${clock(f.added)}`)}</span></span></span>`,
+    )
+    .join("");
+  return `<div class="fo-fig fo-added" data-stat="added" role="button" tabindex="0" aria-label="Last added: open the Added tab">
+      <span class="text-xs text-ink-3">Last added</span>
+      <span class="fo-added-line mt-1 flex min-w-0 items-center gap-2"><span class="num truncate text-xl">${last ? esc(ago(last)) : "–"}</span>${peeks ? `<span class="ml-auto flex shrink-0 -space-x-2" data-gallery>${peeks}</span>` : ""}</span>
+      <span class="mt-0.5 truncate text-xs text-ink-3">${last ? `${esc(date(last))} · ${num(today)} today` : "Nothing yet"}</span></div>`;
+}
+
+/** The open folder's three newest files, once per folder and account. */
+async function loadLatest(): Promise<void> {
+  const key = `${path}|${fAcc}`;
+  if (latest[0] === key || latestRequest === key) return;
+  latestRequest = key;
+  try {
+    const r = await get<FolderFiles>(
+      `folders/files?path=${encodeURIComponent(path)}&group=folders&status=all&kind=all&sort=new&offset=0&limit=3&tz=${tz}${fAcc ? `&account=${encodeURIComponent(fAcc)}` : ""}`,
+    );
+    latest = [key, r.items];
+  } catch {
+    latest = [key, []];
+  } finally {
+    latestRequest = "";
+  }
+  if (`${path}|${fAcc}` === key && report) renderStats(report, ...waitingFailed(report));
 }
 
 function renderTabs(r: FolderReport | null): void {
@@ -653,7 +688,7 @@ function tilesHtml(items: FolderFiles["items"], after?: FolderFiles["items"][num
 function moreHtml(): string {
   if (!files) return "";
   return shownFiles.length < files.total
-    ? `<button class="btn" id="fo-more">${icon("plus")}Show more (${num(files.total - shownFiles.length)} left)</button>`
+    ? `<button class="btn" id="fo-more">${icon("plus")}${num(files.total - shownFiles.length)} more</button>`
     : shownFiles.length > 60
       ? `<span class="meta">All ${num(files.total)} shown</span>`
       : "";
@@ -956,6 +991,14 @@ const folders: View = {
       </div>
     </div>`;
 
+    // Last added is a div (its thumbnails open the viewer), so Enter and Space open it by hand.
+    el.addEventListener("keydown", (e) => {
+      const t = e.target as HTMLElement;
+      if ((e.key === "Enter" || e.key === " ") && t.matches(".fo-added")) {
+        e.preventDefault();
+        t.click();
+      }
+    });
     el.addEventListener("click", (e) => {
       const t = e.target as HTMLElement;
       // navigator
@@ -981,7 +1024,7 @@ const folders: View = {
         return;
       }
       const st = t.closest<HTMLElement>("[data-stat]");
-      if (st) {
+      if (st && !t.closest("[data-open]")) {
         const k = st.dataset.stat!;
         if (k === "added") {
           tab = "added";

@@ -2,10 +2,10 @@
 // rest stay out of the way; the cards left share the row evenly. Upload history (today, streak,
 // where the photos are, the year) is on the Sync page.
 
-import { get, post, tz, type Disk, type Processes, type Status, type UploadKind } from "../lib/api";
-import { host, setPageStatus, setPauseControl, setRefreshControl } from "../lib/store";
+import { get, post, tz, type Disk, type Processes, type ProcessKey, type Status } from "../lib/api";
+import { host, refresh, setPageStatus, setPauseControl, setRefreshControl } from "../lib/store";
 import { sparkline } from "../lib/charts";
-import { $, $$, esc, html } from "../lib/dom";
+import { $, $$, esc, html, toast } from "../lib/dom";
 import { ago, bytes, clock, date, fileName, hour, num, pct, speed } from "../lib/format";
 import { dismissVisit, sinceVisit } from "../lib/since-visit";
 import { icon, type IconName } from "../lib/icons";
@@ -14,8 +14,7 @@ import { jobLink, jobTitle } from "../lib/jobs";
 import { workBox, workCount, type WorkItem } from "../lib/work-panel";
 import { badge, cardHead, eventMeta, openAttrs, spaceTone, thumb, tile, type Tone } from "../lib/ui";
 import { liveProcesses, PROCESS_HREF } from "../lib/live";
-import { PROCESS, PROCESS_KEYS } from "../lib/processes";
-import { openSheet, type Sheet } from "../lib/sheet";
+import { PROCESS } from "../lib/processes";
 import type { View } from "./view";
 
 let chart: NetChart | null = null;
@@ -53,11 +52,12 @@ function runningWork(s: Status): WorkItem[] {
     items.push({
       key: `${j.kind}:${j.account}:${j.to ?? ""}:${j.name ?? ""}`,
       name: (j.name ?? "").split("/").pop() || jobTitle(j),
-      step: j.kind === "library" ? "reading" : paused ? "waiting" : j.step || "working",
+      step: j.kind === "library" ? "reading" : j.step || "working",
       done: j.done,
       total: j.total,
       label: jobTitle(j),
-      note: paused ? "Paused" : undefined,
+      // Paused while it runs: this step finishes, then it stops.
+      note: paused ? "Pausing" : undefined,
       href: jobLink(j),
     });
   }
@@ -89,8 +89,9 @@ function controls(s: Status): void {
     paused
       ? {
           tone: "warn",
-          title: "Everything is paused",
-          detail: "Uploads, Free storage, copies and date fixes",
+          // Work under way finishes first, then everything stops.
+          title: busy.length ? `Pausing · finishing ${num(runningWork(s).length)}` : "Everything is paused",
+          detail: busy.length ? "Paused once they're done" : "Uploads, Free storage, copies and date fixes",
         }
       : busy.length
         ? {
@@ -107,7 +108,7 @@ function controls(s: Status): void {
     label: paused ? "Resume everything" : "Pause everything: uploads, Free storage, copies and date fixes",
     toggle: async () => {
       await post("pause-all", { paused: !paused });
-      return paused ? "Everything resumed" : "Everything paused: items under way finish their step";
+      return paused ? "Everything resumed" : "Everything paused: work under way finishes first";
     },
   });
   setRefreshControl({
@@ -120,199 +121,76 @@ function controls(s: Status): void {
   });
 }
 
-// Columns for the process cards in use, so they always fill the row.
-const PROC_COLS: Record<number, string> = {
-  1: "",
-  2: "sm:grid-cols-2",
-  3: "md:grid-cols-3",
-  4: "sm:grid-cols-2 xl:grid-cols-4",
-  5: "sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5",
-};
+// ---- jobs: one card, a row per job in use, each with its own Pause / Resume
 
-// ---- uploads: everything that sends files to Google, not only the backup
-
-const UPLOAD: Record<UploadKind, { label: string; icon: IconName; color: string; href: string }> = {
-  backup: { label: "Backup", icon: "folder", color: "var(--s1)", href: "#/sync" },
-  freed: { label: "Free storage", icon: "cloud", color: "var(--s2)", href: "#/storage" },
-  copied: { label: "Copies", icon: "users", color: "var(--s3)", href: "#/copy" },
-  snapchat: { label: "Snapchat", icon: "ghost", color: "var(--s5)", href: "#/snapchat" },
-};
-const UPLOAD_KINDS = Object.keys(UPLOAD) as UploadKind[];
-
-/** Files uploading right now, by what sends them. */
-function uploadingNow(s: Status): Record<UploadKind, number> {
-  const n: Record<UploadKind, number> = { backup: 0, freed: 0, copied: 0, snapchat: 0 };
-  if (s.phase !== "paused") n.backup = (s.uploading ?? (s.current ? [s.current] : [])).length;
-  const of: Record<string, UploadKind> = { storage: "freed", copy: "copied", snapchat: "snapchat" };
-  for (const j of s.jobs ?? []) if (j.step === "uploading" && of[j.kind]) n[of[j.kind]!]++;
-  return n;
+/** A job's state in words, with a tone. Paused while it still runs: what is under way finishes. */
+function jobState(running: boolean, paused: boolean, waiting: number): [string, Tone, IconName] {
+  if (paused) return running ? ["Pausing", "warn", "pause"] : ["Paused", "warn", "pause"];
+  if (running) return ["Running", "info", "loader"];
+  return waiting ? ["Waiting", "", "hourglass"] : ["Idle", "", "ok"];
 }
 
-/** Work under way that sends files to Google (between uploads too: downloading, checking). */
-function uploadWorkRunning(s: Status): boolean {
-  return (
-    UPLOAD_KINDS.some((k) => uploadingNow(s)[k] > 0) ||
-    (s.jobs ?? []).some((j) => j.kind === "storage" || j.kind === "copy" || j.kind === "snapchat")
-  );
-}
-
-/** One kind's (or all kinds') counts for each of the last 14 days, oldest first. */
-function last14(kinds: UploadKind[]): number[] {
+/** One job's row: what it is doing, today's count with its last 14 days, and its Pause. */
+function jobRow(s: Status, k: ProcessKey, l: ReturnType<typeof liveProcesses>[number]): string {
+  const p = PROCESS[k];
   const today = procs?.today;
-  return Array.from({ length: 14 }, (_, i) => {
+  const hist = procs?.processes[k];
+  const day = hist?.days.find((d) => d.day === today);
+  const days = Array.from({ length: 14 }, (_, i) => {
     if (!today) return 0;
     const d = new Date(`${today}T00:00:00`);
     d.setDate(d.getDate() - 13 + i);
-    const key = d.toLocaleDateString("sv");
-    return kinds.reduce((a, k) => a + (procs?.uploaded?.[k]?.days.find((x) => x.day === key)?.count ?? 0), 0);
+    return hist?.days.find((x) => x.day === d.toLocaleDateString("sv"))?.count ?? 0;
   });
+  const held = !!s.jobs_paused?.[k];
+  const [state, tone, ic] = jobState(l.running, held, l.waiting);
+  const verb = `${held ? "Resume" : "Pause"} ${p.label.toLowerCase()}`;
+  const detail = l.detail.replace(/^Paused · /, ""); // the badge says Paused already
+  return `<div class="job-row ${l.running && !held ? "is-running" : ""}" data-job="${k}">
+    <a href="${PROCESS_HREF[k]}" class="job-main">
+      <span class="job-ic">${icon(p.icon, "size-4")}</span>
+      <span class="min-w-0 flex-1">
+        <span class="flex items-center gap-2"><span class="truncate text-sm font-medium">${esc(p.label)}</span>${badge(state, tone, ic)}</span>
+        <span class="mt-0.5 block truncate text-xs text-ink-3" title="${esc(detail)}">${esc(detail)}</span>
+        <span class="bar mt-1.5 block h-1 ${l.running && l.pct !== null ? "" : "invisible"}"><i style="width:${l.pct ?? 0}%"></i></span>
+      </span>
+      <span class="shrink-0 text-right max-sm:hidden"><span class="num block text-lg leading-tight">${procs ? num(day?.count ?? 0) : "–"}</span><span class="block text-[11px] text-ink-3">${esc(p.noun)} today</span></span>
+      <span class="hidden h-8 w-20 shrink-0 sm:block">${sparkline(days, p.color)}</span>
+    </a>
+    <button type="button" class="btn sm icon-sm shrink-0 ${held ? "primary" : ""}" data-job-pause="${k}" data-held="${held ? 1 : 0}" title="${esc(verb)}" aria-label="${esc(verb)}">${icon(held ? "play" : "pause", "size-3.5")}</button>
+  </div>`;
 }
 
-function uploadedToday(k: UploadKind): { count: number; bytes: number } {
-  const d = procs?.uploaded?.[k]?.days.find((x) => x.day === procs?.today);
-  return { count: d?.count ?? 0, bytes: d?.bytes ?? 0 };
-}
-
-let uploadsSheet: Sheet | null = null;
-
-/** The sheet the Uploads card opens: each kind's uploads today, its last 14 days and what is
- * uploading now, with a link to its page. */
-function uploadsBody(s: Status): string {
-  const now = uploadingNow(s);
-  return UPLOAD_KINDS.map((k) => {
-    const u = UPLOAD[k];
-    const t = uploadedToday(k);
-    return `<a href="${u.href}" class="sheet-row items-center hover:bg-panel-2/50" data-sheet-close>
-      <span class="shrink-0 text-ink-3">${icon(u.icon, "size-4")}</span>
-      <span class="min-w-0 flex-1"><span class="block text-sm font-medium">${esc(u.label)}</span>
-        <span class="block text-xs text-ink-3"><b class="text-ink-2 tabular-nums">${num(t.count)}</b> today${t.bytes ? ` · ${bytes(t.bytes)}` : ""}${now[k] ? ` · <span class="text-accent">${num(now[k])} uploading now</span>` : ""}</span></span>
-      <span class="h-8 w-20 shrink-0">${sparkline(last14([k]), u.color)}</span>
-      <span class="text-ink-3">${icon("chevron", "size-4")}</span></a>`;
-  }).join("");
-}
-
-function openUploads(): void {
-  const s = last;
-  if (!s) return;
-  const total = UPLOAD_KINDS.reduce((a, k) => a + uploadedToday(k).count, 0);
-  uploadsSheet = openSheet({
-    title: "Uploads",
-    icon: "upload",
-    sub: `${num(total)} sent to Google today, by what sent them`,
-    body: uploadsBody(s),
-    onClose: () => (uploadsSheet = null),
-  });
-}
-
-/** The Uploads card: every file sent to Google today, with a chip for each kind that sent some. */
-function uploadsCard(s: Status, el: HTMLElement, base: string): void {
-  const now = uploadingNow(s);
-  const busy = UPLOAD_KINDS.reduce((a, k) => a + now[k], 0);
-  const today = UPLOAD_KINDS.map((k) => [k, uploadedToday(k)] as const);
-  const count = today.reduce((a, [, t]) => a + t.count, 0);
-  const size = today.reduce((a, [, t]) => a + t.bytes, 0);
-  const chips = today
-    .filter(([k, t]) => t.count || now[k])
-    .map(
-      ([k, t]) =>
-        `<span class="up-chip" style="--c:${UPLOAD[k].color}" title="${esc(`${UPLOAD[k].label}: ${num(t.count)} today${now[k] ? `, ${num(now[k])} uploading now` : ""}`)}">${icon(UPLOAD[k].icon, "size-3 shrink-0")}<b class="tabular-nums">${num(t.count)}</b><span class="truncate">${esc(UPLOAD[k].label)}</span></span>`,
-    );
-  el.classList.toggle("is-running", uploadWorkRunning(s));
-  html(
-    el,
-    base
-      .replace("%COUNT%", procs ? num(count) : "–")
-      .replace("%SUB%", `uploaded today${size ? ` · ${bytes(size)}` : ""}`)
-      .replace("%SPARK%", sparkline(last14(UPLOAD_KINDS), PROCESS.uploads.color))
-      .replace(
-        "%DETAIL%",
-        chips.length
-          ? `<div class="even mt-3">${chips.join("")}</div>`
-          : `<div class="mt-3 truncate text-xs text-ink-2">${esc(busy ? `${num(busy)} uploading now` : "Nothing sent to Google yet today")}</div>`,
-      ),
-  );
-  if (uploadsSheet) html(uploadsSheet.el.querySelector<HTMLElement>(".sheet-body")!, uploadsBody(s));
-}
-
-/** One card per process in use: what it is doing now and what it did today, with the last 14 days. */
+/** The Jobs card: a row for each job running, waiting, paused or busy today. */
 function renderProcs(s: Status): void {
-  if (!document.getElementById("ov-procs")) return;
+  const body = document.getElementById("ov-jobs");
+  if (!body) return;
   const today = procs?.today;
   const all = liveProcesses(s);
-  const todayCount = (k: string) =>
-    procs?.processes[k as keyof Processes["processes"]]?.days.find((d) => d.day === today)?.count ?? 0;
-  // In use: running, waiting, paused with items left, or did something today.
-  const used = new Set(
-    all
-      .filter(
-        (l) =>
-          l.running ||
-          l.paused ||
-          l.waiting > 0 ||
-          todayCount(l.key) > 0 ||
-          // Uploads: anything sent to Google today, by any kind of work
-          (l.key === "uploads" && UPLOAD_KINDS.some((k) => uploadedToday(k).count || uploadingNow(s)[k])),
-      )
-      .map((l) => l.key),
+  const todayCount = (k: ProcessKey) => procs?.processes[k]?.days.find((d) => d.day === today)?.count ?? 0;
+  const used = all.filter(
+    (l) => l.running || l.paused || !!s.jobs_paused?.[l.key] || l.waiting > 0 || todayCount(l.key) > 0,
   );
-  if (!used.size) used.add("uploads"); // all quiet: still show how the backup stands
-  const grid = $("#ov-procs");
-  grid.className = `grid grid-cols-1 gap-4 lg:col-span-12 ${PROC_COLS[used.size] ?? PROC_COLS[4]}`;
-  for (const l of all) {
-    const el = document.querySelector<HTMLElement>(`[data-proc="${l.key}"]`);
-    if (!el) continue;
-    el.classList.toggle("is-idle", !used.has(l.key));
-    if (!used.has(l.key)) continue;
-    const p = PROCESS[l.key];
-    const hist = procs?.processes[l.key];
-    const day = hist?.days.find((d) => d.day === today);
-    const last14 = Array.from({ length: 14 }, (_, i) => {
-      if (!today) return 0;
-      const d = new Date(`${today}T00:00:00`);
-      d.setDate(d.getDate() - 13 + i);
-      return hist?.days.find((x) => x.day === d.toLocaleDateString("sv"))?.count ?? 0;
-    });
-    // In a narrow card (four in a row) the badge keeps only its icon, so the name fits.
-    const stateBadge = (label: string, tone: Tone, ic: IconName) =>
-      `<span class="badge ${tone} shrink-0" title="${label}">${icon(ic)}<span class="hidden @[15rem]:inline">${label}</span></span>`;
-    // Uploads run whenever anything sends files, even with the backup paused.
-    const sending = l.key === "uploads" && uploadWorkRunning(s);
-    const state = sending
-      ? stateBadge("Running", "info", "loader")
-      : l.paused
-        ? stateBadge("Paused", "warn", "pause")
-        : l.running
-          ? stateBadge("Running", "info", "loader")
-          : l.waiting
-            ? stateBadge("Waiting", "", "hourglass")
-            : stateBadge("Idle", "", "ok");
-    const count = day?.count ?? 0;
-    if (l.key === "uploads") {
-      uploadsCard(
-        s,
-        el,
-        `<div class="flex items-center gap-2"><span class="shrink-0 text-ink-3">${icon(p.icon, "size-4")}</span>
-        <span class="min-w-0 flex-1 truncate font-medium">${esc(p.label)}</span>${state}</div>
-      <div class="mt-3 flex items-end justify-between gap-3">
-        <div class="min-w-0"><div class="num text-2xl">%COUNT%</div><div class="text-xs text-ink-3">%SUB%</div></div>
-        <div class="h-8 w-16 shrink-0 @[15rem]:w-24">%SPARK%</div>
-      </div>%DETAIL%`,
-      );
-      continue;
-    }
-    el.classList.toggle("is-running", l.running && !l.paused);
-    html(
-      el,
-      `<div class="flex items-center gap-2"><span class="shrink-0 text-ink-3">${icon(p.icon, "size-4")}</span>
-        <span class="min-w-0 flex-1 truncate font-medium">${esc(p.label)}</span>${state}</div>
-      <div class="mt-3 flex items-end justify-between gap-3">
-        <div class="min-w-0"><div class="num text-2xl">${procs ? num(count) : "–"}</div>
-          <div class="text-xs text-ink-3">${esc(p.noun)} today${day?.bytes ? ` · ${bytes(day.bytes)}` : ""}</div></div>
-        <div class="h-8 w-16 shrink-0 @[15rem]:w-24">${sparkline(last14, p.color)}</div>
-      </div>
-      <div class="mt-3 truncate text-xs text-ink-2" title="${esc(l.detail)}">${esc(l.detail)}</div>
-      <span class="bar mt-1.5 block h-1.5 ${l.running && l.pct !== null ? "" : "invisible"}"><i style="width:${l.pct ?? 0}%"></i></span>`,
-    );
+  // All quiet: still show how the backup stands.
+  const rows = used.length ? used : all.filter((l) => l.key === "uploads");
+  const busy = rows.filter((l) => l.running).length;
+  html($("#ov-jobs-count"), busy ? badge(`${num(busy)} running`, "info") : "");
+  html(body, rows.map((l) => jobRow(s, l.key, l)).join(""));
+}
+
+async function pauseJob(b: HTMLButtonElement): Promise<void> {
+  const job = b.dataset.jobPause as ProcessKey;
+  const pause = b.dataset.held !== "1";
+  b.disabled = true;
+  try {
+    await post("jobs/pause", { job, paused: pause });
+    const name = PROCESS[job].label;
+    toast(pause ? `${name} paused: work under way finishes first` : `${name} resumed`, "good");
+    await refresh();
+  } catch (e) {
+    toast((e as Error).message, "bad");
+  } finally {
+    b.disabled = false;
   }
 }
 
@@ -331,7 +209,7 @@ function runningList(s: Status): string {
 
 const CARDS: [string, string][] = [
   ["ov-running", "Running now"],
-  ["ov-procs", "Uploads, Free storage, Copies, Date fixes, Snapchat"],
+  ["ov-procs", "Jobs"],
   ["ov-kpis", "Upload, download, CPU, memory"],
   ["ov-network", "Network"],
   ["ov-glance", "At a glance"],
@@ -465,8 +343,9 @@ const overview: View = {
         <div id="ov-running"></div>
       </section>
 
-      <section class="grid grid-cols-1 gap-4 lg:col-span-12" data-card="ov-procs" id="ov-procs">
-        ${PROCESS_KEYS.map((k) => `<a href="${PROCESS_HREF[k]}" class="card proc-card @container block p-4 ${k === "uploads" ? "" : "is-idle"}" data-proc="${k}"><div class="skeleton h-28"></div></a>`).join("")}
+      <section class="card lg:col-span-12" data-card="ov-procs" id="ov-procs">
+        ${cardHead("Jobs", "layers", '<span id="ov-jobs-count"></span>')}
+        <div id="ov-jobs"><div class="skeleton m-4 h-16"></div></div>
       </section>
 
       <section class="grid grid-cols-2 gap-4 lg:col-span-12 xl:grid-cols-4" data-card="ov-kpis">
@@ -492,11 +371,9 @@ const overview: View = {
       </section>
     </div>`;
     applyLayout();
-    // The Uploads card opens its details in a sheet (each kind of upload), like Moving now.
-    $('[data-proc="uploads"]').addEventListener("click", (e) => {
-      if (e.metaKey || e.ctrlKey || e.shiftKey) return; // a new tab still opens Sync
-      e.preventDefault();
-      openUploads();
+    $("#ov-jobs").addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-job-pause]");
+      if (b) void pauseJob(b);
     });
     $$("[data-ov-custom]").forEach((b) => b.addEventListener("click", openCustomize));
     $("#ov-since").addEventListener("click", (e) => {
@@ -637,7 +514,6 @@ const overview: View = {
     clearInterval(procTimer);
     chart = null;
     document.getElementById("ov-sheet")?.remove();
-    uploadsSheet?.close();
   },
 };
 

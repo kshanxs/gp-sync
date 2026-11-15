@@ -74,7 +74,7 @@ describe("check first, then sync", () => {
     const failed = precheckLines(null, [check({ state: "failed", error: "Google is busy" })]);
     expect(failed).toContain("Google is busy");
     expect(failed).toContain("data-precheck-retry");
-    expect(failed).toContain("Sync without checking");
+    expect(failed).toContain("Skip check");
   });
 
   it("just says so when the account already has everything", () => {

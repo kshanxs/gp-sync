@@ -125,7 +125,7 @@ function stateOf(i: DateItem, r: DatesReport): { label: string; tone: Tone; ic: 
 
 function actions(i: DateItem, r: DatesReport): string {
   const open = i.google_url
-    ? `<a class="link-btn sm" href="${esc(i.google_url)}" target="_blank" rel="noopener noreferrer">${icon("external")}Open in Google Photos</a>`
+    ? `<a class="link-btn sm" href="${esc(i.google_url)}" target="_blank" rel="noopener noreferrer">${icon("external")}Google Photos</a>`
     : "";
   const cancel = `<button class="btn icon sm" data-cancel="${esc(i.name)}" title="Stop (nothing more changes in Google)" aria-label="Cancel">${icon("x")}</button>`;
   const edit = `<button class="btn sm" data-edit="${esc(i.name)}">${icon("calendar")}Set date</button>`;
@@ -145,7 +145,7 @@ function editor(i: DateItem): string {
   return `<div class="mt-2 flex flex-wrap items-center gap-2" data-editor="${esc(i.name)}">
     <input type="datetime-local" class="input w-auto" id="dt-input" value="${localInput(i.best)}" max="${localInput(Date.now() / 1000)}">
     <button class="btn sm primary" data-save="${esc(i.name)}">${icon("ok")}Save</button>
-    ${i.manual ? `<button class="btn sm" data-auto="${esc(i.name)}">${icon("refresh")}Back to automatic</button>` : ""}
+    ${i.manual ? `<button class="btn sm" data-auto="${esc(i.name)}">${icon("refresh")}Automatic</button>` : ""}
     <button class="btn sm" data-close>Cancel</button>
   </div>`;
 }
@@ -216,19 +216,21 @@ function render(): void {
   const paused = !!r.paused;
   const fixing = (status()?.jobs ?? []).some((j) => j.kind === "dates" && j.account === account);
   setPageStatus(
-    paused
-      ? {
-          tone: "warn",
-          title: "Fixing dates is paused",
-          detail: `${account}${r.waiting ? ` · ${num(r.waiting)} waiting` : ""} · nothing is deleted or uploaded again`,
-        }
-      : fixing
-        ? { tone: "run", title: "Fixing a date", detail: `${account} · ${num(r.waiting)} in progress` }
-        : r.refreshing
-          ? { tone: "run", title: "Checking dates with Google", detail: account }
-          : r.waiting
-            ? { tone: "idle", title: `${num(r.waiting)} waiting for Google`, detail: account }
-            : { tone: "good", title: "No date fixes running", detail: account },
+    paused && fixing
+      ? { tone: "warn", title: "Pausing · finishing this one", detail: `${account} · paused once it's done` }
+      : paused
+        ? {
+            tone: "warn",
+            title: "Fixing dates is paused",
+            detail: `${account}${r.waiting ? ` · ${num(r.waiting)} waiting` : ""} · nothing is deleted or uploaded again`,
+          }
+        : fixing
+          ? { tone: "run", title: "Fixing a date", detail: `${account} · ${num(r.waiting)} in progress` }
+          : r.refreshing
+            ? { tone: "run", title: "Checking dates with Google", detail: account }
+            : r.waiting
+              ? { tone: "idle", title: `${num(r.waiting)} waiting for Google`, detail: account }
+              : { tone: "good", title: "No date fixes running", detail: account },
   );
   // Pause only when there is something to pause.
   setPauseControl(
@@ -241,7 +243,7 @@ function render(): void {
           toggle: async () => {
             await post("dates/pause", { account, paused: !paused });
             void load();
-            return paused ? "Fixing dates resumed" : "Fixing dates paused";
+            return paused ? "Fixing dates resumed" : "Fixing dates paused: the one under way finishes first";
           },
         },
   );
@@ -308,7 +310,7 @@ function render(): void {
                 .map((i) => row(i, r))
                 .join(
                   "",
-                )}</div>${list.length > shown ? `<div class="flex justify-center p-3"><button class="btn" id="dt-more">${icon("plus")}Show more (${num(list.length - shown)} left)</button></div>` : ""}`
+                )}</div>${list.length > shown ? `<div class="flex justify-center p-3"><button class="btn" id="dt-more">${icon("plus")}${num(list.length - shown)} more</button></div>` : ""}`
             : `<div class="empty">${icon("shield")}${empty[show]}</div>`
         }</div>
       </section>`,

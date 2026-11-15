@@ -36,8 +36,8 @@ describe("account breakdown", () => {
       { pick: { account: "two@example.com", part: "waiting" } },
     );
     expect(rows.match(/class="acc-row"/g)).toHaveLength(2);
-    expect(rows).toContain(">Backup<");
-    expect(rows).toContain(">Also in<");
+    expect(rows).toContain("· backup<");
+    expect(rows).toContain("· also in<");
     expect(rows).toContain('data-seg="two@example.com|waiting" aria-pressed="true"');
     expect(rows).not.toContain("two@example.com|uploaded"); // nothing there: not a button
     expect(rows).not.toContain("Failed"); // no failures: no Failed part

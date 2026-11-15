@@ -315,7 +315,7 @@ function paintControls(): void {
     el,
     `<span class="page-ctl-ic tone-${tone}">${icon(ic, `size-4 ${tone === "run" ? "spin" : ""}`)}</span>
     <span class="min-w-0 flex-1"><span class="keep-line block truncate text-sm font-medium">${esc(st?.title ?? "")}</span>${st?.detail ? `<span class="keep-line block truncate text-xs text-ink-3" title="${esc(st.detail)}">${esc(st.detail)}</span>` : ""}</span>
-    ${pause ? `<button type="button" class="btn sm shrink-0 ${pause.paused ? "primary" : ""}" data-ctl="pause" title="${esc(pause.label)}" aria-label="${esc(pause.label)}">${icon(pause.paused ? "play" : "pause", "size-3.5")}${pause.paused ? "Resume" : "Pause"}</button>` : ""}
+    ${pause ? `<button type="button" class="btn sm shrink-0 ${pause.paused ? "primary" : ""}" data-ctl="pause" title="${esc(pause.label)}" aria-label="${esc(pause.label)}">${icon(pause.paused ? "play" : "pause", "size-3.5")}${esc(pause.text ?? (pause.paused ? "Resume" : "Pause"))}</button>` : ""}
     ${refresh ? `<button type="button" class="btn sm icon-sm shrink-0 ${refresh.busy ? "busy" : ""}" data-ctl="refresh" title="${esc(refresh.label)}" aria-label="${esc(refresh.label)}" ${refresh.busy ? 'aria-busy="true"' : ""}>${icon("refresh", `size-3.5 ${refresh.busy ? "spin" : ""}`)}<span class="max-sm:hidden">Refresh</span></button>` : ""}`,
   );
 }

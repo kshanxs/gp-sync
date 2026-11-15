@@ -8,10 +8,10 @@ import { precheckLines, prechecksFor } from "../lib/prechecks";
 import { openUploadOptions, paceButton } from "../lib/pace-sheet";
 import { get, post, tz, type FolderReport, type History, type Insights, type Status } from "../lib/api";
 import { donut, heatLegend, heatmap, ring, setRing, sparkline, type Slice } from "../lib/charts";
-import { $, $$, animateChange, esc, html } from "../lib/dom";
+import { $, $$, animateChange, esc, html, toast } from "../lib/dom";
 import { ago, bytes, duration, fileName, ms, num, pct, speed } from "../lib/format";
 import { icon } from "../lib/icons";
-import { host, setPageStatus, setPauseControl, setRefreshControl } from "../lib/store";
+import { host, refresh, setPageStatus, setPauseControl, setRefreshControl } from "../lib/store";
 import { badge, cardHead, etaText, openAttrs, phaseInfo, spaceTone, thumb, tile } from "../lib/ui";
 import {
   accountLanes,
@@ -340,45 +340,65 @@ function nowAction(s: Status): string {
 /** The control strip: uploads (status, Pause/Resume) and scanning the folders. */
 function controls(s: Status): void {
   const left = s.library.files - s.library.synced_files;
+  const finishing = s.uploading?.length ?? (s.current ? 1 : 0);
   setPageStatus(
-    s.phase === "uploading"
+    s.paused && s.phase === "uploading"
       ? {
-          tone: "run",
-          title: uploadTitle(s),
-          detail: s.total ? `${num(s.done)} of ${num(s.total)} done this round` : "",
+          tone: "warn",
+          title: `Pausing · finishing ${num(finishing)} file${finishing === 1 ? "" : "s"}`,
+          detail: "Paused once they're done",
         }
-      : s.phase === "scanning"
-        ? { tone: "run", title: "Scanning your folders" }
-        : s.paused
-          ? {
-              tone: "warn",
-              title: "Folder uploads are paused",
-              detail: left ? `${num(left)} files waiting` : "",
-            }
-          : s.phase === "scheduled"
-            ? { tone: "idle", title: "Waiting for upload hours", detail: phaseInfo(s).detail }
-            : s.phase === "setup"
-              ? { tone: "idle", title: "No Google account yet", detail: "Connect one in Settings" }
-              : s.phase === "error"
-                ? { tone: "warn", title: "Something went wrong", detail: s.error }
-                : left
-                  ? { tone: "idle", title: `${num(left)} files waiting`, detail: "They go at the next scan" }
-                  : s.copies_pending
-                    ? {
-                        tone: "idle",
-                        title: "Main library is in",
-                        detail: `Still copying to ${copiesText(s) || "your other accounts"}`,
-                      }
-                    : {
-                        tone: "good",
-                        title: "All backed up",
-                        detail: `Next scan ${s.interval ? `within ${num(s.interval)} min` : "soon"}`,
-                      },
+      : s.phase === "uploading"
+        ? {
+            tone: "run",
+            title: uploadTitle(s),
+            detail: s.total ? `${num(s.done)} of ${num(s.total)} done this round` : "",
+          }
+        : s.phase === "scanning"
+          ? { tone: "run", title: "Scanning your folders" }
+          : s.paused
+            ? {
+                tone: "warn",
+                title: "Folder uploads are paused",
+                detail: left ? `${num(left)} files waiting` : "",
+              }
+            : s.paused_accounts?.length
+              ? {
+                  tone: "warn",
+                  title: `Paused for ${s.paused_accounts.length === 1 ? s.paused_accounts[0] : `${num(s.paused_accounts.length)} accounts`}`,
+                  detail: "The other accounts carry on",
+                }
+              : s.phase === "scheduled"
+                ? { tone: "idle", title: "Waiting for upload hours", detail: phaseInfo(s).detail }
+                : s.phase === "setup"
+                  ? { tone: "idle", title: "No Google account yet", detail: "Connect one in Settings" }
+                  : s.phase === "error"
+                    ? { tone: "warn", title: "Something went wrong", detail: s.error }
+                    : left
+                      ? {
+                          tone: "idle",
+                          title: `${num(left)} files waiting`,
+                          detail: "They go at the next scan",
+                        }
+                      : s.copies_pending
+                        ? {
+                            tone: "idle",
+                            title: "Main library is in",
+                            detail: `Still copying to ${copiesText(s) || "your other accounts"}`,
+                          }
+                        : {
+                            tone: "good",
+                            title: "All backed up",
+                            detail: `Next scan ${s.interval ? `within ${num(s.interval)} min` : "soon"}`,
+                          },
   );
+  // With several accounts each card has its own Pause; this one is every account at once.
+  const several = (s.accounts?.length ?? 0) > 1;
   setPauseControl({
     paused: !!s.paused,
     working: s.phase === "uploading",
-    label: s.paused ? "Resume folder uploads" : "Pause folder uploads",
+    label: `${s.paused ? "Resume" : "Pause"} folder uploads${several ? " to every account" : ""}`,
+    text: several ? (s.paused ? "Resume all" : "Pause all") : undefined,
     toggle: async () => {
       await post("pause");
       return s.paused ? "Folder uploads resumed" : "Folder uploads paused: files under way finish first";
@@ -410,8 +430,22 @@ function flight(list: NonNullable<Status["uploading"]>): string {
 
 /** One account's folder backup: what it is doing, its files in flight and how far it is. */
 function laneCard(l: AccountLane, s: Status): string {
-  const tone =
-    l.phase === "uploading" ? "info" : l.phase === "stopped" ? "warn" : l.phase === "caught_up" ? "good" : "";
+  const held = !!s.paused_accounts?.includes(l.account);
+  const tone = held
+    ? "warn"
+    : l.phase === "uploading"
+      ? "info"
+      : l.phase === "stopped"
+        ? "warn"
+        : l.phase === "caught_up"
+          ? "good"
+          : "";
+  // Its own Pause / Resume, once there is more than one account (the strip's button is all of them).
+  const verb = `${held ? "Resume" : "Pause"} uploads to ${l.account}`;
+  const toggle =
+    (s.accounts?.length ?? 0) > 1
+      ? `<button type="button" class="btn sm icon-sm shrink-0 ${held ? "primary" : ""}" data-acc-pause="${esc(l.account)}" data-held="${held ? 1 : 0}" title="${esc(verb)}" aria-label="${esc(verb)}">${icon(held ? "play" : "pause", "size-3.5")}</button>`
+      : "";
   // While a round is running, the bar is that round. The library total barely moves on a big folder.
   const round = l.phase === "uploading" && l.roundTotal > 0;
   const p = round ? pct(l.roundDone, l.roundTotal) : pct(l.done, l.total);
@@ -430,7 +464,7 @@ function laneCard(l: AccountLane, s: Status): string {
     : `<span class="bar mt-2.5 block h-1.5" title="${round ? "This round" : "In this account"}"><i style="width:${p}%"></i></span>`;
   return `<div class="min-w-0 border-b border-line md:odd:border-r" data-lane="${esc(l.account)}">
     <div class="p-4">
-      <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate text-sm font-medium" title="${esc(l.account)}">${esc(l.account)}</span>${badge(lanePhaseText(l, s), tone)}</div>
+      <div class="flex flex-wrap items-center gap-2"><span class="min-w-0 flex-1 basis-48 truncate text-sm font-medium" title="${esc(l.account)}">${esc(l.account)}</span><span class="flex items-center gap-2">${badge(lanePhaseText(l, s), tone)}${toggle}</span></div>
       <div class="mt-1 flex min-w-0 items-center gap-2 text-xs text-ink-3"><span class="min-w-0 truncate" title="${esc(what)}">${esc(what)}</span><button type="button" class="link-btn sm shrink-0" data-folders-sheet="${esc(l.account)}">Change</button></div>
       ${checks.length ? `<div class="mt-3">${precheckLines(s, checks)}</div>` : ""}
       ${parts}
@@ -438,6 +472,25 @@ function laneCard(l: AccountLane, s: Status): string {
     </div>
     ${l.uploading.length ? `<div class="border-t border-line">${flight(l.uploading)}</div>` : ""}
   </div>`;
+}
+
+/** One account's Pause / Resume on its card. */
+async function pauseAccount(b: HTMLButtonElement): Promise<void> {
+  const account = b.dataset.accPause!;
+  const pause = b.dataset.held !== "1";
+  b.disabled = true;
+  try {
+    await post("pause", { account, paused: pause });
+    toast(
+      pause ? `Uploads to ${account} paused: files under way finish first` : `Uploads to ${account} resumed`,
+      "good",
+    );
+    await refresh();
+  } catch (e) {
+    toast((e as Error).message, "bad");
+  } finally {
+    b.disabled = false;
+  }
 }
 
 /** A connected account that gets no folder yet: one tap to choose some. */
@@ -608,6 +661,8 @@ const sync: View = {
         const [acc = "", part = "all"] = seg.dataset.seg!.split("|");
         return openInFolders(acc, part);
       }
+      const hold = t.closest<HTMLButtonElement>("[data-acc-pause]");
+      if (hold) return void pauseAccount(hold);
       if (t.closest('[data-pace="upload"]')) {
         // Each account's own pace: the lane's, or the file on show's account in the Now card.
         const acc =

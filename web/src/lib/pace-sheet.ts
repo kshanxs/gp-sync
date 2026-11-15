@@ -1,18 +1,21 @@
 import { get, post, type ReclaimPrefs, type Settings } from "./api";
 import { esc, toast } from "./dom";
 import { icon } from "./icons";
-import { atOnceLabel, atOnceText, type PaceNow } from "./pace";
+import { atOnceLabel, atOnceShort, atOnceText, type PaceNow } from "./pace";
 import { openSheet } from "./sheet";
 
 // "How many at once" and the choices that go with it, opened from the page they affect (Free
 // storage, Copy accounts, Sync) instead of a card at the bottom or a trip to Settings. The same
 // button and the same sheet on every page.
 
-/** The button that opens a page's sheet: "Up to 7 (dynamic) at once", or "Items at once" when the
- * number isn't known on that page. `id` picks the sheet. */
+/** The button that opens a page's sheet: short ("Auto · 7", "4 at once", or "At once" when the
+ * number isn't known on that page), with the full wording on hover. `id` picks the sheet. */
 export function paceButton(id: "move" | "upload", fixed: number | null, pace?: PaceNow | null): string {
-  const text = fixed == null ? "Items at once" : `${atOnceText(fixed, pace)} at once`;
-  return `<button type="button" class="pace-btn" data-pace="${id}" title="Change how many run at once">${icon("sliders", "size-3.5")}<span>${esc(text)}</span></button>`;
+  const text = fixed == null ? "At once" : atOnceShort(fixed, pace);
+  const full =
+    fixed == null ? "How many run at once" : `${atOnceText(fixed, pace)} at once`.replace(/^u/, "U");
+  const slowed = fixed === 0 && !!pace?.calm;
+  return `<button type="button" class="pace-btn ${slowed ? "slowed" : ""}" data-pace="${id}" title="${esc(`${full}. Tap to change`)}" aria-label="${esc(`${full}. Change`)}">${icon(fixed === 0 ? "zap" : "sliders", "size-3")}<span>${esc(text)}</span></button>`;
 }
 
 function row(id: string, on: boolean, title: string, hint: string): string {

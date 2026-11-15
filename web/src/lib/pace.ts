@@ -26,6 +26,11 @@ export function atOnceOptions(selected: number): string {
   ).join("");
 }
 
+/** For a button: "4 at once", or "Auto · 7" (dynamic, with the number allowed right now). */
+export function atOnceShort(fixed: number, pace?: PaceNow | null): string {
+  return fixed > 0 ? `${fixed} at once` : `Auto · ${pace?.now ?? 4}`;
+}
+
 /** "up to 4", or "up to 7 (dynamic)" with the number the server allows right now. */
 export function atOnceText(fixed: number, pace?: PaceNow | null): string {
   if (fixed > 0) return `up to ${fixed}`;

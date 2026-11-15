@@ -383,17 +383,23 @@ function render(): void {
   }
   const going = r.current != null || Object.values(r.counts).some((c) => c.queued > 0);
   setPageStatus(
-    r.paused
+    r.paused && r.current != null
       ? {
           tone: "warn",
-          title: "Snapchat memories are paused",
-          detail: `${r.account} · nothing is uploaded or deleted`,
+          title: "Pausing · finishing this memory",
+          detail: `${r.account} · paused once it's done`,
         }
-      : r.searching
-        ? { tone: "run", title: "Looking for memories in Google Photos", detail: r.account }
-        : going
-          ? { tone: "run", title: "Sending Snapchat memories", detail: r.account }
-          : { tone: "good", title: `${num(r.memories)} Snapchat memories`, detail: r.account },
+      : r.paused
+        ? {
+            tone: "warn",
+            title: "Snapchat memories are paused",
+            detail: `${r.account} · nothing is uploaded or deleted`,
+          }
+        : r.searching
+          ? { tone: "run", title: "Looking for memories in Google Photos", detail: r.account }
+          : going
+            ? { tone: "run", title: "Sending Snapchat memories", detail: r.account }
+            : { tone: "good", title: `${num(r.memories)} Snapchat memories`, detail: r.account },
   );
   setPauseControl(
     !(r.paused || going)
@@ -405,7 +411,7 @@ function render(): void {
           toggle: async () => {
             await post("snapchat/pause", { account: r.account, paused: !r.paused });
             void load();
-            return r.paused ? "Resumed" : "Paused";
+            return r.paused ? "Resumed" : "Paused: the memory under way finishes first";
           },
         },
   );
@@ -449,7 +455,7 @@ function render(): void {
         r.items.length
           ? `<div class="divide-y divide-line" data-gallery>${r.items.map((i) => row(i, r)).join("")}</div>${
               r.more
-                ? `<div class="flex justify-center p-3"><button class="btn" id="sc-more">${icon("plus")}Show more (${num(r.more)} left)</button></div>`
+                ? `<div class="flex justify-center p-3"><button class="btn" id="sc-more">${icon("plus")}${num(r.more)} more</button></div>`
                 : ""
             }`
           : `<div class="empty">${icon("shield")}${r.searching ? "Still looking…" : "None here"}</div>`

@@ -98,7 +98,7 @@ function row(i: SourceItem, r: SourcesReport): string {
     </div>
     <div class="row-actions flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5 empty:hidden sm:w-auto">${
       i.google_url
-        ? `<a class="link-btn sm" href="${esc(i.google_url)}" target="_blank" rel="noopener noreferrer">${icon("external")}Open in Google Photos</a>`
+        ? `<a class="link-btn sm" href="${esc(i.google_url)}" target="_blank" rel="noopener noreferrer">${icon("external")}Google Photos</a>`
         : ""
     }</div>
   </div>`;
@@ -144,8 +144,8 @@ function firstRun(r: SourcesReport): string {
     <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-2">${lines}</ul>
     <p class="mt-2 text-xs text-ink-3">Albums group them, captions make them searchable, archive hides them from the timeline. Nothing changes in Google until you choose.</p>
     <div class="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-      <button class="btn" data-ask="label">Only label them here</button>
-      <button class="btn primary" data-ask="apply">${icon("ok")}Use these settings</button>
+      <button class="btn" data-ask="label">Label only</button>
+      <button class="btn primary" data-ask="apply">${icon("ok")}Apply</button>
     </div>
   </section>`;
 }
@@ -204,7 +204,7 @@ function render(): void {
                 ? `<button class="btn sm" id="so-pick-all">${icon("check")}Pick all shown</button>`
                 : ""
           }
-          ${withEstimate.length ? `<button class="btn sm primary" id="so-accept">${icon("calendar")}Accept estimated dates (${num(withEstimate.length)})</button>` : ""}
+          ${withEstimate.length ? `<button class="btn sm primary" id="so-accept">${icon("calendar")}Accept ${num(withEstimate.length)} dates</button>` : ""}
         </div>
       </div>
       ${r.source === "camera" && cameras ? `<div class="flex flex-wrap gap-1.5 border-b border-line px-4 py-3">${cameras}</div>` : ""}
@@ -215,7 +215,7 @@ function render(): void {
               .map((i) => row(i, r))
               .join("")}</div>${
               r.items.length > shown
-                ? `<div class="flex justify-center p-3"><button class="btn" id="so-more">${icon("plus")}Show more (${num(r.items.length - shown)} left)</button></div>`
+                ? `<div class="flex justify-center p-3"><button class="btn" id="so-more">${icon("plus")}${num(r.items.length - shown)} more</button></div>`
                 : r.more
                   ? `<p class="p-3 text-center text-xs text-ink-3">${num(r.more)} more not shown</p>`
                   : ""

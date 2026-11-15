@@ -2075,7 +2075,8 @@ def precheck_worker():
             continue  # no file list yet, or paused: reading a library is Google work too
         by_account = {}
         for folder, account in q("SELECT folder, account FROM prechecks WHERE state='waiting' ORDER BY added"):
-            by_account.setdefault(account, []).append(folder)
+            if not uploads_paused(account):  # an account paused on its own waits too
+                by_account.setdefault(account, []).append(folder)
         if not by_account:
             continue
         with concurrent.futures.ThreadPoolExecutor(len(by_account), thread_name_prefix="check") as pool:
@@ -2609,8 +2610,8 @@ def upload_all(client, todo, account="", st=None, lane=False):
         with lock:
             if stop.is_set():
                 return None
-            if PAUSE_FILE.exists():
-                log("Paused", "pause")
+            if uploads_paused(account):
+                log(f"Paused uploads{f' to {account}' if account else ''}", "pause")
                 stop.set()
                 return None
             if not upload_allowed(st):
@@ -2869,8 +2870,9 @@ def run_round():
         log(f"Found {len(todo)} new file(s)", "scan")
         state["error"] = ""
         by_account = collections.defaultdict(list)
+        held = set(paused_upload_accounts())  # paused on their own on Sync: the others go on
         for item in todo:
-            if item[3] in accs:
+            if item[3] in accs and item[3] not in held:
                 by_account[item[3]].append(item)
         state.update(phase="uploading", done=0, total=sum(len(v) for v in by_account.values()))
         state["uploading"] = {}
@@ -2891,7 +2893,9 @@ def run_round():
                 traceback.print_exc()
                 log(f"Backup to {account} stopped: {type(e).__name__}: {e}", "error")
 
-        if len(by_account) == 1:
+        if not by_account:
+            pass  # every account with files waiting is paused
+        elif len(by_account) == 1:
             lane(*next(iter(by_account.items())))
         else:  # each account on its own threads, side by side, sharing the speed limit
             threads = [
@@ -3479,7 +3483,9 @@ def status_json():
         "last_scan": state["last_scan"],
         "interval": INTERVAL // 60,
         "paused": PAUSE_FILE.exists(),
+        "paused_accounts": paused_upload_accounts(),
         "all_paused": all_paused(),
+        "jobs_paused": jobs_paused(),
         "stats_engine": STATS_ENGINE,
         "account": accs[0] if accs else "",
         "accounts": accs,
@@ -4066,11 +4072,8 @@ def _from_local(key, dedup, name, size, taken, folder, track):
         digest = hashlib.sha1()
         done = 0
         try:
-            stop = track.get("stop")
             with open(source, "rb") as src, open(tmp, "wb") as f:
                 while block := src.read(1024 * 1024):
-                    if stop and stop():
-                        raise Paused
                     f.write(block)
                     digest.update(block)
                     done += len(block)
@@ -4102,23 +4105,6 @@ def _item_hashes(response, dedup):
             if isinstance(h, (bytes, bytearray)) and len(h) == 20 and _b64_hash(h) not in found:
                 found.append(_b64_hash(h))
     return found
-
-
-class Paused(Exception):
-    """The user paused this work: a download in progress stops, and the item stays queued."""
-
-
-def _stop_check(paused):
-    """`paused()` asked at most once a second: called for every downloaded block."""
-    last = [0.0, False]
-
-    def check():
-        now = time.monotonic()
-        if now - last[0] >= 1:
-            last[:] = [now, paused()]
-        return last[1]
-
-    return check
 
 
 COPY_SLACK = 256 * 1024  # how far Google's copy may be from the original's size: a few changed details
@@ -4166,10 +4152,7 @@ def _fetch(client, account, key, dedup, name, size, taken, folder, track, use_co
         try:
             with requests.get(url, headers=headers, stream=True, timeout=60) as r, open(tmp, "wb") as f:
                 r.raise_for_status()
-                stop = track.get("stop")
                 for block in r.iter_content(1024 * 1024):
-                    if stop and stop():
-                        raise Paused
                     f.write(block)
                     digest.update(block)
                     done += len(block)
@@ -4216,6 +4199,55 @@ def _is_hash(dedup):
     return bool(dedup) and re.fullmatch(r"[A-Za-z0-9_-]{27}", dedup) is not None
 
 
+def uploads_paused(account=None):
+    """Folder uploads are paused: for every account (Sync's Pause all, kept in PAUSE_FILE), or for
+    this one (its own Pause on Sync)."""
+    if PAUSE_FILE.exists():
+        return True
+    return account is not None and meta_get(f"uploads_paused:{account}") == "1"
+
+
+def paused_upload_accounts():
+    """Accounts whose folder uploads are paused on their own (Sync's per-account Pause)."""
+    if PAUSE_FILE.exists():
+        return [a for a, _ in accounts()]
+    return [a for a, _ in accounts() if meta_get(f"uploads_paused:{a}") == "1"]
+
+
+def set_uploads_paused(account, paused):
+    """Pause or resume one account's folder uploads. Kept in one of two shapes: every account paused
+    is PAUSE_FILE (Pause all), anything less is a flag per paused account. Resuming one account
+    while all are paused leaves the others paused."""
+    accs = [a for a, _ in accounts()]
+    held = set(paused_upload_accounts())
+    held = held | {account} if paused else held - {account}
+    if accs and held >= set(accs):
+        PAUSE_FILE.touch()
+        held = set()
+    else:
+        PAUSE_FILE.unlink(missing_ok=True)
+    for a in accs:
+        meta_set(f"uploads_paused:{a}", "1" if a in held else "0")
+    log(f"Paused uploads to {account}" if paused else f"Resumed uploads to {account}",
+        "pause" if paused else "resume")  # fmt: skip
+    if not paused:
+        wake.set()
+    notify_change()
+
+
+def pause_uploads(paused):
+    """Sync's Pause all / Resume all: every account's folder uploads at once."""
+    if paused:
+        PAUSE_FILE.touch()
+        if state["phase"] != "uploading":
+            state["phase"] = "paused"
+    else:
+        PAUSE_FILE.unlink(missing_ok=True)
+        for a, _ in accounts():
+            meta_set(f"uploads_paused:{a}", "0")
+        wake.set()
+
+
 def all_paused():
     """Every job is paused: uploads, copies (and Keep in sync), and Free storage and Fix dates in
     every account. Each job keeps its own pause; Overview's Pause everything sets them all."""
@@ -4230,17 +4262,49 @@ def all_paused():
 def pause_all(paused):
     """Overview's Pause everything / Resume everything: sets every job's own pause."""
     flag = "1" if paused else "0"
-    if paused:
-        PAUSE_FILE.touch()
-        if state["phase"] != "uploading":
-            state["phase"] = "paused"
-    elif PAUSE_FILE.exists():
-        PAUSE_FILE.unlink()
+    pause_uploads(paused)
     meta_set("copy_paused", flag)
     for a, _ in accounts():
         meta_set(f"reclaim_paused:{a}", flag)
         meta_set(f"dates_paused:{a}", flag)
-    log("Paused everything: items under way finish their step" if paused else "Resumed everything",
+    log("Paused everything: work under way finishes first" if paused else "Resumed everything",
+        "pause" if paused else "resume")  # fmt: skip
+    for ev in (wake, reclaim_wake, copy_wake, mirror_wake):
+        ev.set()
+    notify_change()
+
+
+JOBS = ("uploads", "freed", "copied", "fixed", "snapchat")  # Overview's Jobs card, one row each
+
+
+def jobs_paused():
+    """Each job paused for every account (Overview's Jobs card shows Resume for it)."""
+    accs = [a for a, _ in accounts()]
+    return {
+        "uploads": PAUSE_FILE.exists(),
+        "freed": bool(accs) and all(reclaim_paused(a) for a in accs),
+        "copied": meta_get("copy_paused") == "1",
+        "fixed": bool(accs) and all(dates_paused(a) for a in accs),
+        "snapchat": bool(accs) and all(snapchat_paused(a) for a in accs),
+    }
+
+
+def pause_job(job, paused):
+    """Pause or resume one job in every account, from Overview's Jobs card. Work under way finishes
+    its file or step first."""
+    flag = "1" if paused else "0"
+    accs = [a for a, _ in accounts()]
+    if job == "uploads":
+        pause_uploads(paused)
+    elif job == "copied":
+        meta_set("copy_paused", flag)
+    else:
+        prefix = {"freed": "reclaim_paused", "fixed": "dates_paused", "snapchat": "snap_paused"}[job]
+        for a in accs:
+            meta_set(f"{prefix}:{a}", flag)
+    name = {"uploads": "uploads", "freed": "Free storage", "copied": "copies", "fixed": "date fixes",
+            "snapchat": "Snapchat memories"}[job]  # fmt: skip
+    log(f"Paused {name}: work under way finishes first" if paused else f"Resumed {name}",
         "pause" if paused else "resume")  # fmt: skip
     for ev in (wake, reclaim_wake, copy_wake, mirror_wake):
         ev.set()
@@ -4286,7 +4350,7 @@ def _reclaim_item(account, row, make_client, out=None):
     key, dedup, name, size, taken, st_, local, fav, arch, cap, local_hash = row
     out = {} if out is None else out
     out["how"] = "ok"
-    track = {"current": None, "stop": _stop_check(lambda: reclaim_paused(account))}
+    track = {"current": None}
     with _reclaim_jobs_lock:
         reclaim_state[account]["jobs"][key] = track
     try:
@@ -4357,10 +4421,6 @@ def _reclaim_item(account, row, make_client, out=None):
         _set_reclaim(account, key, "checking", new_key=result, checks=0, uploaded_at=time.time())
         check_lanes.wake([account])
         return True
-    except Paused:  # stopped mid-download: nothing changed in Google, it waits in the queue
-        out["how"] = "error"
-        log(f"Paused: stopped downloading {name}; it stays queued", "pause")
-        return False
     except Exception as e:
         out["how"] = pace.outcome(e)
         msg = f"{type(e).__name__}: {e}"[:300]
@@ -7394,8 +7454,7 @@ def _copy_one(row, make_client):
     gate, fixed = pace.get(dst, "copy"), get_settings()["reclaim"]["workers"]
     how = "error"
     gate.started(size)
-    held = _stop_check(lambda: meta_get("copy_paused") == "1")
-    track = state_["jobs"][key] = {"current": None, "stop": held}
+    track = state_["jobs"][key] = {"current": None}
     folder = COPY_DIR / f"{dst}-{key}"  # the same item can be copied to two accounts at once
     started = time.time()
     try:
@@ -7413,8 +7472,6 @@ def _copy_one(row, make_client):
         state_["error"] = ""
         how = "ok"
         return True
-    except Paused:  # stopped mid-download: it stays queued
-        return False
     except Exception as e:
         how = pace.outcome(e)
         msg = f"{type(e).__name__}: {e}"[:300]
@@ -8457,16 +8514,36 @@ class Handler(BaseHTTPRequestHandler):
             wake.set()
             self.json({})
         elif path == "/api/pause":
-            if PAUSE_FILE.exists():
-                PAUSE_FILE.unlink()
-                log("Resumed uploads", "resume")
-                wake.set()
-            else:
-                PAUSE_FILE.touch()
-                if state["phase"] != "uploading":
-                    state["phase"] = "paused"
+            # No body: Pause all / Resume all (a toggle). {"account", "paused"}: one account.
+            try:
+                req = json.loads(body or "{}")
+                account = req.get("account")
+            except (ValueError, AttributeError):
+                self.json({"error": "bad request"}, 400)
+                return
+            if account:
+                if account not in dict(accounts()):
+                    self.json({"error": "unknown account"}, 404)
+                    return
+                set_uploads_paused(account, bool(req.get("paused")))
+                self.json({"ok": True, "paused_accounts": paused_upload_accounts()})
+                return
+            resume = PAUSE_FILE.exists()
+            pause_uploads(not resume)
+            log("Resumed uploads" if resume else "Paused uploads", "resume" if resume else "pause")
             notify_change()
             self.json({})
+        elif path == "/api/jobs/pause":
+            try:
+                req = json.loads(body or "{}")
+                job = req.get("job")
+            except (ValueError, AttributeError):
+                job = None
+            if job not in JOBS:
+                self.json({"error": "unknown job"}, 400)
+                return
+            pause_job(job, bool(req.get("paused")))
+            self.json({"ok": True, "jobs_paused": jobs_paused()})
         elif path == "/api/pause-all":
             try:
                 paused = bool(json.loads(body or "{}").get("paused"))

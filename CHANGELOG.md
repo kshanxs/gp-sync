@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Pause finishes what's under way first, and says so.** Pausing uploads, Copy accounts, Free
+  storage, Fix dates, Snapchat or Pause everything lets each file or step under way finish
+  (checking, downloading or uploading), then stops before the next. The page says "Pausing ·
+  finishing 2 files" (Overview, Sync and each account's card, Copy accounts, Free storage, Fix
+  dates, Snapchat) until they're done, then "Paused". Free storage and Copy accounts no longer
+  stop a download part-way and throw it away.
+- **Pause one account on Sync.** With more than one account, each account's card on Sync has its
+  own Pause / Resume button, so one account can wait while the others carry on (its checks wait
+  too). The button in the bar above is now **Pause all** / **Resume all**. Resume all also resumes
+  accounts paused on their own, and Pause everything on Overview does the same.
+- **Shorter buttons.** The "how many at once" button is now a small one-line chip: "Auto · 4" (or
+  "4 at once"), and it turns amber while Google has asked to slow down. The full wording shows on
+  hover. Other long labels are shorter too: "84 more" instead of "Show more (84 left)", Edit,
+  Save, Apply, Label only, Skip check, Read library, Google Photos, Automatic, Diagnostics, and
+  "Accept 12 dates". An account's card on Sync says "Uploading · 2".
+
 ## 1.8.3
 
 - **Checks are faster.** Before, a check read one file at a time and saved each fingerprint on

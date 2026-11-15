@@ -386,7 +386,7 @@ function render(): void {
       paused
         ? {
             tone: "warn",
-            title: moving ? `Pausing · ${num(moving)} finishing` : "Copying is paused",
+            title: moving ? `Pausing · finishing ${num(moving)}` : "Copying is paused",
             detail: `${src} → ${dst}${waiting ? ` · ${num(waiting)} waiting` : ""}`,
           }
         : moving
