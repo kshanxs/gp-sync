@@ -1544,6 +1544,42 @@ svg:hover .donut-arc:not(:hover) {
 .job-row.is-running .job-ic {
   @apply text-accent;
 }
+/* A job's (or Sync account's) state: a small dot and the word in its colour. */
+.job-dot {
+  @apply size-1.5 shrink-0 rounded-full bg-ink-3;
+}
+.job-dot.info {
+  @apply bg-accent;
+}
+.job-dot.warn {
+  @apply bg-warn;
+}
+.job-state {
+  @apply shrink-0 font-medium text-ink-2;
+}
+.job-state.info {
+  @apply text-accent;
+}
+.job-state.warn {
+  @apply text-warn;
+}
+.job-dot.good {
+  @apply bg-good;
+}
+.job-state.good {
+  @apply text-good;
+}
+/* Pause / Resume: a light outlined button with its word, the same size in every row. */
+.job-toggle {
+  @apply inline-flex h-7 w-[5.5rem] shrink-0 items-center justify-center gap-1.5 rounded-md border border-line text-xs text-ink-2 transition-colors duration-150 hover:bg-panel-2 hover:text-ink;
+}
+.job-toggle.held {
+  @apply text-accent;
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+}
+.job-toggle:disabled {
+  @apply opacity-50;
+}
 
 .text-run {
   color: var(--run);

@@ -444,7 +444,7 @@ function laneCard(l: AccountLane, s: Status): string {
   const verb = `${held ? "Resume" : "Pause"} uploads to ${l.account}`;
   const toggle =
     (s.accounts?.length ?? 0) > 1
-      ? `<button type="button" class="btn sm icon-sm shrink-0 ${held ? "primary" : ""}" data-acc-pause="${esc(l.account)}" data-held="${held ? 1 : 0}" title="${esc(verb)}" aria-label="${esc(verb)}">${icon(held ? "play" : "pause", "size-3.5")}</button>`
+      ? `<button type="button" class="job-toggle ${held ? "held" : ""}" data-acc-pause="${esc(l.account)}" data-held="${held ? 1 : 0}" title="${esc(verb)}" aria-label="${esc(verb)}">${icon(held ? "play" : "pause", "size-3")}<span>${held ? "Resume" : "Pause"}</span></button>`
       : "";
   // While a round is running, the bar is that round. The library total barely moves on a big folder.
   const round = l.phase === "uploading" && l.roundTotal > 0;
@@ -464,7 +464,7 @@ function laneCard(l: AccountLane, s: Status): string {
     : `<span class="bar mt-2.5 block h-1.5" title="${round ? "This round" : "In this account"}"><i style="width:${p}%"></i></span>`;
   return `<div class="min-w-0 border-b border-line md:odd:border-r" data-lane="${esc(l.account)}">
     <div class="p-4">
-      <div class="flex flex-wrap items-center gap-2"><span class="min-w-0 flex-1 basis-48 truncate text-sm font-medium" title="${esc(l.account)}">${esc(l.account)}</span><span class="flex items-center gap-2">${badge(lanePhaseText(l, s), tone)}${toggle}</span></div>
+      <div class="flex items-center gap-2"><span class="min-w-0 flex-1"><span class="keep-line block truncate text-sm font-medium" title="${esc(l.account)}">${esc(l.account)}</span><span class="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs"><i class="job-dot ${tone}"></i><span class="job-state keep-line truncate ${tone}">${esc(lanePhaseText(l, s))}</span></span></span>${toggle}</div>
       <div class="mt-1 flex min-w-0 items-center gap-2 text-xs text-ink-3"><span class="min-w-0 truncate" title="${esc(what)}">${esc(what)}</span><button type="button" class="link-btn sm shrink-0" data-folders-sheet="${esc(l.account)}">Change</button></div>
       ${checks.length ? `<div class="mt-3">${precheckLines(s, checks)}</div>` : ""}
       ${parts}

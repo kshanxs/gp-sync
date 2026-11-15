@@ -8,7 +8,7 @@ import { sparkline } from "../lib/charts";
 import { $, $$, esc, html, toast } from "../lib/dom";
 import { ago, bytes, clock, date, fileName, hour, num, pct, speed } from "../lib/format";
 import { dismissVisit, sinceVisit } from "../lib/since-visit";
-import { icon, type IconName } from "../lib/icons";
+import { icon } from "../lib/icons";
 import { NetChart, rangeButtons, type Range } from "../lib/netchart";
 import { jobLink, jobTitle } from "../lib/jobs";
 import { workBox, workCount, type WorkItem } from "../lib/work-panel";
@@ -124,10 +124,10 @@ function controls(s: Status): void {
 // ---- jobs: one card, a row per job in use, each with its own Pause / Resume
 
 /** A job's state in words, with a tone. Paused while it still runs: what is under way finishes. */
-function jobState(running: boolean, paused: boolean, waiting: number): [string, Tone, IconName] {
-  if (paused) return running ? ["Pausing", "warn", "pause"] : ["Paused", "warn", "pause"];
-  if (running) return ["Running", "info", "loader"];
-  return waiting ? ["Waiting", "", "hourglass"] : ["Idle", "", "ok"];
+function jobState(running: boolean, paused: boolean, waiting: number): [string, Tone] {
+  if (paused) return [running ? "Pausing" : "Paused", "warn"];
+  if (running) return ["Running", "info"];
+  return [waiting ? "Waiting" : "Idle", ""];
 }
 
 /** One job's row: what it is doing, today's count with its last 14 days, and its Pause. */
@@ -143,21 +143,22 @@ function jobRow(s: Status, k: ProcessKey, l: ReturnType<typeof liveProcesses>[nu
     return hist?.days.find((x) => x.day === d.toLocaleDateString("sv"))?.count ?? 0;
   });
   const held = !!s.jobs_paused?.[k];
-  const [state, tone, ic] = jobState(l.running, held, l.waiting);
+  const [state, tone] = jobState(l.running, held, l.waiting);
   const verb = `${held ? "Resume" : "Pause"} ${p.label.toLowerCase()}`;
-  const detail = l.detail.replace(/^Paused · /, ""); // the badge says Paused already
+  // The state leads the detail line in its colour ("Paused · 12 waiting"), not as a second badge.
+  const detail = l.detail.replace(/^Paused · /, "");
   return `<div class="job-row ${l.running && !held ? "is-running" : ""}" data-job="${k}">
     <a href="${PROCESS_HREF[k]}" class="job-main">
       <span class="job-ic">${icon(p.icon, "size-4")}</span>
       <span class="min-w-0 flex-1">
-        <span class="flex items-center gap-2"><span class="truncate text-sm font-medium">${esc(p.label)}</span>${badge(state, tone, ic)}</span>
-        <span class="mt-0.5 block truncate text-xs text-ink-3" title="${esc(detail)}">${esc(detail)}</span>
+        <span class="block truncate text-sm font-medium">${esc(p.label)}</span>
+        <span class="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-ink-3" title="${esc(`${state} · ${detail}`)}"><i class="job-dot ${tone}"></i><span class="job-state ${tone}">${state}</span><span class="keep-line min-w-0 truncate">· ${esc(detail)}</span></span>
         <span class="bar mt-1.5 block h-1 ${l.running && l.pct !== null ? "" : "invisible"}"><i style="width:${l.pct ?? 0}%"></i></span>
       </span>
       <span class="shrink-0 text-right max-sm:hidden"><span class="num block text-lg leading-tight">${procs ? num(day?.count ?? 0) : "–"}</span><span class="block text-[11px] text-ink-3">${esc(p.noun)} today</span></span>
       <span class="hidden h-8 w-20 shrink-0 sm:block">${sparkline(days, p.color)}</span>
     </a>
-    <button type="button" class="btn sm icon-sm shrink-0 ${held ? "primary" : ""}" data-job-pause="${k}" data-held="${held ? 1 : 0}" title="${esc(verb)}" aria-label="${esc(verb)}">${icon(held ? "play" : "pause", "size-3.5")}</button>
+    <button type="button" class="job-toggle ${held ? "held" : ""}" data-job-pause="${k}" data-held="${held ? 1 : 0}" title="${esc(verb)}" aria-label="${esc(verb)}">${icon(held ? "play" : "pause", "size-3")}<span>${held ? "Resume" : "Pause"}</span></button>
   </div>`;
 }
 
@@ -168,8 +169,11 @@ function renderProcs(s: Status): void {
   const today = procs?.today;
   const all = liveProcesses(s);
   const todayCount = (k: ProcessKey) => procs?.processes[k]?.days.find((d) => d.day === today)?.count ?? 0;
+  // Fixing dates has its own page; the Jobs card keeps to the main jobs.
   const used = all.filter(
-    (l) => l.running || l.paused || !!s.jobs_paused?.[l.key] || l.waiting > 0 || todayCount(l.key) > 0,
+    (l) =>
+      l.key !== "fixed" &&
+      (l.running || l.paused || !!s.jobs_paused?.[l.key] || l.waiting > 0 || todayCount(l.key) > 0),
   );
   // All quiet: still show how the backup stands.
   const rows = used.length ? used : all.filter((l) => l.key === "uploads");

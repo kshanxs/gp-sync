@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Jobs card: main jobs only, lighter controls.** Date fixes is no longer in Overview's Jobs card
+  (it has its own page). Each row's state is a small coloured dot and word ("● Paused · 12
+  waiting") instead of a badge with a pause icon. Pause / Resume is a light outlined button with
+  its word, Resume in the accent colour, instead of a filled icon button.
+- **Sync's account cards match.** Each account shows its state the same way under its name
+  ("● Uploading · 2", "● Paused") and has the same Pause / Resume button.
+
 ## 1.8.4
 
 - **Overview: one Jobs card.** The separate cards for uploads, Free storage, copies, date fixes
