@@ -13,7 +13,7 @@ wins, and the Work log row says so. Written by the handoff skill (`handoff.py lo
 
 ## Next up
 
-1. Update GP Sync to 1.8.4 on the Umbrel (the store offers it, store 4e3f93a), try the Jobs card's Pause and the Sync account Pause during a real upload (each finishes its file first), look over Folders on the phone, then add a second account to a folder that is already backed up and watch the check on Sync (the real library read has only been tested with a fake client).
+1. Update GP Sync to 1.8.5 on the Umbrel (the store offers it, store 41ebcdf), try the Jobs card's Pause and the Sync account Pause during a real upload (each finishes its file first), look over Folders on the phone, then add a second account to a folder that is already backed up and watch the check on Sync (the real library read has only been tested with a fake client).
    Then retake the README screenshots in docs/ from the real app (they still show 1.5.8).
 2. Dockerfile follow-up: install packages from a copy of pyproject.toml/uv.lock with the project version blanked, so a version-only release reuses the 165 MB packages layer. Tried 2026-11-14, couldn't be tested (PyPI downloads timed out on umbrel); test it when CI runs again.
 3. Try two accounts on the Umbrel dashboard (pull main first).
