@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Checks are faster.** Before, a check read one file at a time and saved each fingerprint on
+  its own. Now it reads several files at once (up to 4) and saves them in batches of 200. An
+  account's Google library is read once for all the folders it was added to, not once per folder,
+  and different accounts' libraries are read at the same time.
+- **Folders on phones.** Back up first moved to its own row under the folder's name. "Sends to" sits
+  above its accounts. The five numbers are now four small ones in a row, with Last added as one line
+  under them, instead of five tall cards. The sort menu sits beside Both / Photos / Videos
+  (Newest, Oldest), and the photo grid shows just the time under each photo.
+
 ## 1.8.2
 
 - **Check first, then sync.** Adding an account to a folder that is already backed up no longer

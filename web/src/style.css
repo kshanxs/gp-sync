@@ -2284,3 +2284,62 @@ button.col[aria-pressed="true"]::after {
 .pc-row > span:not(.pc-actions) {
   flex-basis: 14rem;
 }
+
+/* ---- Folders on phones: the open folder's header, numbers and filters take less room. */
+.fo-prio-slot {
+  @apply shrink-0;
+}
+@media (max-width: 639px) {
+  /* "Back up first" gets its own row under the folder's name instead of squeezing it. */
+  .fo-prio-slot {
+    @apply basis-full border-t border-line pt-3;
+  }
+  .fo-prio-slot .prio-switch {
+    @apply justify-between;
+  }
+  .fo-prio-slot .prio-switch > span:first-child {
+    @apply flex items-baseline gap-2 text-left;
+  }
+  /* "Sends to" above its accounts, so the chips start on the same edge. */
+  .sends-label {
+    @apply basis-full;
+  }
+  /* The five numbers: four small ones in a row, Last added as one line under them. */
+  #fo-stats {
+    @apply grid-cols-4 gap-2;
+  }
+  #fo-stats > button {
+    @apply rounded-xl p-2.5;
+  }
+  #fo-stats .metric-icon {
+    @apply hidden;
+  }
+  #fo-stats .label {
+    @apply text-xs;
+  }
+  #fo-stats .num {
+    @apply mt-1 text-lg;
+  }
+  #fo-stats > button > span:last-child {
+    @apply hidden;
+  }
+  #fo-stats > :last-child {
+    @apply col-span-4 flex-row flex-wrap items-baseline gap-x-2;
+  }
+  #fo-stats > :last-child .num {
+    @apply mt-0 ml-auto text-sm;
+  }
+  #fo-stats > :last-child > span:last-child {
+    @apply mt-0 block;
+  }
+  /* Filters: tighter, the sort beside Both / Photos / Videos. */
+  #fo-files-tools {
+    @apply gap-1.5 p-2;
+  }
+  #fo-files {
+    @apply p-2;
+  }
+  #fo-fsort {
+    @apply h-9 pr-7 pl-2.5;
+  }
+}

@@ -318,6 +318,17 @@ def q(sql, args=()):
         return rows
 
 
+def qmany(sql, rows):
+    """One statement for many rows, in one transaction (one disk write instead of one per row)."""
+    if not rows:
+        return
+    with db_lock:
+        CONN.executemany(sql, rows)
+        if CONN.in_transaction:
+            CONN.commit()
+            cache.bump()
+
+
 def meta_get(k):
     rows = q("SELECT v FROM meta WHERE k=?", (k,))
     return rows[0][0] if rows else None
@@ -1819,6 +1830,11 @@ def account_speeds(now=None, window=3600):
 PRECHECK_NOTE = "Found in Google by the check before syncing"
 precheck_wake = threading.Event()
 precheck_live = {}  # "folder|account" -> {"done", "total"} while comparing
+# Files read at once to fingerprint them: a few, so a disk keeps busy without being swamped.
+CHECK_READERS = max(2, min(4, os.cpu_count() or 1))
+# One comparison at a time: two accounts added to the same folder would otherwise both read every
+# file; the second finds them in the cache. Library reads (the Google part) still run side by side.
+_compare_lock = threading.Lock()
 
 
 def precheck_holds():
@@ -1893,19 +1909,25 @@ def precheck_list():
     return out
 
 
-def _sha1_of(path, size, mtime, known):
-    """The file's SHA-1 (hex): from the backup records or the cache when unchanged, else read now."""
+def _known_sha1(path, size, mtime, known):
+    """The file's SHA-1 (hex) from the backup records or the cache, when the file is unchanged."""
     for src in known:
         h = src.get(path)
         if h and h[0] == size and h[1] == mtime and h[2]:
             return h[2]
-    digest = media.sha1_file(path).hex()
-    q("INSERT OR REPLACE INTO hashes (path, size, mtime, sha1) VALUES (?,?,?,?)", (path, size, mtime, digest))
-    return digest
+    return None
 
 
-def run_precheck(folder, account, make_client=None):
-    """Compare one folder with one account's Google library and record what it already has."""
+def _read_sha1(path):
+    try:
+        return media.sha1_file(path).hex()
+    except OSError:
+        return None  # gone or unreadable since the scan
+
+
+def run_precheck(folder, account, make_client=None, read=True):
+    """Compare one folder with one account's Google library and record what it already has.
+    read=False: the library was just read for another folder of the same account. True if done."""
     key = f"{folder}|{account}"
 
     def put(**kw):
@@ -1913,9 +1935,13 @@ def run_precheck(folder, account, make_client=None):
         q(f"UPDATE prechecks SET {sets} WHERE folder=? AND account=?", (*kw.values(), folder, account))
         notify_change()
 
+    locked = False
     try:
         put(state="reading", error="")
-        update_library((make_client or _reclaim_client)(account), account)
+        if read:
+            update_library((make_client or _reclaim_client)(account), account)
+        _compare_lock.acquire()
+        locked = True
         put(state="comparing")
         prefix = folder + "/"
         skip = state.get("skip_copy") or ()
@@ -1928,18 +1954,38 @@ def run_precheck(folder, account, make_client=None):
             }
             for t in ("files", "hashes")
         ]
-        live = precheck_live[key] = {"done": 0, "total": len(entries)}
         digests = {}  # absolute path -> (size, mtime, sha1 hex)
-        for i, e in enumerate(entries):
+        todo = []  # (path, size, mtime) still to read
+        for e in entries:
             path = str(MEDIA / e[0])
             try:
                 fst = os.stat(path)
-                digests[path] = (fst.st_size, fst.st_mtime, _sha1_of(path, fst.st_size, fst.st_mtime, known))
             except OSError:
-                pass  # gone since the scan
-            live["done"] = i + 1
-            if i % 250 == 0:
-                notify_change()
+                continue  # gone since the scan
+            h = _known_sha1(path, fst.st_size, fst.st_mtime, known)
+            if h:
+                digests[path] = (fst.st_size, fst.st_mtime, h)
+            else:
+                todo.append((path, fst.st_size, fst.st_mtime))
+        live = precheck_live[key] = {"done": len(digests), "total": len(digests) + len(todo)}
+        notify_change()
+        fresh = []
+
+        def keep():
+            qmany("INSERT OR REPLACE INTO hashes (path, size, mtime, sha1) VALUES (?,?,?,?)", fresh)
+            fresh.clear()
+            notify_change()
+
+        # Several files read at once; saved to the cache in batches.
+        with concurrent.futures.ThreadPoolExecutor(CHECK_READERS, thread_name_prefix="check read") as pool:
+            for (path, size, mtime), h in zip(todo, pool.map(_read_sha1, (t[0] for t in todo)), strict=True):
+                live["done"] += 1
+                if h:
+                    digests[path] = (size, mtime, h)
+                    fresh.append((path, size, mtime, h))
+                if len(fresh) >= 200:
+                    keep()
+        keep()
         by_key = {_b64_hash(bytes.fromhex(h)): p for p, (_, _, h) in digests.items()}
         found = {}
         keys = list(by_key)
@@ -1974,22 +2020,19 @@ def run_precheck(folder, account, make_client=None):
                     (account, like),
                 )
             }
-        for path, media_key in found.items():
-            if path in done:
-                continue  # already in this account's records
-            size, mtime, digest = digests[path]
-            if main:
-                q(
-                    """INSERT OR REPLACE INTO files (path, size, mtime, status, media_key, error, attempts, updated,
-                       account, sha1) VALUES (?,?,?,'exists',?,?,0,?,?,?)""",
-                    (path, size, mtime, media_key, PRECHECK_NOTE, now, account, digest),
-                )
-            else:
-                q(
-                    """INSERT OR REPLACE INTO copies (path, account, size, mtime, status, media_key, error, attempts,
-                       updated) VALUES (?,?,?,?,'exists',?,?,0,?)""",
-                    (path, account, size, mtime, media_key, PRECHECK_NOTE, now),
-                )
+        rows = [(p, *digests[p], mk) for p, mk in found.items() if p not in done]  # not in its records yet
+        if main:
+            qmany(
+                """INSERT OR REPLACE INTO files (path, size, mtime, status, media_key, error, attempts, updated,
+                   account, sha1) VALUES (?,?,?,'exists',?,?,0,?,?,?)""",
+                [(p, size, mtime, mk, PRECHECK_NOTE, now, account, h) for p, size, mtime, h, mk in rows],
+            )
+        else:
+            qmany(
+                """INSERT OR REPLACE INTO copies (path, account, size, mtime, status, media_key, error, attempts,
+                   updated) VALUES (?,?,?,?,'exists',?,?,0,?)""",
+                [(p, account, size, mtime, mk, PRECHECK_NOTE, now) for p, size, mtime, h, mk in rows],
+            )
         new = [p for p in digests if p not in found and p not in done]
         put(
             state="ready",
@@ -2001,28 +2044,47 @@ def run_precheck(folder, account, make_client=None):
         )
         log(f"Checked {folder} for {account}: {len(found)} already in Google, {len(new)} new to sync", "info")
         wake.set()  # a scan now shows the matches as already in Google
+        return True
     except Exception as e:
         why = outage_kind(e).replace(" Will retry next scan.", "") or f"{type(e).__name__}: {e}"
         put(state="failed", error=why[:300])  # tried again from the page, not on its own
+        return False
     finally:
+        if locked:
+            _compare_lock.release()
         precheck_live.pop(key, None)
         notify_change()
 
 
+def _precheck_account(account, folders):
+    """An account's waiting checks: its library is read once, for the first folder."""
+    read = True
+    for folder in folders:
+        if run_precheck(folder, account, read=read):
+            read = False
+
+
 def precheck_worker():
-    """Runs the waiting checks one at a time, once the first scan has listed the files (not while
-    paused)."""
+    """Runs the waiting checks once the first scan has listed the files (not while paused): every
+    account at once, each account's library read once for all its folders."""
     q("UPDATE prechecks SET state='waiting' WHERE state IN ('reading', 'comparing')")  # cut off by a restart
     while True:
         precheck_wake.wait(60)
         precheck_wake.clear()
         if not state["last_scan"] or PAUSE_FILE.exists():
             continue  # no file list yet, or paused: reading a library is Google work too
+        by_account = {}
         for folder, account in q("SELECT folder, account FROM prechecks WHERE state='waiting' ORDER BY added"):
-            try:
-                run_precheck(folder, account)
-            except Exception as e:  # never let one check stop the others
-                print(f"Check {folder} for {account}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            by_account.setdefault(account, []).append(folder)
+        if not by_account:
+            continue
+        with concurrent.futures.ThreadPoolExecutor(len(by_account), thread_name_prefix="check") as pool:
+            jobs = {pool.submit(_precheck_account, a, fs): a for a, fs in by_account.items()}
+            for job, account in jobs.items():
+                try:
+                    job.result()
+                except Exception as e:  # never let one account's checks stop the others
+                    print(f"Check for {account}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
 
 
 def folder_report(path="", group="folders", days=30, tz_offset_min=0, now=None):

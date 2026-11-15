@@ -448,13 +448,13 @@ function renderHead(r: FolderReport): void {
        <button type="button" class="btn sm lg:hidden" id="fo-browse" aria-expanded="${navOpen}" aria-controls="fo-nav-wrap">${icon("layers")}Folders</button>
        <nav class="meta flex min-w-0 flex-wrap items-center gap-1.5" aria-label="Where you are">${crumbs()}</nav>
      </div>
-     <div class="mt-4 flex items-start gap-3">
+     <div class="mt-4 flex flex-wrap items-start gap-3">
        <span class="grid size-10 shrink-0 place-items-center rounded-[10px] bg-panel-2 text-ink-2">${icon(ic, "size-5")}</span>
        <div class="min-w-0 flex-1">
          <h2 class="truncate text-xl leading-7 font-medium">${esc(title)}</h2>
          <p class="mt-0.5 text-xs text-ink-3">${num(t.files)} files · ${bytes(t.bytes)}${!path ? ` · every backed-up folder on ${esc(host())}` : ""}</p>
        </div>
-       ${path ? backupPriorityControl(path, prio.indexOf(path), waiting + failed > 0) : ""}
+       ${path ? `<div class="fo-prio-slot">${backupPriorityControl(path, prio.indexOf(path), waiting + failed > 0)}</div>` : ""}
      </div>
      <div class="mt-4 flex items-center gap-3"><div class="bar flex-1"><i style="width:${done}%"></i></div><span class="meta shrink-0">${g ? `${done}% in ${fAcc ? esc(short(fAcc)) : "Google Photos"}` : `Not sent to ${esc(short(fAcc))}`}</span></div>
      <div id="fo-sends"></div>
@@ -476,13 +476,13 @@ function renderSends(): void {
   let markup = "";
   if (!top) {
     markup = accs.length
-      ? `<div class="sends-to"><span class="text-xs text-ink-3">Choose which accounts each folder goes to</span><button type="button" class="btn sm ml-auto" data-folders-sheet="">${icon("folder")}Where each folder goes</button></div>`
+      ? `<div class="sends-to"><span class="sends-label text-xs text-ink-3">Choose which accounts each folder goes to</span><button type="button" class="btn sm ml-auto" data-folders-sheet="">${icon("folder")}Where each folder goes</button></div>`
       : "";
   } else if (s && top in (s.folders ?? {})) {
     const order = foldersMap(s)[top] ?? [];
     const checks = accs.flatMap((a) => prechecksFor(s, a, top));
     markup = `<div class="sends-to" data-sends-to="${esc(top)}" data-order="${esc(JSON.stringify(order))}">
-        <span class="mr-1 text-xs text-ink-3">${path === top ? "Sends to" : `Sends to (all of ${esc(top)})`}</span><span class="contents" data-sends-chips>${folderChips(accs, order)}</span>
+        <span class="sends-label mr-1 text-xs text-ink-3">${path === top ? "Sends to" : `Sends to (all of ${esc(top)})`}</span><span class="contents" data-sends-chips>${folderChips(accs, order)}</span>
       </div>${checks.length ? `<div class="mt-3">${precheckLines(s, checks, true)}</div>` : ""}`;
   }
   if (markup === sendsDrawn) return;
@@ -618,7 +618,7 @@ function fileTile(f: FolderFiles["items"][number]): string {
     <div class="shimmer relative aspect-square overflow-hidden rounded-lg">${thumb(f.name, "fade-img size-full object-cover", f.mtime)}
       <span class="ph-state ${tone}" aria-label="${esc(label)}">${icon(ic, "size-3")}</span>
       ${f.kind === "video" ? `<span class="ph-video">${icon("play", "size-3")}</span>` : ""}</div>
-    <figcaption class="mt-1 flex justify-between gap-1 px-0.5 text-[11px] text-ink-3 tabular-nums"><span class="keep-line truncate">${clock(f.added)}</span><span class="keep-line shrink-0">${bytes(f.size)}</span></figcaption></figure>`;
+    <figcaption class="mt-1 flex justify-between gap-1 px-0.5 text-[11px] text-ink-3 tabular-nums"><span class="keep-line truncate">${clock(f.added)}</span><span class="keep-line shrink-0 max-sm:hidden">${bytes(f.size)}</span></figcaption></figure>`;
 }
 
 /** Newest or oldest first: a heading at each new day, like a photo library. */
@@ -680,9 +680,9 @@ function renderFilesTools(): void {
        .map(([k, l]) => `<button data-k="${k}" aria-pressed="${k === fKind}">${l}</button>`)
        .join("")}</div>
      ${fDay ? `<button type="button" class="chip" aria-pressed="true" id="fo-clear-day" title="Show every day">${icon("calendar")}Added ${esc(dayTitle(fDay, report?.today ?? "", true))}${icon("x")}</button>` : ""}
-     <select class="input ml-auto w-auto" id="fo-fsort" aria-label="Sort">${[
-       ["new", "Newest added"],
-       ["old", "Oldest added"],
+     <select class="input sm ml-auto w-auto" id="fo-fsort" aria-label="Sort">${[
+       ["new", "Newest"],
+       ["old", "Oldest"],
        ["size", "Largest"],
        ["name", "Name"],
      ]
