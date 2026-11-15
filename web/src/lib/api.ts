@@ -112,6 +112,8 @@ export interface Status {
   paused: boolean;
   /** Accounts whose folder uploads are paused (all of them when `paused`). */
   paused_accounts?: string[];
+  /** Each job paused in every account (Overview's Jobs card). */
+  jobs_paused?: Record<ProcessKey, boolean>;
   stats_engine: string;
   account: string;
   accounts: string[];

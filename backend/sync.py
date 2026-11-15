@@ -3485,6 +3485,7 @@ def status_json():
         "paused": PAUSE_FILE.exists(),
         "paused_accounts": paused_upload_accounts(),
         "all_paused": all_paused(),
+        "jobs_paused": jobs_paused(),
         "stats_engine": STATS_ENGINE,
         "account": accs[0] if accs else "",
         "accounts": accs,
@@ -4267,6 +4268,43 @@ def pause_all(paused):
         meta_set(f"reclaim_paused:{a}", flag)
         meta_set(f"dates_paused:{a}", flag)
     log("Paused everything: work under way finishes first" if paused else "Resumed everything",
+        "pause" if paused else "resume")  # fmt: skip
+    for ev in (wake, reclaim_wake, copy_wake, mirror_wake):
+        ev.set()
+    notify_change()
+
+
+JOBS = ("uploads", "freed", "copied", "fixed", "snapchat")  # Overview's Jobs card, one row each
+
+
+def jobs_paused():
+    """Each job paused for every account (Overview's Jobs card shows Resume for it)."""
+    accs = [a for a, _ in accounts()]
+    return {
+        "uploads": PAUSE_FILE.exists(),
+        "freed": bool(accs) and all(reclaim_paused(a) for a in accs),
+        "copied": meta_get("copy_paused") == "1",
+        "fixed": bool(accs) and all(dates_paused(a) for a in accs),
+        "snapchat": bool(accs) and all(snapchat_paused(a) for a in accs),
+    }
+
+
+def pause_job(job, paused):
+    """Pause or resume one job in every account, from Overview's Jobs card. Work under way finishes
+    its file or step first."""
+    flag = "1" if paused else "0"
+    accs = [a for a, _ in accounts()]
+    if job == "uploads":
+        pause_uploads(paused)
+    elif job == "copied":
+        meta_set("copy_paused", flag)
+    else:
+        prefix = {"freed": "reclaim_paused", "fixed": "dates_paused", "snapchat": "snap_paused"}[job]
+        for a in accs:
+            meta_set(f"{prefix}:{a}", flag)
+    name = {"uploads": "uploads", "freed": "Free storage", "copied": "copies", "fixed": "date fixes",
+            "snapchat": "Snapchat memories"}[job]  # fmt: skip
+    log(f"Paused {name}: work under way finishes first" if paused else f"Resumed {name}",
         "pause" if paused else "resume")  # fmt: skip
     for ev in (wake, reclaim_wake, copy_wake, mirror_wake):
         ev.set()
@@ -8495,6 +8533,17 @@ class Handler(BaseHTTPRequestHandler):
             log("Resumed uploads" if resume else "Paused uploads", "resume" if resume else "pause")
             notify_change()
             self.json({})
+        elif path == "/api/jobs/pause":
+            try:
+                req = json.loads(body or "{}")
+                job = req.get("job")
+            except (ValueError, AttributeError):
+                job = None
+            if job not in JOBS:
+                self.json({"error": "unknown job"}, 400)
+                return
+            pause_job(job, bool(req.get("paused")))
+            self.json({"ok": True, "jobs_paused": jobs_paused()})
         elif path == "/api/pause-all":
             try:
                 paused = bool(json.loads(body or "{}").get("paused"))

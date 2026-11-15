@@ -94,7 +94,7 @@ export function accountBreakdown(accs: FolderAccount[] | undefined, o: Breakdown
             ? ""
             : `<div class="flex min-w-0 items-center gap-2">
           <span class="min-w-0 truncate text-sm font-medium" title="${esc(a.account)}">${esc(a.account)}</span>
-          <span class="badge shrink-0">${a.main ? "Backup" : "Also in"}</span>
+          <span class="shrink-0 text-xs text-ink-3">· ${a.main ? "backup" : "also in"}</span>
           <span class="meta ml-auto shrink-0">${num(total)} files</span>
         </div>`
         }

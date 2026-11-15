@@ -80,3 +80,19 @@ def test_pause_everything_resumes_paused_accounts(two):
     assert sync.PAUSE_FILE.exists()
     sync.pause_all(False)
     assert sync.paused_upload_accounts() == []
+
+
+def test_pause_one_job_in_every_account(two, server):
+    a, b = two
+    for job, key in (("freed", "reclaim_paused"), ("fixed", "dates_paused"), ("snapchat", "snap_paused")):
+        code, body = post(server + "/api/jobs/pause", json.dumps({"job": job, "paused": True}).encode())
+        assert code == 200 and json.loads(body)["jobs_paused"][job]
+        assert sync.meta_get(f"{key}:{a}") == sync.meta_get(f"{key}:{b}") == "1"
+        post(server + "/api/jobs/pause", json.dumps({"job": job, "paused": False}).encode())
+        assert not sync.jobs_paused()[job]
+    post(server + "/api/jobs/pause", json.dumps({"job": "uploads", "paused": True}).encode())
+    assert sync.PAUSE_FILE.exists() and json.loads(sync.status_body())["jobs_paused"]["uploads"]
+    post(server + "/api/jobs/pause", json.dumps({"job": "copied", "paused": True}).encode())
+    assert sync.meta_get("copy_paused") == "1"
+    sync.pause_job("copied", False)
+    assert post(server + "/api/jobs/pause", json.dumps({"job": "nope"}).encode())[0] == 400
