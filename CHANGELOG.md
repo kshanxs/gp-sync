@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.8.2
+
 - **Check first, then sync.** Adding an account to a folder that is already backed up no longer
   queues every file as an upload. GP Sync reads that account's Google library and compares it with
   the folder's files by SHA-1 (Google's own test), without uploading: what it already has is marked
