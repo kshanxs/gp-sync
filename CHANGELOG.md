@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Live Photos: the old separate video goes to the Trash too.** For the first Live Photos fixed by
+  1.9.0, the library copy had no key yet for the old video, so it stayed visible next to the new
+  motion photo (the old photo did go to the Trash). The old items are now looked up again after a
+  fresh library read, and a video with the MOV's own file name and exact size is found as well.
+  Pairs already fixed are tidied once.
+
 ## 1.9.0
 
 - **iPhone Live Photos are motion photos in Google.** They used to arrive as a still plus a separate
