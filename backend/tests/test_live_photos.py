@@ -46,10 +46,12 @@ def still_bytes(fmt="JPEG", cid=CID, color=(200, 30, 30)):
     return buf.getvalue()
 
 
-def write_mov(path, cid=CID, frames=10):
+def write_mov(path, cid=CID, frames=10, taken=None):
     out = av.open(str(path), "w", format="mov", options={"movflags": "use_metadata_tags"})
     if cid:
         out.metadata["com.apple.quicktime.content.identifier"] = cid
+    if taken:  # Apple's creation date: local time with its offset
+        out.metadata["com.apple.quicktime.creationdate"] = taken
     s = out.add_stream("libx264", rate=10)
     s.width, s.height, s.pix_fmt = 64, 48, "yuv420p"
     for i in range(frames):
@@ -600,3 +602,148 @@ def test_fix_dates_never_uploads_half_a_live_photo(iphone):
     assert asked == []  # Google is never touched
     fixes = sync.sq("SELECT fix, error FROM media_dates WHERE path IN (?, ?)", (str(still), str(mov)))
     assert [f for f, _ in fixes] == ["failed", "failed"] and all("Live Photo" in e for _, e in fixes)
+
+
+TAKEN = "2024-10-12T20:13:58+0530"
+TAKEN_TS = 1728744238  # 2024-10-12 14:43:58 UTC
+
+
+def test_the_date_a_live_photo_was_taken_comes_from_its_video(tmp_path):
+    assert livephoto.video_date(write_mov(tmp_path / "a.mov", taken=TAKEN)) == TAKEN_TS
+    assert livephoto.video_date(write_mov(tmp_path / "b.mov")) is None
+    assert livephoto.video_date(write_mov(tmp_path / "c.mov", taken="1970-01-01T00:00:00+0000")) is None
+    assert livephoto.video_date(tmp_path / "missing.mov") is None
+
+
+def dated_still(path):
+    """A still with its own capture date (EXIF DateTimeOriginal)."""
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    exif = Image.Exif()
+    exif.load(exif_with(CID))
+    exif.get_ifd(0x8769)[0x9003] = "2024:10:12 20:13:58"
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 48), (10, 200, 10)).save(buf, "HEIF", exif=exif.tobytes())
+    path.write_bytes(buf.getvalue())
+
+
+def dates_sent(monkeypatch):
+    sent = []
+    real = sync.upload_date
+
+    def spy(client, when, mtime=None):
+        sent.append(when)
+        return real(client, when, mtime)
+
+    monkeypatch.setattr(sync, "upload_date", spy)
+    return sent
+
+
+def test_a_live_photo_without_a_date_of_its_own_goes_up_dated_by_its_video(iphone, monkeypatch):
+    still, mov = iphone
+    write_mov(mov, taken=TAKEN)
+    old = time.time() - 2 * sync.LIVE_WAIT
+    os.utime(mov, (old, old))
+    sent = dates_sent(monkeypatch)
+    sync.upload_all(Recorder(), [i for i in sync.scan() if "iPhone" in i[0]])
+    assert sent == [TAKEN_TS]  # not the day the file was saved here
+
+
+def test_a_live_photo_with_its_own_date_lets_google_read_it(iphone, monkeypatch):
+    still, mov = iphone
+    dated_still(still)
+    write_mov(mov, taken=TAKEN)
+    old = time.time() - 2 * sync.LIVE_WAIT
+    for p in (still, mov):
+        os.utime(p, (old, old))
+    sent = dates_sent(monkeypatch)
+    sync.upload_all(Recorder(), [i for i in sync.scan() if "iPhone" in i[0]])
+    assert sent == [None]
+
+
+def test_fixing_a_pair_sends_the_videos_date(separate, monkeypatch):
+    still, mov, db = separate
+    write_mov(mov, taken=TAKEN)
+    sync.q("UPDATE files SET size=?, mtime=? WHERE path=?", (mov.stat().st_size, mov.stat().st_mtime, str(mov)))
+    sync.scan()
+    sent = dates_sent(monkeypatch)
+    assert sync.live_fix_step(ACC, lambda a: FixClient())
+    assert sent == [TAKEN_TS]
+
+
+class RedateApi(FixApi):
+    def __init__(self, google):
+        super().__init__()
+        self.google = google  # dedup keys Google has
+
+    def find_remote_media_by_hash(self, digest):
+        return "NEW" if sync._b64_hash(digest) in self.google else None
+
+    def delete_remote_media_permanently(self, dedups):
+        self.calls.append(("delete", list(dedups)))
+        self.google.difference_update(dedups)
+
+
+def done_motion_photo(still, mov, db, tmp_path, shown_ms, dedup=None):
+    """A motion photo GP Sync sent before dates were given: done, Google showing `shown_ms`."""
+    built = livephoto.build(str(still), str(mov), tmp_path / "built")
+    dedup = dedup or b64(built.read_bytes())
+    sync.q("""INSERT OR REPLACE INTO live_fix (still, account, mov, state, new_key, new_dedup, uploaded, error,
+              updated, fmt) VALUES (?,?,?,'done','NEW',?,?,'',?,2)""",
+           (str(still), ACC, str(mov), dedup, time.time() - 600, time.time()))  # fmt: skip
+    for p in (still, mov):
+        sync.q("UPDATE files SET media_key='NEW', status='uploaded' WHERE path=?", (str(p),))
+    with Storage(db) as s:
+        s.update([gitem("NEW", dedup, motion=True, is_favorite=True, caption="Goa")])
+        s.conn.execute("UPDATE remote_media SET utc_timestamp=? WHERE dedup_key=?", (shown_ms, dedup))
+        s.conn.commit()
+    return dedup
+
+
+@pytest.fixture
+def undated_done(separate, tmp_path):
+    still, mov, db = separate
+    write_mov(mov, taken=TAKEN)
+    sync.q("UPDATE files SET size=?, mtime=? WHERE path=?", (mov.stat().st_size, mov.stat().st_mtime, str(mov)))
+    return still, mov, db
+
+
+def test_a_motion_photo_on_the_wrong_day_goes_up_again_dated_by_its_video(undated_done, tmp_path, monkeypatch):
+    still, mov, db = undated_done
+    dedup = done_motion_photo(still, mov, db, tmp_path, shown_ms=1_778_000_000_000)  # the day it was saved here
+    client = FixClient()
+    client.api = RedateApi({dedup})
+    sent = dates_sent(monkeypatch)
+    assert sync.live_fix_step(ACC, lambda a: client)  # noticed
+    assert sync.q("SELECT state FROM live_fix") == [("redate",)]
+    assert sync.live_fix_step(ACC, lambda a: client)
+    assert ("delete", [dedup]) in client.api.calls  # Google's copy is the same file, byte for byte
+    assert [d for _n, d, _q in client.sent] == [dedup] and sent == [TAKEN_TS]
+    assert sync.q("SELECT state, favorite, caption, dated FROM live_fix") == [("uploaded", 1, "Goa", 1)]
+    # Confirmed as a motion photo as before; then never checked again.
+    confirm(db, dedup)
+    assert sync.live_fix_step(ACC, lambda a: client)
+    assert sync.q("SELECT state FROM live_fix") == [("done",)]
+    assert not sync.live_fix_step(ACC, lambda a: client)
+
+
+def test_a_motion_photo_on_the_right_day_is_left_alone(undated_done, tmp_path):
+    still, mov, db = undated_done
+    done_motion_photo(still, mov, db, tmp_path, shown_ms=(TAKEN_TS + 30) * 1000)
+    client = FixClient()
+    assert not sync.live_fix_step(ACC, lambda a: client)
+    assert client.sent == [] and client.api.calls == []
+    assert sync.q("SELECT state, dated FROM live_fix") == [("done", 1)]
+
+
+def test_a_date_is_never_fixed_when_googles_file_differs(undated_done, tmp_path):
+    still, mov, db = undated_done
+    other = b64(b"not this file")
+    done_motion_photo(still, mov, db, tmp_path, shown_ms=1_778_000_000_000, dedup=other)
+    client = FixClient()
+    client.api = RedateApi({other})
+    sync.live_fix_step(ACC, lambda a: client)
+    sync.live_fix_step(ACC, lambda a: client)
+    assert client.sent == [] and not [c for c in client.api.calls if c[0] in ("trash", "delete")]
+    assert sync.q("SELECT state, dated FROM live_fix") == [("done", 1)]

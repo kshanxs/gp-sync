@@ -91,6 +91,38 @@ def content_id(path):
     return None
 
 
+def video_date(mov):
+    """When the Live Photo was taken (unix seconds), from its MOV: Apple's creation date (local time
+    with its offset) or QuickTime's creation time (UTC). None if neither is there or makes sense."""
+    import datetime as dt
+    import time
+
+    try:
+        import av
+
+        with av.open(str(mov)) as c:
+            md = c.metadata
+            raw = [md.get("com.apple.quicktime.creationdate"), md.get("creation_time")]
+    except Exception:
+        return None
+    for text in raw:
+        if not text:
+            continue
+        text = text.strip().replace("Z", "+00:00")
+        if len(text) > 5 and text[-5] in "+-" and text[-3] != ":":  # +0530 -> +05:30
+            text = f"{text[:-2]}:{text[-2:]}"
+        try:
+            when = dt.datetime.fromisoformat(text)
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=dt.UTC)
+        ts = when.timestamp()
+        if 631152000 <= ts <= time.time() + 86400:  # 1990 to tomorrow: a clock that was never set fails
+            return ts
+    return None
+
+
 # ---- ISO boxes
 
 

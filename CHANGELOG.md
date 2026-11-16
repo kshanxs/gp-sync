@@ -15,6 +15,11 @@
   and never when they have more pixels; those are kept and listed. On the test library, items with
   the same name and time were often different photos, so names and times alone are never used. A
   Live Photo the iPhone's own Google Photos app uploaded is kept, and nothing is uploaded for it.
+- **Live Photos keep their date when the photo has none inside.** Some iPhone photos carry no capture
+  date of their own; their video does. The motion photo now goes up dated when the video was taken,
+  as normal uploads already were. Before, Google showed the day the file was saved on the server.
+  Motion photos already sent this way go up again with the right date, but only when the file
+  rebuilt here is the same as Google's, byte for byte (favourite, archive and caption carried over).
 - **Fix dates never uploads half of a Live Photo.** The photo and the video of a Live Photo that went
   up as one motion photo are left out of Fix dates (marked failed, with the reason): uploading one of
   them alone would have put a separate photo or video next to the motion photo.
