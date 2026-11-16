@@ -5189,6 +5189,15 @@ def _live_item(account, key):
     return rows[0] if rows else None
 
 
+def _live_video_of(still):
+    """The video of a Live Photo still, or None."""
+    still = str(still)
+    if still in _live_partner:
+        return _live_partner[still]
+    rows = q("SELECT mov FROM live_fix WHERE still=? AND state NOT IN ('skipped', 'failed') LIMIT 1", (still,))
+    return rows[0][0] if rows else None
+
+
 def _live_part(path):
     """True for the still or the video of a Live Photo that GP Sync sends, or sent, as one motion photo."""
     path = str(path)
@@ -6125,6 +6134,9 @@ def best_date(path, size, mtime, sha1hex, fingerprint=True, facts=None):
         picked = sq("SELECT manual FROM media_dates WHERE path=? AND manual IS NOT NULL", (path,))
     if picked and picked[0][0]:
         return float(picked[0][0]), "manual"
+    # A Live Photo's video records when it was taken, to the second.
+    if (mov := _live_video_of(path)) and (taken := livephoto.video_date(mov)) is not None:
+        return taken, "video"
     if (snap := snapchat_time(path, sha1hex, facts["snap"] if facts is not None else None)) is not None:
         return snap, "snapchat"
     st = facts["settings"] if facts is not None else get_settings()
@@ -6284,8 +6296,13 @@ def dates_report(account):
         )
         if (r[5] or first) == account
     ]
+    # A Live Photo is in Google as one motion photo: its date is that item's, not the bare still's.
+    motion = dict(q("SELECT still, new_dedup FROM live_fix WHERE account=? AND state IN ('done', 'uploaded', "
+                    "'redate') AND new_dedup IS NOT NULL", (account,)))  # fmt: skip
     google = _google_dates(
-        account, {_b64_hash(bytes.fromhex(r[7] or facts[r[0]][0])) for r in rows if r[7] or facts[r[0]][0]}
+        account,
+        {_b64_hash(bytes.fromhex(r[7] or facts[r[0]][0])) for r in rows if r[7] or facts[r[0]][0]}
+        | set(motion.values()),
     )
     # Identical copies are one item in Google: list it once (the copy being fixed, else the uploaded one).
     rows.sort(key=lambda r: (not facts[r[0]][3], r[3] != "uploaded", r[0]))
@@ -6298,7 +6315,9 @@ def dates_report(account):
             continue
         seen.add(sha1)
         _, manual, sent, fix, error, previous_google, previous_source = facts[path]
-        listed = google.get(_b64_hash(bytes.fromhex(sha1))) if sha1 else None
+        listed = google.get(motion[path]) if path in motion else (
+            google.get(_b64_hash(bytes.fromhex(sha1))) if sha1 else None
+        )  # fmt: skip
         in_google, google_source = _known_google_date(listed, refreshed, updated, status_, sent)
         if listed and (not key or refreshed > (updated or 0)):
             key = listed[4] or key

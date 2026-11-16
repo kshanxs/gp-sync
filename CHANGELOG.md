@@ -20,6 +20,9 @@
   as normal uploads already were. Before, Google showed the day the file was saved on the server.
   Motion photos already sent this way go up again with the right date, but only when the file
   rebuilt here is the same as Google's, byte for byte (favourite, archive and caption carried over).
+- **Dates: a Live Photo's date comes from its video.** For a photo with no date of its own, the
+  Dates page now suggests when its Live Photo video was taken ("its Live Photo video"), and shows
+  the date of the motion photo in Google rather than of the old separate photo.
 - **Fix dates never uploads half of a Live Photo.** The photo and the video of a Live Photo that went
   up as one motion photo are left out of Fix dates (marked failed, with the reason): uploading one of
   them alone would have put a separate photo or video next to the motion photo.

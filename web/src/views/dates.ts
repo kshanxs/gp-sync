@@ -94,6 +94,7 @@ const SOURCE: Record<DateItem["source"], string> = {
   estimated: "the Snapchat estimate",
   snapchat: "its Snapchat memory",
   learned: "the dated files around it",
+  video: "its Live Photo video",
 };
 
 function stateOf(i: DateItem, r: DatesReport): { label: string; tone: Tone; ic: Parameters<typeof icon>[0] } {

@@ -641,7 +641,7 @@ def dates_sent(monkeypatch):
 
 
 def test_a_live_photo_without_a_date_of_its_own_goes_up_dated_by_its_video(iphone, monkeypatch):
-    still, mov = iphone
+    _still, mov = iphone
     write_mov(mov, taken=TAKEN)
     old = time.time() - 2 * sync.LIVE_WAIT
     os.utime(mov, (old, old))
@@ -663,7 +663,7 @@ def test_a_live_photo_with_its_own_date_lets_google_read_it(iphone, monkeypatch)
 
 
 def test_fixing_a_pair_sends_the_videos_date(separate, monkeypatch):
-    still, mov, db = separate
+    _still, mov, _db = separate
     write_mov(mov, taken=TAKEN)
     sync.q("UPDATE files SET size=?, mtime=? WHERE path=?", (mov.stat().st_size, mov.stat().st_mtime, str(mov)))
     sync.scan()
@@ -747,3 +747,14 @@ def test_a_date_is_never_fixed_when_googles_file_differs(undated_done, tmp_path)
     sync.live_fix_step(ACC, lambda a: client)
     assert client.sent == [] and not [c for c in client.api.calls if c[0] in ("trash", "delete")]
     assert sync.q("SELECT state, dated FROM live_fix") == [("done", 1)]
+
+
+def test_dates_report_reads_a_live_photo_from_its_video_and_motion_photo(undated_done, tmp_path):
+    still, mov, db = undated_done
+    done_motion_photo(still, mov, db, tmp_path, shown_ms=TAKEN_TS * 1000)
+    st = still.stat()
+    assert sync.date_facts(str(still), st.st_size, st.st_mtime) == 0  # no date of its own
+    sync.meta_set(f"library_refreshed:{ACC}", str(time.time() + 60))
+    item = next(i for i in sync.dates_report(ACC)["items"] if i["name"].endswith("aaa.heic"))
+    assert (item["source"], item["best"]) == ("video", TAKEN_TS)
+    assert item["google"] == TAKEN_TS and not item["wrong"]  # the motion photo's date, which is right
