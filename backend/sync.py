@@ -5245,14 +5245,17 @@ def _live_same_shot(client, account, cid, taken, keep_pixels, skip):
     rows = _library_rows(
         account,
         f"""SELECT media_key, dedup_key, type, COALESCE(width, 0) * COALESCE(height, 0), COALESCE(is_favorite, 0),
-                   file_name FROM remote_media WHERE utc_timestamp IN ({marks}) AND origin='self' AND is_canonical
+                   file_name, COALESCE(is_micro_video, 0) FROM remote_media
+               WHERE utc_timestamp IN ({marks}) AND origin='self' AND is_canonical
                AND COALESCE(trash_timestamp, 0)=0 AND COALESCE(is_locked, 0)=0""",
         tuple(taken),
     )
     gone, kept = [], []
-    for key, dedup, kind, pixels, fav, name in rows or []:
+    for key, dedup, kind, pixels, fav, name, motion in rows or []:
         if dedup in skip or key in skip or not _is_hash(dedup) or kind not in (1, 2):
             continue
+        if motion and not _live_ours(account, dedup):
+            continue  # a motion photo the phone made is never removed
         try:
             if _live_peek_id(client, key, kind) != cid:
                 continue
@@ -5435,6 +5438,8 @@ def live_fix_step(account, make_client=None):
                     native = _live_native(client, account, still, old[0] if old else None, prev_motion)
                 if native:  # a real Live Photo is in Google already: nothing to upload, only extras go
                     (key, dedup), when = native, 0
+                    log(f"Live Photo {rel(still)} is in Google already as a motion photo the phone sent; GP Sync's "
+                        f"extra copies will go ({account})", "info", rel(still))  # fmt: skip
                 else:
                     key, dedup = _live_send(client, account, still, mov, track)
                     sent += 1
@@ -5448,7 +5453,8 @@ def live_fix_step(account, make_client=None):
                      oldm[0] if oldm and not oldm[5] and oldm[0] != dedup else None,
                      time.time(), still, account),
                 )  # fmt: skip
-                log(f"Live Photo {rel(still)} sent as one motion photo ({account})", "uploaded", rel(still))
+                if not native:
+                    log(f"Live Photo {rel(still)} sent as one motion photo ({account})", "uploaded", rel(still))
                 did = True
                 continue
             # Uploaded: wait until Google's library shows it as a motion photo, then tidy up.
