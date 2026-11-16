@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.9.1
+
 - **Live Photos: the old separate video goes to the Trash too.** For the first Live Photos fixed by
   1.9.0, the library copy had no key yet for the old video, so it stayed visible next to the new
   motion photo (the old photo did go to the Trash). The old items are now looked up again after a
