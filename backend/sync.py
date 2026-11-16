@@ -33,6 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import cache
+import livephoto
 import media
 import notify
 import pace
@@ -299,6 +300,15 @@ def db():
     conn.execute(
         """CREATE TABLE IF NOT EXISTS snap_local (
             path TEXT PRIMARY KEY, size INTEGER, mtime REAL, sha1 TEXT, dhash TEXT)"""
+    )
+    # iPhone Live Photos: the content identifier inside each still and short MOV ("" for none).
+    conn.execute("CREATE TABLE IF NOT EXISTS live_ids (path TEXT PRIMARY KEY, size INTEGER, mtime REAL, cid TEXT)")
+    # Live Photos uploaded as two items (a still and a separate video) being replaced by one motion photo.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS live_fix (
+            still TEXT NOT NULL, account TEXT NOT NULL, mov TEXT, state TEXT, old_still TEXT, old_mov TEXT,
+            new_key TEXT, new_dedup TEXT, favorite INTEGER, archived INTEGER, caption TEXT, error TEXT,
+            uploaded REAL, updated REAL, PRIMARY KEY (still, account))"""
     )
     conn.execute("PRAGMA journal_mode=WAL")
     conn.commit()
@@ -1613,6 +1623,7 @@ def scan(st=None):
     snap_paths, snap_skip = set(_snap["paths"]), set(_snap["skip"])
     waiting_start = precheck_holds()  # (folder, account) checked first, or waiting to be started
     manifests, snap_roots, held, exporting = [], [], 0, []
+    live_files = []  # (top folder, path, size, mtime) of stills and MOVs in backed-up folders
     for top, account in fmap.items():
         for root, dirs, names in os.walk(MEDIA / top):
             dirs[:] = sorted(d for d in dirs if not skipped(d))
@@ -1655,6 +1666,8 @@ def scan(st=None):
                 )
                 if not account:
                     continue  # folder not backed up
+                if ext(name) in livephoto.STILL_EXTS or ext(name) in livephoto.VIDEO_EXTS:
+                    live_files.append((top, path, fst.st_size, fst.st_mtime))
                 lib["files"] += 1
                 lib["bytes"] += fst.st_size
                 e = ext(name)
@@ -1705,6 +1718,10 @@ def scan(st=None):
                 if now - fst.st_mtime < SETTLE or (top, account) in waiting_start:
                     continue
                 todo.append((path, fst.st_size, fst.st_mtime, account))
+    try:
+        todo, copies_todo = live_plan(live_files, todo, copies_todo, now)
+    except Exception as e:  # never stop backups over Live Photos: the halves go up as two files
+        print(f"Live Photos: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     prio = st.get("priority") or []
     if prio:  # folders picked to go first; the rest keeps its usual order
         todo.sort(key=lambda i: priority_rank(rel(i[0]), prio))
@@ -2662,8 +2679,19 @@ def upload_all(client, todo, account="", st=None, lane=False):
                 cur["bytes_done"] = ev.get("bytes_completed") or 0
                 throttle(cur["bytes_done"])
 
+        motion = None  # the joined Live Photo, when this still has its video here
         try:
             digest = media.sha1_file(path, on_progress=lambda n, cur=cur: cur.update(bytes_done=n))
+            mov = _live_partner.get(path)
+            if mov:
+                try:
+                    cur.update(step="joining", bytes_done=0)
+                    motion = livephoto.build(path, mov, LIVE_DIR / "work" / f"{account}-{digest.hex()}")
+                except Exception as e:
+                    log(f"Couldn't join the Live Photo {name} with its video, so they go up as two files: "
+                        f"{type(e).__name__}: {e}", "error", name)  # fmt: skip
+                    _live_broken.add(path)
+                    motion = None
             cur.update(step="checking", bytes_done=0)
             # No date inside the file: Google uses the one sent with the upload, so send the
             # best one known (a date the user picked, or the earliest identical copy here).
@@ -2676,15 +2704,21 @@ def upload_all(client, todo, account="", st=None, lane=False):
                 when = best_date(path, size, mtime, digest.hex())[0]
             # Single-file upload raises on failure; the batch upload() only logs errors.
             # gpmc is pinned in pyproject.toml, so this internal method stays stable.
+            send, send_digest = Path(path), digest
+            if motion:
+                send, send_digest = motion, media.sha1_file(motion)
+                cur["bytes_total"] = motion.stat().st_size
             with Progress(disable=True) as bar, upload_date(client, when, mtime):
                 result = client._upload_file(
-                    Path(path), digest, bar, force_upload=False, use_quota=False, saver=False,
+                    send, send_digest, bar, force_upload=False, use_quota=False, saver=False,
                     progress_callback=progress,
                 )  # fmt: skip
             key = next(iter(result.values()), "")
             if not key:
                 raise RuntimeError("Google returned no media key")
             status = "exists" if "skipped" in phases else "uploaded"
+            if motion:
+                _live_uploaded(path, mov, account, copy, key, status, _b64_hash(send_digest))
             if copy:
                 q(
                     """INSERT OR REPLACE INTO copies
@@ -2789,6 +2823,8 @@ def upload_all(client, todo, account="", st=None, lane=False):
             if attempts >= MAX_ATTEMPTS:
                 alert("GP Sync: gave up on a file", f"{name}\n{err}", "x", "on_gave_up")
         finally:
+            if motion:
+                shutil.rmtree(motion.parent, ignore_errors=True)
             with _round_lock:
                 state["uploading"].pop(key_, None)
                 state["current"] = next(iter(state["uploading"].values()), None)
@@ -3521,6 +3557,7 @@ def status_json():
         "prechecks": precheck_list(),
         "jobs": background_jobs(),
         "reclaim": reclaim_summary(),
+        "live": live_summary(),
         "copying": copy_summary(),
         "snapchat": snapchat_summary(),
         # Files with no date of their own, and how many are queued to be fixed in Google.
@@ -3582,6 +3619,8 @@ def background_jobs():
     for account, t in list(snapchat_state.items()):
         for w in list(t["working"].values()):
             add("snapchat", w.get("current"), account=account)
+    for account, t in list(live_state.items()):
+        add("live", t.get("current"), account=account)
     return jobs
 
 
@@ -3800,8 +3839,10 @@ def storage_report(account, limit=500, kind="all"):
 
 # Items Free storage may move: the account's own, counting against storage, not in the Trash or
 # the Locked folder.
+# Motion photos are left out: Google's download of one is only its still, so a re-upload would lose
+# the motion.
 _MOVABLE = """quota_charged_bytes > 0 AND origin = 'self' AND COALESCE(trash_timestamp, 0) = 0
-              AND COALESCE(is_locked, 0) = 0"""
+              AND COALESCE(is_locked, 0) = 0 AND COALESCE(is_micro_video, 0) = 0"""
 RECLAIM_TYPES = {"photo": 1, "video": 2}
 
 
@@ -4932,6 +4973,372 @@ def _restore_details(client, dedup, favorite, archived, caption):
             print(f"Free storage: couldn't restore details: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
 
 
+# ---- iPhone Live Photos
+# A Live Photo is a still (HEIC/JPEG) and a short MOV linked by a content identifier inside both.
+# Google shows a motion photo only when it gets one file, so a pair in the same backed-up folder
+# (anywhere below it: phone backup apps spread files over subfolders) goes up as one motion photo
+# (livephoto.py), and its MOV is never sent alone. A still whose video hasn't arrived waits up to
+# LIVE_WAIT. Pairs that went up as two items before (older versions, or the video came late) are
+# fixed in Google: the motion photo is uploaded, and once Google's library shows it as a motion photo
+# the old still and the separate video go to Google's Trash (restorable there for 60 days), with
+# favourite, archive and caption carried over.
+LIVE_DIR = DATA / "live"
+LIVE_WAIT = 3600  # seconds a new still waits for its video
+LIVE_CHECK_EVERY = 300  # seconds between library reads while motion photos wait for Google
+LIVE_GIVE_UP = 6 * 3600  # Google never showed it as a motion photo: stop (nothing is deleted)
+LIVE_BATCH = 4  # motion photos uploaded per step and account
+_live_partner = {}  # still path -> MOV path, from the last scan
+_live_broken = set()  # stills that couldn't be joined this run: their halves go up as two files
+_live_refresh_at = {}  # account -> when a library read was last asked for
+live_state = collections.defaultdict(lambda: {"current": None, "error": ""})
+
+
+def live_ids(files):
+    """Content identifiers of stills and MOVs ({path: cid or ""}), read once per file version.
+    Only folders with a MOV in them are looked at: without one there is no pair."""
+    with_mov = {top for top, p, _s, _m in files if ext(p) in livephoto.VIDEO_EXTS}
+    now = time.time()
+    # New stills are read anywhere: one may be waiting for its video.
+    files = [f for f in files if f[0] in with_mov or now - f[3] < LIVE_WAIT]
+    if not files:
+        return {}
+    known = {p: (s, m, c) for p, s, m, c in q("SELECT path, size, mtime, cid FROM live_ids")}
+    out, new = {}, []
+    for _top, path, size, mtime in files:
+        k = known.get(path)
+        if k and k[0] == size and k[1] == mtime:
+            out[path] = k[2] or ""
+            continue
+        cid = livephoto.content_id(path) or ""
+        out[path] = cid
+        new.append((path, size, mtime, cid))
+        if len(new) >= 200:
+            with db_lock:
+                CONN.executemany("INSERT OR REPLACE INTO live_ids VALUES (?,?,?,?)", new)
+                CONN.commit()
+            new = []
+    if new:
+        with db_lock:
+            CONN.executemany("INSERT OR REPLACE INTO live_ids VALUES (?,?,?,?)", new)
+            CONN.commit()
+    return out
+
+
+def live_pairs(files):
+    """{still: mov} for the Live Photos in the backed-up folders: one still per video (the first by
+    path when the folder has the same photo twice), matched within the same top folder."""
+    ids = live_ids(files)
+    stills, movs = {}, {}
+    for top, path, _s, _m in sorted(files, key=lambda f: f[1]):
+        cid = ids.get(path)
+        if not cid:
+            continue
+        side = movs if ext(path) in livephoto.VIDEO_EXTS else stills
+        side.setdefault((top, cid), path)
+    return {s: movs[k] for k, s in stills.items() if k in movs}
+
+
+def live_plan(files, todo, copies_todo, now=None):
+    """Hold back what belongs to a Live Photo: its MOV (sent inside the still) and a new still whose
+    video hasn't arrived yet. Pairs already sent as two items are queued to be fixed."""
+    now = now or time.time()
+    pairs = live_pairs(files)
+    failed = {s for (s,) in q("SELECT DISTINCT still FROM live_fix WHERE state='failed'")}
+    pairs = {s: m for s, m in pairs.items() if s not in failed and s not in _live_broken}
+    _live_partner.clear()
+    _live_partner.update(pairs)
+    movs = set(pairs.values())
+    ids = {p: c for p, _s, _m, c in q("SELECT path, size, mtime, cid FROM live_ids WHERE cid != ''")}
+    waiting = {
+        path
+        for _top, path, _s, mtime in files
+        if ext(path) in livephoto.STILL_EXTS and ids.get(path) and path not in pairs and now - mtime < LIVE_WAIT
+    }
+
+    def keep(item):
+        return item[0] not in movs and item[0] not in waiting
+
+    live_queue_fixes(pairs)
+    return [i for i in todo if keep(i)], [i for i in copies_todo if keep(i)]
+
+
+def _live_rows(path, account):
+    """(status, media_key) of a file in an account: its main backup row or its copy row."""
+    r = q("SELECT status, media_key FROM files WHERE path=? AND COALESCE(account, '')=?", (path, account))
+    if not r and account == _main_account(""):
+        r = q("SELECT status, media_key FROM files WHERE path=? AND account IS NULL", (path,))
+    return r[0] if r else (q("SELECT status, media_key FROM copies WHERE path=? AND account=?", (path, account))
+                           or [(None, None)])[0]  # fmt: skip
+
+
+def live_queue_fixes(pairs):
+    """Queue pairs whose still is in an account as its own item (the video separate, or not there)."""
+    if not pairs:
+        return 0
+    done = {(s, a) for s, a in q("SELECT still, account FROM live_fix")}
+    rows = q(
+        """SELECT path, COALESCE(account, ''), status, media_key FROM files
+           WHERE path IN (SELECT value FROM json_each(?))
+           UNION ALL SELECT path, account, status, media_key FROM copies
+           WHERE path IN (SELECT value FROM json_each(?))""",
+        (json.dumps(list(pairs)), json.dumps(list(pairs))),
+    )
+    n = 0
+    for still, account, status_, key in rows:
+        account = account or _main_account("")
+        if status_ not in DONE or not key or (still, account) in done:
+            continue
+        mov = pairs[still]
+        mstatus, mkey = _live_rows(mov, account)
+        if mstatus in DONE and mkey == key:
+            continue  # already one motion photo
+        q(
+            """INSERT OR IGNORE INTO live_fix (still, account, mov, state, error, updated)
+               VALUES (?,?,?,'queued','',?)""",
+            (still, account, mov, time.time()),
+        )
+        done.add((still, account))
+        n += 1
+    if n:
+        log(f"Live Photos: {n} sent before as a photo and a separate video will become motion photos", "info")
+        reclaim_wake.set()
+    return n
+
+
+def _live_set_row(path, account, size, mtime, status, key):
+    """Point a file's row in this account at the motion photo (its main backup row or its copy row)."""
+    in_files = q("SELECT 1 FROM files WHERE path=? AND COALESCE(account, ?)=?", (path, account, account))
+    in_copies = q("SELECT 1 FROM copies WHERE path=? AND account=?", (path, account))
+    if in_copies or not (in_files or _folder_main(path) in (account, None)):
+        q(
+            """INSERT INTO copies (path, account, size, mtime, status, media_key, error, attempts, updated)
+               VALUES (?,?,?,?,?,?,'',0,?)
+               ON CONFLICT(path, account) DO UPDATE SET size=excluded.size, mtime=excluded.mtime,
+               status=excluded.status, media_key=excluded.media_key, error='', attempts=0,
+               updated=excluded.updated""",
+            (path, account, size, mtime, status, key, time.time()),
+        )
+        return
+    q(
+        """INSERT INTO files (path, size, mtime, status, media_key, error, attempts, updated, account)
+           VALUES (?,?,?,?,?,'',0,?,?)
+           ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, status=excluded.status,
+           media_key=excluded.media_key, error='', attempts=0, updated=excluded.updated,
+           account=excluded.account""",
+        (path, size, mtime, status, key, time.time(), account),
+    )
+
+
+def _folder_main(path):
+    """The first account of the folder a file is in, or None."""
+    accs = folder_targets().get(rel(path).split("/", 1)[0])
+    return accs[0] if accs else None
+
+
+def _live_uploaded(still, mov, account, copy, key, status, dedup):
+    """A still went up joined with its video: the video's row points at the same item."""
+    try:
+        st_ = os.stat(mov)
+    except OSError:
+        return
+    if copy:
+        q(
+            """INSERT INTO copies (path, account, size, mtime, status, media_key, error, attempts, updated)
+               VALUES (?,?,?,?,?,?,'',0,?)
+               ON CONFLICT(path, account) DO UPDATE SET size=excluded.size, mtime=excluded.mtime,
+               status=excluded.status, media_key=excluded.media_key, error='', attempts=0,
+               updated=excluded.updated""",
+            (mov, account, st_.st_size, st_.st_mtime, status, key, time.time()),
+        )
+    else:
+        q(
+            """INSERT INTO files (path, size, mtime, status, media_key, error, attempts, updated, account)
+               VALUES (?,?,?,?,?,'',0,?,?)
+               ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, status=excluded.status,
+               media_key=excluded.media_key, error='', attempts=0, updated=excluded.updated,
+               account=excluded.account""",
+            (mov, st_.st_size, st_.st_mtime, status, key, time.time(), account),
+        )
+    q(
+        """INSERT OR REPLACE INTO live_fix (still, account, mov, state, new_key, new_dedup, error, uploaded, updated)
+           VALUES (?,?,?,'done',?,?,'',?,?)""",
+        (still, account, mov, key, dedup, time.time(), time.time()),
+    )
+
+
+def _live_item(account, key):
+    """(dedup key, motion?, favourite, archived, caption, in the Trash?) of a media key, or None."""
+    rows = _library_rows(
+        account,
+        """SELECT dedup_key, COALESCE(is_micro_video, 0), COALESCE(is_favorite, 0), COALESCE(is_archived, 0),
+                  caption, COALESCE(trash_timestamp, 0) != 0 FROM remote_media WHERE media_key=? OR dedup_key=?
+           ORDER BY is_canonical DESC LIMIT 1""",
+        (key, key),
+    )
+    return rows[0] if rows else None
+
+
+def _live_ask_refresh(account):
+    if time.time() - _live_refresh_at.get(account, 0) >= LIVE_CHECK_EVERY:
+        _live_refresh_at[account] = time.time()
+        with _refresh_lock:
+            if account not in _refresh_requests:
+                _refresh_requests.append(account)
+
+
+def _live_fail(still, account, error):
+    q("UPDATE live_fix SET state='failed', error=?, updated=? WHERE still=? AND account=?",
+      (error[:500], time.time(), still, account))  # fmt: skip
+    log(f"Live Photo {rel(still)} ({account}): {error}", "failed", rel(still))
+
+
+def _live_skip(still, account, why):
+    q("UPDATE live_fix SET state='skipped', error=?, updated=? WHERE still=? AND account=?",
+      (why, time.time(), still, account))  # fmt: skip
+
+
+def _live_send(client, account, still, mov, track):
+    """Upload the joined motion photo. Returns (media key, dedup key)."""
+    from rich.progress import Progress
+
+    work = LIVE_DIR / "work" / f"fix-{account}-{hashlib.sha1(still.encode()).hexdigest()[:16]}"
+    try:
+        motion = livephoto.build(still, mov, work)
+        digest = media.sha1_file(motion)
+        size = motion.stat().st_size
+
+        def progress(ev):
+            if ev.get("phase") == "uploading":
+                track["current"] = {"key": rel(still), "step": "uploading", "done": ev.get("bytes_completed") or 0,
+                                    "total": size}  # fmt: skip
+
+        with Progress(disable=True) as bar, upload_date(client, None):
+            result = client._upload_file(
+                motion, digest, bar, force_upload=False, use_quota=False, saver=False, progress_callback=progress
+            )
+        key = next(iter(result.values()), "")
+        if not key:
+            raise RuntimeError("Google returned no media key")
+        return key, _b64_hash(digest)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def live_fix_step(account, make_client=None):
+    """Replace Live Photos sent as two items with one motion photo each. Returns True if it did work."""
+    rows = q(
+        """SELECT still, mov, state, new_key, new_dedup, uploaded, favorite, archived, caption, old_still,
+                  old_mov, updated FROM live_fix WHERE account=? AND state IN ('queued', 'uploaded')
+           ORDER BY state DESC, still""",
+        (account,),
+    )
+    if not rows or uploads_paused(account) or not upload_allowed():
+        return False
+    track = live_state[account]
+    make_client = make_client or _reclaim_client
+    client = None
+    did = False
+    refreshed = float(meta_get(f"library_refreshed:{account}") or 0)
+    sent = 0
+    for still, mov, st_, new_key, new_dedup, uploaded, fav, arch, cap, old_still, old_mov, queued_at in rows:
+        try:
+            if st_ == "queued":
+                if sent >= LIVE_BATCH:
+                    continue
+                if not (os.path.isfile(still) and os.path.isfile(mov)):
+                    _live_fail(still, account, "One half of the Live Photo is no longer on this server")
+                    continue
+                skey = _live_rows(still, account)[1]
+                mkey = _live_rows(mov, account)[1]
+                old = _live_item(account, skey) if skey else None
+                if old is None and skey:
+                    if refreshed > (queued_at or 0) + 30:
+                        _live_skip(still, account, "The photo is no longer in Google Photos")
+                    else:
+                        _live_ask_refresh(account)  # not in this server's copy of the library yet
+                    continue
+                if old and old[5]:
+                    _live_skip(still, account, "The photo is in Google's Trash, so it is left alone")
+                    continue
+                oldm = _live_item(account, mkey) if mkey else None
+                client = client or make_client(account)
+                track["current"] = {"key": rel(still), "step": "joining", "done": 0, "total": 0}
+                when = time.time()
+                if old and old[1]:  # Google already has the still as a motion photo: only the extra video goes
+                    key, dedup, when = skey, old[0], 0
+                else:
+                    key, dedup = _live_send(client, account, still, mov, track)
+                    sent += 1
+                q(
+                    """UPDATE live_fix SET state='uploaded', new_key=?, new_dedup=?, uploaded=?, favorite=?,
+                       archived=?, caption=?, old_still=?, old_mov=?, error='', updated=?
+                       WHERE still=? AND account=?""",
+                    (key, dedup, when, int(bool(old and old[2])), int(bool(old and old[3])),
+                     "" if not old or _junk_caption(old[4]) else old[4] or "",
+                     old[0] if old and not old[5] and old[0] != dedup else None,
+                     oldm[0] if oldm and not oldm[5] and oldm[0] != dedup else None,
+                     time.time(), still, account),
+                )  # fmt: skip
+                log(f"Live Photo {rel(still)} sent as one motion photo ({account})", "uploaded", rel(still))
+                did = True
+                continue
+            # Uploaded: wait until Google's library shows it as a motion photo, then tidy up.
+            if refreshed < (uploaded or 0) + 30:
+                _live_ask_refresh(account)
+                continue
+            item = _live_item(account, new_dedup)
+            if not item or not item[1]:
+                if time.time() - (uploaded or 0) > LIVE_GIVE_UP:
+                    _live_fail(still, account, "Google didn't show it as a motion photo; nothing was deleted")
+                else:
+                    _live_ask_refresh(account)
+                continue
+            client = client or make_client(account)
+            gone = [d for d in (old_still, old_mov) if d and _is_hash(d) and d != new_dedup]
+            if gone:
+                client.api.move_remote_media_to_trash(gone)
+            if fav or arch or cap:
+                _restore_details(client, new_dedup, fav, arch, cap)
+            for path in (still, mov):
+                with contextlib.suppress(OSError):
+                    fst = os.stat(path)
+                    status_ = _live_rows(path, account)[0] or "uploaded"
+                    _live_set_row(path, account, fst.st_size, fst.st_mtime, status_ if status_ in DONE else "uploaded",
+                                  new_key)  # fmt: skip
+            q("UPDATE live_fix SET state='done', error='', updated=? WHERE still=? AND account=?",
+              (time.time(), still, account))  # fmt: skip
+            log(f"Live Photo {rel(still)} is a motion photo now; its old still and video went to Google's Trash "
+                f"({account})", "info", rel(still))  # fmt: skip
+            did = True
+        except Exception as e:
+            if outage_kind(e):
+                track["error"] = f"{type(e).__name__}: {e}"[:300]
+                return did
+            _live_fail(still, account, f"{type(e).__name__}: {e}")
+            did = True
+    track["current"] = None
+    if did:
+        notify_change()
+    return did
+
+
+def live_summary():
+    """Live Photos per account: how many are motion photos, waiting for Google, to do, or failed."""
+    out = {}
+    for account, st_, n in q("SELECT account, state, COUNT(*) FROM live_fix GROUP BY account, state"):
+        out.setdefault(account, {"done": 0, "queued": 0, "uploaded": 0, "failed": 0, "skipped": 0})[st_] = n
+    return out
+
+
+def live_retry(account=None):
+    """Try failed Live Photos again."""
+    n = q("UPDATE live_fix SET state='queued', error='' WHERE state='failed' AND (? IS NULL OR account=?) RETURNING 1",
+          (account, account))  # fmt: skip
+    _live_broken.clear()
+    reclaim_wake.set()
+    return {"queued": len(n)}
+
+
 DOWNLOADS_DIR = DATA / "downloads"
 
 
@@ -5095,6 +5502,10 @@ def _account_step(account):
         busy = snapchat_work(account) or busy
     except Exception as e:
         print(f"Snapchat ({account}): {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    try:
+        busy = live_fix_step(account) or busy
+    except Exception as e:
+        print(f"Live Photos ({account}): {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     return datefix_step(only=account) or busy
 
 
@@ -7065,6 +7476,8 @@ COPY_DIR = DATA / "copy"
 copy_state = collections.defaultdict(lambda: {"current": None, "error": "", "jobs": {}})
 copy_wake = threading.Event()
 _OWNED = "origin = 'self' AND COALESCE(trash_timestamp, 0) = 0 AND COALESCE(is_locked, 0) = 0 AND is_canonical"
+# What Copy accounts may copy: not motion photos (Google's download of one is only its still).
+_COPYABLE = _OWNED + " AND COALESCE(is_micro_video, 0) = 0"
 
 
 def _year(ts):
@@ -7076,7 +7489,7 @@ def copy_report(src, dst):
     src_rows = _library_rows(
         src,
         f"""SELECT dedup_key, type, size_bytes, utc_timestamp, media_key, file_name FROM remote_media
-            WHERE {_OWNED} ORDER BY utc_timestamp DESC""",
+            WHERE {_COPYABLE} ORDER BY utc_timestamp DESC""",
     )
     dst_keys = _library_rows(dst, "SELECT dedup_key FROM remote_media")
     have = {k for (k,) in dst_keys or []}
@@ -7196,7 +7609,7 @@ def copy_candidates(src, dst, kinds=("photo", "video"), from_year=None, to_year=
     rows = _library_rows(
         src,
         f"""SELECT media_key, dedup_key, file_name, type, size_bytes, utc_timestamp
-            FROM remote_media WHERE {_OWNED} ORDER BY utc_timestamp DESC, media_key""",
+            FROM remote_media WHERE {_COPYABLE} ORDER BY utc_timestamp DESC, media_key""",
     )
     target = _library_rows(dst, "SELECT dedup_key FROM remote_media")
     if rows is None or target is None:
@@ -7240,7 +7653,7 @@ def copy_start(src, dst, kinds=("photo", "video"), from_year=None, to_year=None,
     src_rows = _library_rows(
         src,
         f"""SELECT media_key, dedup_key, file_name, type, size_bytes, utc_timestamp, is_favorite, is_archived,
-                   caption FROM remote_media WHERE {_OWNED} ORDER BY utc_timestamp DESC, media_key""",
+                   caption FROM remote_media WHERE {_COPYABLE} ORDER BY utc_timestamp DESC, media_key""",
     )
     if src_rows is None:
         raise ValueError("Read the library of the account to copy from first")

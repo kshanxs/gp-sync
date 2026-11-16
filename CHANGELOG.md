@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **iPhone Live Photos are motion photos in Google.** They used to arrive as a still plus a separate
+  2–3 second video. GP Sync now pairs the photo and video by the ID Apple puts in both (even when a
+  phone backup app spreads them over different subfolders) and uploads one motion photo with the
+  video inside, copied without re-encoding. A HEIC photo becomes a high-quality JPEG first (EXIF,
+  place and colour profile kept): Google plays JPEG motion photos but not HEIC ones (tested).
+  A new photo waits up to an hour for its video. If a pair can't be joined, both halves go up as
+  before.
+- **Live Photos sent before are fixed.** Pairs already in Google as two items are uploaded again as
+  one motion photo. Only after Google's library shows it as a motion photo do the old still and
+  video go to Google's Trash (restorable for 60 days); favourite, archive and caption carry over.
+  Photos you put in the Trash yourself are left alone. Progress shows under Sync › Folders.
+- **Free storage and Copy accounts skip motion photos.** Google's download of a motion photo is
+  only its still, so re-uploading it would lose the motion.
+
 ## 1.8.6
 
 - **Sync's cards line up on wide screens.** The account cards stay the same height whichever

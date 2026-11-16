@@ -131,6 +131,8 @@ export interface Status {
   jobs?: Job[];
   /** Free storage per account: items waiting or under way, items freed, and whether it is paused. */
   reclaim?: Record<string, ReclaimSummary>;
+  /** iPhone Live Photos per account: made motion photos, waiting for Google to confirm, to do, failed, skipped. */
+  live?: Record<string, { done: number; queued: number; uploaded: number; failed: number; skipped: number }>;
   /** Copy accounts, all pairs: items waiting, copies Google hasn't confirmed yet, copies made, paused. */
   copying?: { queued: number; checking: number; done?: number; paused: boolean };
   /** Snapchat memories per account (not left out). */
@@ -991,7 +993,7 @@ export function previewUrl(name: string): string {
 }
 
 export interface Job {
-  kind: "library" | "storage" | "dates" | "copy" | "snapchat";
+  kind: "library" | "storage" | "dates" | "copy" | "snapchat" | "live";
   account: string;
   /** Copies: the destination account. */
   to?: string;

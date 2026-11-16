@@ -11,6 +11,7 @@ const STEP: Record<string, string> = {
   uploading: "Uploading",
   keeping: "Saving a copy of",
   hashing: "Checking",
+  joining: "Joining photo and video of",
 };
 
 /** "Free storage · a@x.com" or "Copy · a@x.com → b@x.com". */
@@ -21,6 +22,7 @@ export function jobTitle(j: Job): string {
     dates: "Fix dates",
     copy: "Copy",
     snapchat: "Snapchat",
+    live: "Live Photos",
   }[j.kind];
   return `${what} · ${j.account}${j.kind === "copy" && j.to ? ` → ${j.to}` : ""}`;
 }
@@ -41,5 +43,6 @@ export function jobLink(j: Job): string {
     dates: "#/dates",
     copy: "#/copy",
     snapchat: "#/snapchat",
+    live: "#/sync",
   }[j.kind];
 }
