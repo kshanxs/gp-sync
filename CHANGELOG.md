@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- **Live Photos keep both originals.** A Live Photo now goes up as the original HEIC (or JPEG) and
+  the original MOV in one file, byte for byte, in the motion-photo layout Samsung phones write, which
+  Google Photos plays (tested on a real account: Google serves the original HEIC and the original
+  MOV back). 1.9.0–1.9.2 turned HEIC into JPEG and copied the video into MP4, and guessed the moment
+  the photo was taken as the middle of the video, so the switch from photo to video could jump; now
+  Apple's own still-frame time is used.
+- **The copies 1.9.0–1.9.2 made are replaced** by the original-quality motion photo; each copy goes
+  to Google's Trash once Google confirms the new one.
+- **Duplicates of a Live Photo are removed, carefully.** Other items taken at the same moment go to
+  the Trash only when the Apple content ID inside them (read from the item) is this Live Photo's,
+  and never when they have more pixels; those are kept and listed. On the test library, items with
+  the same name and time were often different photos, so names and times alone are never used. A
+  Live Photo the iPhone's own Google Photos app uploaded is kept, and nothing is uploaded for it.
+- **Live Photos keep their date when the photo has none inside.** Some iPhone photos carry no capture
+  date of their own; their video does. The motion photo now goes up dated when the video was taken,
+  as normal uploads already were. Before, Google showed the day the file was saved on the server.
+  Motion photos already sent this way go up again with the right date, but only when the file
+  rebuilt here is the same as Google's, byte for byte (favourite, archive and caption carried over).
+- **Dates: a Live Photo's date comes from its video.** For a photo with no date of its own, the
+  Dates page now suggests when its Live Photo video was taken ("its Live Photo video"), and shows
+  the date of the motion photo in Google rather than of the old separate photo.
+- **A file that went up no longer shows as failed because of a misread key.** gpmc reads Google's
+  answers without their schema, so about one media key in a few thousand came back as a jumble of
+  numbers instead of text; the upload had worked, but saving it failed ("type 'dict' is not
+  supported"). Such keys are now read back to their exact text, and files that failed this way are
+  marked as in Google with their key (or tried again if Google's list doesn't show them yet).
+- **Fix dates never uploads half of a Live Photo.** The photo and the video of a Live Photo that went
+  up as one motion photo are left out of Fix dates (marked failed, with the reason): uploading one of
+  them alone would have put a separate photo or video next to the motion photo.
+
 ## 1.9.2
 
 - **Live Photos: videos with out-of-order frame times join too.** A few iPhone videos have a frame

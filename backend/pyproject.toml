@@ -7,6 +7,8 @@ dependencies = [
     # Pinned exactly: sync.py uses gpmc's internal Client._upload_file.
     # Raise it with .github/workflows/gphotos-sync.yml (tests must pass).
     "gpmc==0.9.0",
+    # gpmc's protobuf reader; sync.py wraps it so media keys always read as text.
+    "bbpb==1.4.2",
     # Turso (SQLite-compatible, open source) stores the daily statistics.
     "pyturso==0.8.3",
     # Thumbnails (pillow-heif opens iPhone HEIC photos).

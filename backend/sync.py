@@ -25,6 +25,7 @@ import shutil
 import socket
 import sqlite3
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -310,6 +311,14 @@ def db():
             new_key TEXT, new_dedup TEXT, favorite INTEGER, archived INTEGER, caption TEXT, error TEXT,
             uploaded REAL, updated REAL, PRIMARY KEY (still, account))"""
     )
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(live_fix)")}
+    # fmt: 2 = the motion photo holds both originals (1.9.3 on); 1.9.0-1.9.2 made a JPEG + MP4 copy.
+    # prev_motion: that older motion photo, replaced once the new one is confirmed.
+    # dated: the date Google shows for the motion photo was checked (a photo with no date inside gets
+    # the video's).
+    for col in ("fmt INTEGER", "prev_motion TEXT", "kept TEXT", "dated INTEGER"):
+        if col.split()[0] not in cols:
+            conn.execute(f"ALTER TABLE live_fix ADD COLUMN {col}")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.commit()
     return conn
@@ -2701,7 +2710,8 @@ def upload_all(client, todo, account="", st=None, lane=False):
                 # Labelled before upload, so a new Snapchat save gets its estimated date.
                 if source_facts(path, size, mtime) and estimated_date(path) is None and _is_snap(path):
                     refresh_estimates()
-                when = best_date(path, size, mtime, digest.hex())[0]
+                # A Live Photo's video knows when it was taken, to the second.
+                when = (mov and livephoto.video_date(mov)) or best_date(path, size, mtime, digest.hex())[0]
             # Single-file upload raises on failure; the batch upload() only logs errors.
             # gpmc is pinned in pyproject.toml, so this internal method stays stable.
             send, send_digest = Path(path), digest
@@ -3980,6 +3990,69 @@ def reclaim_cancel(account, keys):
     return {"cancelled": n}
 
 
+# ---------------------------------------------------------------- Google's media keys, read right
+# gpmc reads Google's answers without their schema (blackboxprotobuf), so a text field whose bytes
+# happen to also read as a protobuf message comes back as a dict. A media key ("AF1Qip...") does that
+# about once in a few thousand: the upload worked, but the key was a dict, so saving it failed and
+# the file showed as failed. The type information that comes with the answer is enough to write the
+# dict back to its exact bytes; when those are a media key, the text is put back.
+_MEDIA_KEY = re.compile(r"AF1Qip[A-Za-z0-9_-]{20,}")
+
+
+def _as_bytes(item, entry):
+    """The exact bytes a decoded sub-message came from (re-encoded with its type and field order)."""
+    from blackboxprotobuf import encode_message
+
+    out = encode_message({"1": item}, {"1": entry})
+    i = 1  # one tag byte for field 1, then the length as a varint
+    while out[i] & 0x80:
+        i += 1
+    return out[i + 1 :]
+
+
+def _fix_media_keys(value, typedef):
+    """`value` with every media key that was decoded as a message turned back into its text."""
+    if isinstance(value, list):
+        return [_fix_media_keys(v, typedef) for v in value]
+    if not isinstance(value, dict) or not isinstance(typedef, dict):
+        return value
+    out = {}
+    for field, v in value.items():
+        entry = typedef.get(field) or {}
+        if entry.get("type") == "message":
+            sub = entry.get("message_typedef") or {}
+
+            def one(item, entry=entry, sub=sub):
+                if isinstance(item, dict):
+                    with contextlib.suppress(Exception):
+                        text = _as_bytes(item, entry).decode("ascii")
+                        if _MEDIA_KEY.fullmatch(text):
+                            return text
+                return _fix_media_keys(item, sub)
+
+            v = [one(i) for i in v] if isinstance(v, list) else one(v)
+        out[field] = v
+    return out
+
+
+def _read_media_keys_right():
+    """Make gpmc's answers carry media keys as text (see above). Done once."""
+    import gpmc.api
+
+    real = gpmc.api.decode_message
+    if getattr(real, "_gp_keys", False):
+        return
+
+    def decode(buf, *args, **kwargs):
+        message, typedef = real(buf, *args, **kwargs)
+        return _fix_media_keys(message, typedef), typedef
+
+    decode._gp_keys = True
+    gpmc.api.decode_message = decode
+
+
+_read_media_keys_right()
+
 _clients = {}  # account -> (login, gpmc Client): one login per account, renewed by gpmc when due
 _clients_lock = threading.Lock()
 
@@ -5160,8 +5233,9 @@ def _live_uploaded(still, mov, account, copy, key, status, dedup):
             (mov, st_.st_size, st_.st_mtime, status, key, time.time(), account),
         )
     q(
-        """INSERT OR REPLACE INTO live_fix (still, account, mov, state, new_key, new_dedup, error, uploaded, updated)
-           VALUES (?,?,?,'done',?,?,'',?,?)""",
+        """INSERT OR REPLACE INTO live_fix (still, account, mov, state, new_key, new_dedup, error, uploaded, updated,
+                                            fmt)
+           VALUES (?,?,?,'uploaded',?,?,'',?,?,2)""",
         (still, account, mov, key, dedup, time.time(), time.time()),
     )
 
@@ -5176,6 +5250,120 @@ def _live_item(account, key):
         (key, key),
     )
     return rows[0] if rows else None
+
+
+def _live_video_of(still):
+    """The video of a Live Photo still, or None."""
+    still = str(still)
+    if still in _live_partner:
+        return _live_partner[still]
+    rows = q("SELECT mov FROM live_fix WHERE still=? AND state NOT IN ('skipped', 'failed') LIMIT 1", (still,))
+    return rows[0][0] if rows else None
+
+
+def _live_part(path):
+    """True for the still or the video of a Live Photo that GP Sync sends, or sent, as one motion photo."""
+    path = str(path)
+    rows = {st_ for (st_,) in q("SELECT state FROM live_fix WHERE still=? OR mov=?", (path, path))}
+    if rows & {"done", "uploaded", "redate"}:
+        return True
+    if rows & {"skipped", "failed"}:
+        return False  # left as a photo and a video
+    return path in _live_partner or path in _live_partner.values()
+
+
+def _live_name(account, dedup):
+    """Google's file name for an item, or ""."""
+    rows = _library_rows(account, "SELECT file_name FROM remote_media WHERE dedup_key=? LIMIT 1", (dedup,))
+    return (rows[0][0] or "") if rows else ""
+
+
+def _live_ours(account, dedup):
+    """True for a motion photo GP Sync 1.9.0-1.9.2 made (a JPEG copy named <name>.MP.jpg)."""
+    return bool(dedup) and _live_name(account, dedup).endswith(".MP.jpg")
+
+
+LIVE_PEEK = 512 * 1024  # bytes of a photo read to find its content identifier
+
+
+def _live_peek_id(client, key, kind):
+    """The Live Photo content identifier inside a Google item (read-only download): from the start
+    of a photo, or from a whole short video. None if there is none."""
+    import requests
+
+    r = client.api.get_download_urls(key)
+    five = (r.get("1") or {}).get("5") or {}
+    url = (five.get("2") or {}).get("6") if kind == 1 else ((five.get("5") or {}).get("2") or {}).get("5")
+    if not url:
+        return None
+    headers = {"Authorization": f"Bearer {client.api.bearer_token}", "User-Agent": client.api.user_agent}
+    with requests.get(url, headers=headers, stream=True, timeout=60) as resp:
+        resp.raise_for_status()
+        if kind == 1:
+            got = b""
+            for block in resp.iter_content(64 * 1024):
+                got += block
+                if len(got) >= LIVE_PEEK:
+                    break
+            return livephoto._apple_makernote_id(got)
+        LIVE_DIR.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(suffix=".mov", dir=LIVE_DIR)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                for n, block in enumerate(resp.iter_content(1024 * 1024)):
+                    if n * 1024 * 1024 > livephoto.MAX_VIDEO_BYTES:
+                        return None
+                    f.write(block)
+            return livephoto.video_info(tmp)[0]
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+
+
+def _live_same_shot(client, account, cid, taken, keep_pixels, skip):
+    """Other copies of this Live Photo in Google: items taken at the same moment (to the millisecond)
+    whose content identifier, read from the item itself, is this Live Photo's. A name or a time alone
+    is never enough: iPhones reuse names, and different photos can share a time. Returns (to trash:
+    [(dedup, favourite)], kept: [file names of copies with more pixels, left alone])."""
+    if not cid or not taken:
+        return [], []
+    marks = ",".join("?" * len(taken))
+    rows = _library_rows(
+        account,
+        f"""SELECT media_key, dedup_key, type, COALESCE(width, 0) * COALESCE(height, 0), COALESCE(is_favorite, 0),
+                   file_name, COALESCE(is_micro_video, 0) FROM remote_media
+               WHERE utc_timestamp IN ({marks}) AND origin='self' AND is_canonical
+               AND COALESCE(trash_timestamp, 0)=0 AND COALESCE(is_locked, 0)=0""",
+        tuple(taken),
+    )
+    gone, kept = [], []
+    for key, dedup, kind, pixels, fav, name, motion in rows or []:
+        if dedup in skip or key in skip or not _is_hash(dedup) or kind not in (1, 2):
+            continue
+        if motion and not _live_ours(account, dedup):
+            continue  # a motion photo the phone made is never removed
+        try:
+            if _live_peek_id(client, key, kind) != cid:
+                continue
+        except Exception as e:
+            if outage_kind(e):
+                raise
+            continue
+        if kind == 1 and keep_pixels and pixels > keep_pixels:
+            kept.append(name or key)
+            continue
+        gone.append((dedup, fav))
+    return gone, kept
+
+
+def _live_taken(account, *dedups):
+    """Google's capture times (ms) of these items."""
+    out = set()
+    for d in dedups:
+        if d:
+            rows = _library_rows(account, "SELECT utc_timestamp FROM remote_media WHERE dedup_key=?", (d,))
+            out |= {t for (t,) in rows or [] if t}
+    return out
 
 
 def _live_ask_refresh(account):
@@ -5225,8 +5413,9 @@ def _live_leftovers(account, still, mov, new_key, new_dedup, *known):
     return out
 
 
-def _live_send(client, account, still, mov, track):
-    """Upload the joined motion photo. Returns (media key, dedup key)."""
+def _live_send(client, account, still, mov, track, when=None):
+    """Upload the joined motion photo, dated `when` (None: Google reads the photo's own date).
+    Returns (media key, dedup key)."""
     from rich.progress import Progress
 
     work = LIVE_DIR / "work" / f"fix-{account}-{hashlib.sha1(still.encode()).hexdigest()[:16]}"
@@ -5240,7 +5429,7 @@ def _live_send(client, account, still, mov, track):
                 track["current"] = {"key": rel(still), "step": "uploading", "done": ev.get("bytes_completed") or 0,
                                     "total": size}  # fmt: skip
 
-        with Progress(disable=True) as bar, upload_date(client, None):
+        with Progress(disable=True) as bar, upload_date(client, when):
             result = client._upload_file(
                 motion, digest, bar, force_upload=False, use_quota=False, saver=False, progress_callback=progress
             )
@@ -5252,15 +5441,175 @@ def _live_send(client, account, still, mov, track):
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _live_pixels(still):
+    """Pixels in the local photo (what the motion photo keeps), or 0."""
+    try:
+        from PIL import Image
+
+        media._enable_heif()
+        with Image.open(still) as im:
+            return im.size[0] * im.size[1]
+    except Exception:
+        return 0
+
+
+def _live_native(client, account, still, old_still, prev_motion):
+    """A Live Photo Google already has as a motion photo (the iPhone app uploaded it, not GP Sync),
+    taken at the same moment and with this Live Photo's content identifier: (media key, dedup key)."""
+    taken = _live_taken(account, old_still, prev_motion)
+    if not taken:
+        return None
+    marks = ",".join("?" * len(taken))
+    rows = _library_rows(
+        account,
+        f"""SELECT media_key, dedup_key, file_name FROM remote_media WHERE utc_timestamp IN ({marks})
+            AND COALESCE(is_micro_video, 0)=1 AND origin='self' AND is_canonical AND COALESCE(trash_timestamp, 0)=0""",
+        tuple(taken),
+    )
+    cid = livephoto.still_id(still)
+    for key, dedup, name in rows or []:
+        if (name or "").endswith((".MP.jpg", ".MP.HEIC", ".MP.JPG")) or dedup == prev_motion:
+            continue  # made by GP Sync, not the phone
+        with contextlib.suppress(Exception):
+            if cid and _live_peek_id(client, key, 1) == cid:
+                return key, dedup
+    return None
+
+
+def _live_google_date(account, dedup):
+    """The date Google shows for an item (unix seconds), or None."""
+    rows = _library_rows(account, "SELECT utc_timestamp FROM remote_media WHERE dedup_key=? LIMIT 1", (dedup,))
+    return rows[0][0] / 1000 if rows and rows[0][0] else None
+
+
+def _live_date(still, mov, fallback=None):
+    """The date to send with a Live Photo: None when the photo keeps its own date (Google reads it),
+    else when the video was taken (Apple writes it in the MOV), else `fallback`. Without a date sent,
+    Google would show the day the file was saved on this server."""
+    try:
+        fst = os.stat(still)
+    except OSError:
+        return fallback
+    if date_facts(still, fst.st_size, fst.st_mtime) != 0:
+        return None
+    return livephoto.video_date(mov) or fallback
+
+
+LIVE_DATE_SLACK = 120  # seconds Google's date may differ from the video's before it is corrected
+
+
+def live_check_dates(account):
+    """Motion photos whose photo has no date inside and that Google shows on another day than the
+    video was taken (sent before the date was given): queue them to go up again with that date. Only
+    GP Sync's own uploads, and only one Google still has byte for byte as rebuilt here (checked
+    when it is replaced). Returns how many were queued."""
+    rows = q(
+        """SELECT still, mov, new_dedup, COALESCE(uploaded, 0) FROM live_fix
+           WHERE account=? AND state='done' AND fmt=2 AND dated IS NULL""",
+        (account,),
+    )
+    n = 0
+    for still, mov, dedup, uploaded in rows:
+        want = _live_date(still, mov) if uploaded else None  # uploaded=0: the phone's own upload
+        if want is not None:
+            shown = _live_google_date(account, dedup)
+            if shown is None:
+                continue  # not in this server's copy of the library yet: checked again later
+            if abs(shown - want) > LIVE_DATE_SLACK:
+                q("UPDATE live_fix SET state='redate', error='', updated=? WHERE still=? AND account=?",
+                  (time.time(), still, account))  # fmt: skip
+                n += 1
+                continue
+        q("UPDATE live_fix SET dated=1 WHERE still=? AND account=?", (still, account))
+    if n:
+        log(f"Live Photos: {n} motion photos show the wrong date in Google ({account}); they go up again "
+            "dated when the video was taken", "info")  # fmt: skip
+    return n
+
+
+def _live_redate(client, account, still, mov, new_key, new_dedup, track):
+    """Upload a motion photo again with the video's date: Google's copy is deleted only once the file
+    rebuilt here is checked to be the same, byte for byte. Returns True when it was sent."""
+    want = _live_date(still, mov)
+    if want is None:
+        q("UPDATE live_fix SET state='done', dated=1 WHERE still=? AND account=?", (still, account))
+        return False
+    work = LIVE_DIR / "work" / f"date-{account}-{hashlib.sha1(still.encode()).hexdigest()[:16]}"
+    try:
+        motion = livephoto.build(still, mov, work)
+        digest = media.sha1_file(motion)
+        if _b64_hash(digest) != new_dedup:  # not what Google has: never delete it
+            q("UPDATE live_fix SET state='done', dated=1 WHERE still=? AND account=?", (still, account))
+            log(f"Live Photo {rel(still)}: its date in Google wasn't changed, the file here differs from "
+                f"Google's ({account})", "info", rel(still))  # fmt: skip
+            return False
+        it = _live_item(account, new_dedup)
+        fav, arch, cap = (int(bool(it[2])), int(bool(it[3])), it[4] or "") if it else (0, 0, "")
+        if client.api.find_remote_media_by_hash(digest):
+            track["current"] = {"key": rel(still), "step": "deleting", "done": 0, "total": 0}
+            if not _delete_in_google(client, new_dedup, media_key=new_key):
+                return False  # tried again next step
+        size = motion.stat().st_size
+        key = _reupload(client, motion, new_dedup, size, rel(still), track, when=want)
+        if key is None:
+            return False  # Google hasn't let go of it yet
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    q("""UPDATE live_fix SET state='uploaded', new_key=?, uploaded=?, favorite=?, archived=?, caption=?,
+         dated=1, error='', updated=? WHERE still=? AND account=?""",
+      (key, time.time(), fav, arch, cap, time.time(), still, account))  # fmt: skip
+    for path in (still, mov):
+        with contextlib.suppress(OSError):
+            fst = os.stat(path)
+            status_ = _live_rows(path, account)[0]
+            _live_set_row(path, account, fst.st_size, fst.st_mtime, status_ if status_ in DONE else "uploaded", key)
+    log(f"Live Photo {rel(still)} went up again dated {time.strftime('%Y-%m-%d %H:%M', time.gmtime(want))} UTC, "
+        f"when its video was taken ({account})", "fixed", rel(still))  # fmt: skip
+    return True
+
+
+def fix_dict_key_failures():
+    """Files that went up but showed as failed because Google's key came back as a dict (see
+    _fix_media_keys): marked as in Google with their key from the library list, or tried again."""
+    bad = "%type 'dict' is not supported%"
+    n = 0
+    for table in ("files", "copies"):
+        rows = q(f"SELECT path, account FROM {table} WHERE status='failed' AND error LIKE ?", (bad,))
+        for path, account in rows:
+            owner = account or _main_account("")
+            try:
+                dedup = _b64_hash(media.sha1_file(path))
+            except OSError:
+                continue
+            found = _library_rows(owner, "SELECT media_key FROM remote_media WHERE dedup_key=? AND is_canonical "
+                                         "AND COALESCE(trash_timestamp, 0)=0 LIMIT 1", (dedup,))  # fmt: skip
+            if found and found[0][0]:
+                q(
+                    f"UPDATE {table} SET status='exists', media_key=?, error='', attempts=0, updated=? "
+                    "WHERE path=? AND COALESCE(account, '')=?",
+                    (found[0][0], time.time(), path, account or ""),
+                )
+            else:  # not in the library list yet: try again (Google's key now reads as text)
+                q(f"UPDATE {table} SET attempts=0 WHERE path=? AND COALESCE(account, '')=?", (path, account or ""))
+            n += 1
+    if n:
+        log(f"{n} files that went up but showed as failed (a key Google sent was misread) are fixed", "info")
+    return n
+
+
 def live_fix_step(account, make_client=None):
     """Replace Live Photos sent as two items with one motion photo each. Returns True if it did work."""
     rows = q(
         """SELECT still, mov, state, new_key, new_dedup, uploaded, favorite, archived, caption, old_still,
-                  old_mov, updated FROM live_fix WHERE account=? AND state IN ('queued', 'uploaded')
-           ORDER BY state DESC, still""",
+                  old_mov, updated, prev_motion FROM live_fix
+           WHERE account=? AND state IN ('queued', 'uploaded', 'redate') ORDER BY state DESC, still""",
         (account,),
     )
-    if not rows or uploads_paused(account) or not upload_allowed():
+    if uploads_paused(account) or not upload_allowed():
+        return False
+    if live_check_dates(account):
+        return True
+    if not rows:
         return False
     track = live_state[account]
     make_client = make_client or _reclaim_client
@@ -5268,8 +5617,18 @@ def live_fix_step(account, make_client=None):
     did = False
     refreshed = float(meta_get(f"library_refreshed:{account}") or 0)
     sent = 0
-    for still, mov, st_, new_key, new_dedup, uploaded, fav, arch, cap, old_still, old_mov, queued_at in rows:
+    for row in rows:
+        still, mov, st_, new_key, new_dedup, uploaded, fav, arch, cap, old_still, old_mov, queued_at = row[:12]
+        prev_motion = row[12]
         try:
+            if st_ == "redate":
+                if sent >= LIVE_BATCH or not (os.path.isfile(still) and os.path.isfile(mov)):
+                    continue
+                client = client or make_client(account)
+                if _live_redate(client, account, still, mov, new_key, new_dedup, track):
+                    sent += 1
+                    did = True
+                continue
             if st_ == "queued":
                 if sent >= LIVE_BATCH:
                     continue
@@ -5292,14 +5651,22 @@ def live_fix_step(account, make_client=None):
                 client = client or make_client(account)
                 track["current"] = {"key": rel(still), "step": "joining", "done": 0, "total": 0}
                 when = time.time()
-                if old and old[1]:  # Google already has the still as a motion photo: only the extra video goes
-                    key, dedup, when = skey, old[0], 0
+                native = None
+                if old and old[1] and not _live_ours(account, old[0]):
+                    native = (skey, old[0])  # Google has the still itself as a motion photo
                 else:
-                    key, dedup = _live_send(client, account, still, mov, track)
+                    native = _live_native(client, account, still, old[0] if old else None, prev_motion)
+                if native:  # a real Live Photo is in Google already: nothing to upload, only extras go
+                    (key, dedup), when = native, 0
+                    log(f"Live Photo {rel(still)} is in Google already as a motion photo the phone sent; GP Sync's "
+                        f"extra copies will go ({account})", "info", rel(still))  # fmt: skip
+                else:
+                    when_ = _live_date(still, mov, _live_google_date(account, old[0]) if old else None)
+                    key, dedup = _live_send(client, account, still, mov, track, when_)
                     sent += 1
                 q(
                     """UPDATE live_fix SET state='uploaded', new_key=?, new_dedup=?, uploaded=?, favorite=?,
-                       archived=?, caption=?, old_still=?, old_mov=?, error='', updated=?
+                       archived=?, caption=?, old_still=?, old_mov=?, error='', updated=?, fmt=2
                        WHERE still=? AND account=?""",
                     (key, dedup, when, int(bool(old and old[2])), int(bool(old and old[3])),
                      "" if not old or _junk_caption(old[4]) else old[4] or "",
@@ -5307,7 +5674,8 @@ def live_fix_step(account, make_client=None):
                      oldm[0] if oldm and not oldm[5] and oldm[0] != dedup else None,
                      time.time(), still, account),
                 )  # fmt: skip
-                log(f"Live Photo {rel(still)} sent as one motion photo ({account})", "uploaded", rel(still))
+                if not native:
+                    log(f"Live Photo {rel(still)} sent as one motion photo ({account})", "uploaded", rel(still))
                 did = True
                 continue
             # Uploaded: wait until Google's library shows it as a motion photo, then tidy up.
@@ -5318,13 +5686,32 @@ def live_fix_step(account, make_client=None):
             if not item or not item[1]:
                 if time.time() - (uploaded or 0) > LIVE_GIVE_UP:
                     _live_fail(still, account, "Google didn't show it as a motion photo; nothing was deleted")
+                    # The video counted as sent inside it: send it on its own, so Google has it either way.
+                    for table in ("files", "copies"):
+                        q(f"DELETE FROM {table} WHERE path=? AND media_key=?", (mov, new_key))
                 else:
                     _live_ask_refresh(account)
                 continue
             client = client or make_client(account)
             gone = _live_leftovers(account, still, mov, new_key, new_dedup, old_still, old_mov)
+            if prev_motion and prev_motion != new_dedup and _live_ours(account, prev_motion):
+                gone.append(prev_motion)  # the JPEG copy 1.9.0-1.9.2 made
+            skip = {new_key, new_dedup, *gone}
+            dupes, kept = _live_same_shot(
+                client, account, livephoto.still_id(still), _live_taken(account, new_dedup, old_still, prev_motion),
+                _live_pixels(still), skip,
+            )  # fmt: skip
+            gone += [d for d, _f in dupes if d not in gone]
+            fav = fav or any(f for _d, f in dupes) or any(
+                (it := _live_item(account, d)) and it[2] for d in gone
+            )  # fmt: skip
+            gone = [d for d in dict.fromkeys(gone) if (it := _live_item(account, d)) and not it[5]]
             if gone:
                 client.api.move_remote_media_to_trash(gone)
+            if kept:
+                q("UPDATE live_fix SET kept=? WHERE still=? AND account=?", (", ".join(kept), still, account))
+                log(f"Live Photo {rel(still)}: kept {', '.join(kept)} in Google, a copy with more pixels "
+                    f"({account})", "info", rel(still))  # fmt: skip
             if fav or arch or cap:
                 _restore_details(client, new_dedup, fav, arch, cap)
             for path in (still, mov):
@@ -5333,11 +5720,13 @@ def live_fix_step(account, make_client=None):
                     status_ = _live_rows(path, account)[0] or "uploaded"
                     _live_set_row(path, account, fst.st_size, fst.st_mtime, status_ if status_ in DONE else "uploaded",
                                   new_key)  # fmt: skip
-            q("UPDATE live_fix SET state='done', error='', updated=? WHERE still=? AND account=?",
+            q("UPDATE live_fix SET state='done', error='', updated=?, fmt=2 WHERE still=? AND account=?",
               (time.time(), still, account))  # fmt: skip
             log(f"Live Photo {rel(still)} is a motion photo now; its old still and video went to Google's Trash "
                 f"({account})", "info", rel(still))  # fmt: skip
             did = True
+        except livephoto.Unsupported as e:  # nothing was changed in Google
+            _live_skip(still, account, str(e))
         except Exception as e:
             if outage_kind(e):
                 track["error"] = f"{type(e).__name__}: {e}"[:300]
@@ -5354,7 +5743,8 @@ def live_summary():
     """Live Photos per account: how many are motion photos, waiting for Google, to do, or failed."""
     out = {}
     for account, st_, n in q("SELECT account, state, COUNT(*) FROM live_fix GROUP BY account, state"):
-        out.setdefault(account, {"done": 0, "queued": 0, "uploaded": 0, "failed": 0, "skipped": 0})[st_] = n
+        counts = out.setdefault(account, {"done": 0, "queued": 0, "uploaded": 0, "failed": 0, "skipped": 0})
+        counts["queued" if st_ == "redate" else st_] = counts.get("queued" if st_ == "redate" else st_, 0) + n
     return out
 
 
@@ -5567,7 +5957,20 @@ def reclaim_worker():
             q("""UPDATE live_fix SET state='uploaded' WHERE state='done' AND old_still IS NOT NULL
                  AND COALESCE(old_mov, '')=''""")
             meta_set("live_leftover_videos", "1")
+        # 1.9.0-1.9.2 made JPEG copies with an MP4 inside: every Live Photo is made again from the two
+        # originals; the older motion photo is replaced once Google confirms the new one.
+        if not meta_get("live_originals"):
+            q("""UPDATE live_fix SET state='queued', error='', prev_motion=COALESCE(prev_motion, new_dedup)
+                 WHERE COALESCE(fmt, 1)=1 AND state IN ('done', 'uploaded', 'held', 'failed')""")
+            meta_set("live_originals", "1")
+        # Photos that turned out to be PNGs inside failed before 1.9.3; they are left as they are.
+        q("""UPDATE live_fix SET state='skipped', error=? WHERE state='failed' AND error LIKE '%broken box%'""",
+          ("The photo is a PNG inside; a motion photo needs HEIC or JPEG, so it is left as it is",))  # fmt: skip
         # 1.9.1 couldn't copy a few iPhone videos into MP4 (a frame's timestamps out of order): try again.
+        if not meta_get("dict_media_keys"):
+            with contextlib.suppress(Exception):
+                fix_dict_key_failures()
+            meta_set("dict_media_keys", "1")
         if not meta_get("live_retry_mux"):
             q("UPDATE live_fix SET state='queued', error='' WHERE state='failed' AND error LIKE 'ArgumentError%'")
             meta_set("live_retry_mux", "1")
@@ -5827,6 +6230,9 @@ def best_date(path, size, mtime, sha1hex, fingerprint=True, facts=None):
         picked = sq("SELECT manual FROM media_dates WHERE path=? AND manual IS NOT NULL", (path,))
     if picked and picked[0][0]:
         return float(picked[0][0]), "manual"
+    # A Live Photo's video records when it was taken, to the second.
+    if (mov := _live_video_of(path)) and (taken := livephoto.video_date(mov)) is not None:
+        return taken, "video"
     if (snap := snapchat_time(path, sha1hex, facts["snap"] if facts is not None else None)) is not None:
         return snap, "snapchat"
     st = facts["settings"] if facts is not None else get_settings()
@@ -5986,8 +6392,13 @@ def dates_report(account):
         )
         if (r[5] or first) == account
     ]
+    # A Live Photo is in Google as one motion photo: its date is that item's, not the bare still's.
+    motion = dict(q("SELECT still, new_dedup FROM live_fix WHERE account=? AND state IN ('done', 'uploaded', "
+                    "'redate') AND new_dedup IS NOT NULL", (account,)))  # fmt: skip
     google = _google_dates(
-        account, {_b64_hash(bytes.fromhex(r[7] or facts[r[0]][0])) for r in rows if r[7] or facts[r[0]][0]}
+        account,
+        {_b64_hash(bytes.fromhex(r[7] or facts[r[0]][0])) for r in rows if r[7] or facts[r[0]][0]}
+        | set(motion.values()),
     )
     # Identical copies are one item in Google: list it once (the copy being fixed, else the uploaded one).
     rows.sort(key=lambda r: (not facts[r[0]][3], r[3] != "uploaded", r[0]))
@@ -6000,7 +6411,9 @@ def dates_report(account):
             continue
         seen.add(sha1)
         _, manual, sent, fix, error, previous_google, previous_source = facts[path]
-        listed = google.get(_b64_hash(bytes.fromhex(sha1))) if sha1 else None
+        listed = google.get(motion[path]) if path in motion else (
+            google.get(_b64_hash(bytes.fromhex(sha1))) if sha1 else None
+        )  # fmt: skip
         in_google, google_source = _known_google_date(listed, refreshed, updated, status_, sent)
         if listed and (not key or refreshed > (updated or 0)):
             key = listed[4] or key
@@ -6175,6 +6588,10 @@ def datefix_step(make_client=None, only=None):
             _dates_checked[path] = now
         if not found or not sha1:
             _set_fix(path, "failed", "This file isn't on the server any more")
+            continue
+        if _live_part(path):  # sent inside one motion photo: uploading this half alone would split it
+            _set_fix(path, "failed", "Part of a Live Photo: it is in Google inside one motion photo, so it "
+                                     "isn't uploaded again on its own")  # fmt: skip
             continue
         size, mtime, _account = found[0]
         track = dates_state[account]
