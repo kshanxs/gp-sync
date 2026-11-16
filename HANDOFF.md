@@ -9,10 +9,11 @@ wins, and the Work log row says so. Written by the handoff skill (`handoff.py lo
 
 | Item | Owner | Status | Link |
 |---|---|---|---|
-| Nothing in progress right now | - | - | - |
+| Live Photos fix running on umbrel (1.9.2): ~515 old pairs → motion photos, old still + video to Google's Trash | Claude | Running (186 done at 16:45 IST) | PR #10, #11, #12 |
 
 ## Next up
 
+1. Live Photos: check Sync › Folders shows the Live Photos fix finished (~515 in shubhanshushukla21; 6 in kshanxs wait until its paused uploads are resumed) and spot-check a few in Google Photos (they play; old still + video in the Trash).
 1. Update GP Sync to 1.8.6 on the Umbrel (the store offers it), try the Jobs card's Pause and the Sync account Pause during a real upload (each finishes its file first), look over Folders on the phone, then add a second account to a folder that is already backed up and watch the check on Sync (the real library read has only been tested with a fake client).
    Then retake the README screenshots in docs/ from the real app (they still show 1.5.8).
 2. Dockerfile follow-up: install packages from a copy of pyproject.toml/uv.lock with the project version blanked, so a version-only release reuses the 165 MB packages layer. Tried 2026-11-14, couldn't be tested (PyPI downloads timed out on umbrel); test it when CI runs again.
@@ -56,6 +57,7 @@ Newest first. One row per session that changed anything; never edit another sess
 
 | Date | Entry | Agent | Area | What changed | Links | Next step | Status |
 |---|---|---|---|---|---|---|---|
+| 2026-11-16T16:45+05:30 | Live Photos as motion photos | Claude | Dev + Launch | Owner reported Live Photos showing as photo + separate video. Cause: halves (HEIC/JPG + MOV, linked by Apple content ID) uploaded separately. New backend/livephoto.py joins them into a Google motion photo (MOV→MP4 copy, XMP); HEIC → q95 JPEG first because Google left a spec-built HEIC motion photo a still (tested on kshanxs, test items deleted). Scan pairs across subfolders, live_fix queue replaces old pairs and trashes old items only after is_micro_video. Free storage/Copy skip motion photos. Owner said release: 1.9.0, then 1.9.1 (old videos noted with empty dedup stayed visible) and 1.9.2 (MOV with pts<dts); dry run joins all 544 pairs. Updated the app on umbrel via umbreld apps.update. Checks: ruff, 361 pytest, vp check/test/build | PR #10, #11, #12; v1.9.0-1.9.2 | Owner spot-checks Live Photos in Google | Done |
 | 2026-11-15T15:27+05:30 | Release 1.8.6 | Claude | Launch | Owner said release. Merged PR #9 (a7c0895): Sync account cards equal height with one shared file list, Folders and Upload times cards line up. Checks on umbrel: uv lock --check, ruff, 345 pytest, vp check/test (72)/build | PR #9, main | Owner updates the app on Umbrel | Done |
 | 2026-11-15T15:22+05:30 | Sync cards line up | Claude | Dev | Account cards no longer hold their files in flight (one shared workBox under the cards, labelled with the account), so paused and busy cards match. Folders and Upload times cards stretch to equal height (self-start removed, flex-col); folder list gets an All folders total at the bottom, time tiles auto-rows-fr. Checked: pace is dynamic per account (START 4, MAX 12), not hard-coded. vp check/test (72)/build on umbrel; desktop and phone screenshots | branch sync-layout-symmetry | Owner reviews the PR; release when asked | Waiting on owner |
 | 2026-11-15T15:02+05:30 | Release 1.8.5 | Claude | Launch | Owner said merge and release. Merged PR #8 (0bd7c1a): Jobs card without Date fixes, dot-and-word state and outlined Pause/Resume, same on Sync's account cards. Checks on umbrel: uv lock --check, ruff, 345 pytest, vp check/test (72)/build | PR #8, main | Owner updates the app on Umbrel | Done |
