@@ -5567,6 +5567,10 @@ def reclaim_worker():
             q("""UPDATE live_fix SET state='uploaded' WHERE state='done' AND old_still IS NOT NULL
                  AND COALESCE(old_mov, '')=''""")
             meta_set("live_leftover_videos", "1")
+        # 1.9.1 couldn't copy a few iPhone videos into MP4 (a frame's timestamps out of order): try again.
+        if not meta_get("live_retry_mux"):
+            q("UPDATE live_fix SET state='queued', error='' WHERE state='failed' AND error LIKE 'ArgumentError%'")
+            meta_set("live_retry_mux", "1")
     while True:
         reclaim_wake.clear()
         account_lanes.wake(dict.fromkeys([*(a for a, _ in accounts()), *list(_refresh_requests)]))

@@ -151,10 +151,19 @@ def mov_to_mp4(mov, target):
         if src.streams.audio:
             a = src.streams.audio[0]
             streams[a.index] = dst.add_stream_from_template(a)
+        last = {}  # stream -> last decode time written
         for packet in src.demux(*[src.streams[i] for i in streams]):
             if packet.dts is None:
                 continue
-            packet.stream = streams[packet.stream.index]
+            # A few iPhone videos have a frame shown a moment before it is decoded (pts < dts) or a
+            # decode time that doesn't move on; MP4 refuses both, so nudge them (a few milliseconds).
+            i = packet.stream.index
+            if i in last and packet.dts <= last[i]:
+                packet.dts = last[i] + 1
+            if packet.pts is not None and packet.pts < packet.dts:
+                packet.pts = packet.dts
+            last[i] = packet.dts
+            packet.stream = streams[i]
             dst.mux(packet)
     # The track's display matrix (how the phone was held) isn't carried over by a stream copy here.
     src_bytes = Path(mov).read_bytes()
