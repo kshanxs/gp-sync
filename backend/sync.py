@@ -5169,7 +5169,7 @@ def _live_uploaded(still, mov, account, copy, key, status, dedup):
     q(
         """INSERT OR REPLACE INTO live_fix (still, account, mov, state, new_key, new_dedup, error, uploaded, updated,
                                             fmt)
-           VALUES (?,?,?,'done',?,?,'',?,?,2)""",
+           VALUES (?,?,?,'uploaded',?,?,'',?,?,2)""",
         (still, account, mov, key, dedup, time.time(), time.time()),
     )
 
@@ -5465,6 +5465,9 @@ def live_fix_step(account, make_client=None):
             if not item or not item[1]:
                 if time.time() - (uploaded or 0) > LIVE_GIVE_UP:
                     _live_fail(still, account, "Google didn't show it as a motion photo; nothing was deleted")
+                    # The video counted as sent inside it: send it on its own, so Google has it either way.
+                    for table in ("files", "copies"):
+                        q(f"DELETE FROM {table} WHERE path=? AND media_key=?", (mov, new_key))
                 else:
                     _live_ask_refresh(account)
                 continue

@@ -219,7 +219,8 @@ def test_a_pair_goes_up_as_one_motion_photo(iphone):
     assert not list((sync.LIVE_DIR / "work").glob("*/*"))  # the joined file is removed
     # Next scan: both halves are backed up, nothing to send or fix.
     assert not [i for i in sync.scan() if "iPhone" in i[0]]
-    assert sync.q("SELECT state FROM live_fix") == [("done",)]
+    # Waits for Google to confirm the motion photo, like the fix does.
+    assert sync.q("SELECT state FROM live_fix") == [("uploaded",)]
 
 
 def test_a_new_still_waits_for_its_video(iphone):
@@ -567,3 +568,19 @@ def test_a_png_named_heic_is_left_as_it_is(separate):
     assert client.sent == [] and client.api.calls == []
     state, error = sync.q("SELECT state, error FROM live_fix")[0]
     assert state == "skipped" and "PNG" in error
+
+
+def test_a_new_upload_google_never_plays_sends_its_video_alone(iphone, tmp_path, monkeypatch):
+    _still, _mov = iphone
+    monkeypatch.setattr(sync, "GPMC_HOME", tmp_path / "gpmc")
+    sync.upload_all(Recorder(), [i for i in sync.scan() if "iPhone" in i[0]])
+    db = sync._library_db(ACC)
+    db.parent.mkdir(parents=True)
+    with Storage(db) as s:
+        s.update([gitem("key-aaa.MP.HEIC", "N" * 27)])
+    sync.q("UPDATE live_fix SET new_dedup=?, uploaded=?", ("N" * 27, time.time() - sync.LIVE_GIVE_UP - 10))
+    sync.meta_set(f"library_refreshed:{ACC}", str(time.time()))
+    sync.live_fix_step(ACC, lambda a: FixClient())
+    assert sync.q("SELECT state FROM live_fix") == [("failed",)]
+    todo = [os.path.basename(i[0]) for i in sync.scan() if "iPhone" in i[0]]
+    assert todo == ["bbb.mov"]  # the video goes up on its own now
