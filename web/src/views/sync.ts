@@ -612,7 +612,19 @@ function folderList(s: Status): string {
         <span class="bar block"><i style="width:${fp}%"></i></span>
         <span class="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-xs text-ink-3"><span class="truncate">Backup: ${esc(f.account)}</span>${extra.length ? `<span>· Also in</span>${chips}` : ""}</span></a></li>`;
     })
-    .join("")}</ul>${foldersTotal(rows.map(([, f]) => f))}`;
+    .join("")}</ul>${liveLine(s)}${foldersTotal(rows.map(([, f]) => f))}`;
+}
+
+/** iPhone Live Photos: how many went up as motion photos, and how many are on their way. */
+function liveLine(s: Status): string {
+  const all = Object.values(s.live ?? {});
+  if (!all.length) return "";
+  const sum = (k: "done" | "queued" | "uploaded" | "failed") => all.reduce((a, x) => a + (x[k] ?? 0), 0);
+  const parts = [`${num(sum("done"))} motion photo${sum("done") === 1 ? "" : "s"}`];
+  if (sum("queued")) parts.push(`${num(sum("queued"))} to join`);
+  if (sum("uploaded")) parts.push(`${num(sum("uploaded"))} waiting for Google`);
+  if (sum("failed")) parts.push(`${num(sum("failed"))} left as photo + video`);
+  return `<div class="border-t border-line px-4 py-3 text-xs text-ink-3" data-tip="iPhone Live Photos go up as one motion photo. Ones sent before as a photo and a separate video are replaced: the old two go to Google's Trash once Google shows the motion photo."><span class="font-medium text-ink-2">Live Photos</span> · ${parts.join(" · ")}</div>`;
 }
 
 /** Under the folder list, pinned to the card's bottom: every folder added up. */

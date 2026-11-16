@@ -26,7 +26,7 @@ WORKDIR /app
 # The previous dashboard's files would otherwise stay next to the new ones.
 RUN rm -rf /app/static
 COPY backend/pyproject.toml backend/uv.lock backend/.python-version ./
-COPY backend/sync.py backend/media.py backend/notify.py backend/cache.py backend/provenance.py backend/snapchat.py backend/pace.py backend/cli.py VERSION ./
+COPY backend/sync.py backend/media.py backend/notify.py backend/cache.py backend/provenance.py backend/snapchat.py backend/pace.py backend/livephoto.py backend/cli.py VERSION ./
 COPY --from=web /web/dist ./static
 
 ARG BUILD_COMMIT=""
