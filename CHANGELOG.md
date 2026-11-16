@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Live Photos: videos with out-of-order frame times join too.** A few iPhone videos have a frame
+  shown a moment before it is decoded, which MP4 refuses, so that Live Photo failed. Those frame
+  times are nudged by a few milliseconds; Live Photos that failed this way are tried again once.
+  All 544 Live Photos on the test library now join.
+
 ## 1.9.1
 
 - **Live Photos: the old separate video goes to the Trash too.** For the first Live Photos fixed by
