@@ -5501,6 +5501,8 @@ def live_fix_step(account, make_client=None):
             log(f"Live Photo {rel(still)} is a motion photo now; its old still and video went to Google's Trash "
                 f"({account})", "info", rel(still))  # fmt: skip
             did = True
+        except livephoto.Unsupported as e:  # nothing was changed in Google
+            _live_skip(still, account, str(e))
         except Exception as e:
             if outage_kind(e):
                 track["error"] = f"{type(e).__name__}: {e}"[:300]
@@ -5736,6 +5738,9 @@ def reclaim_worker():
             q("""UPDATE live_fix SET state='queued', error='', prev_motion=COALESCE(prev_motion, new_dedup)
                  WHERE COALESCE(fmt, 1)=1 AND state IN ('done', 'uploaded', 'held', 'failed')""")
             meta_set("live_originals", "1")
+        # Photos that turned out to be PNGs inside failed before 1.9.3; they are left as they are.
+        q("""UPDATE live_fix SET state='skipped', error=? WHERE state='failed' AND error LIKE '%broken box%'""",
+          ("The photo is a PNG inside; a motion photo needs HEIC or JPEG, so it is left as it is",))  # fmt: skip
         # 1.9.1 couldn't copy a few iPhone videos into MP4 (a frame's timestamps out of order): try again.
         if not meta_get("live_retry_mux"):
             q("UPDATE live_fix SET state='queued', error='' WHERE state='failed' AND error LIKE 'ArgumentError%'")

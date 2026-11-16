@@ -453,6 +453,20 @@ def heic_motion(heic, mov, timestamp_us):
     return image + struct.pack(">I4s", 8 + len(tail), b"mpvd") + tail
 
 
+class Unsupported(ValueError):
+    """The photo isn't HEIC or JPEG inside (a PNG named .heic, say): no motion photo can hold it."""
+
+
+def still_format(data):
+    """ "heic" or "jpeg", from the file's first bytes (not its name), or raise Unsupported."""
+    if data[:2] == b"\xff\xd8":
+        return "jpeg"
+    if data[4:8] == b"ftyp" and data[8:12] in (b"heic", b"heix", b"mif1", b"msf1", b"heim", b"heis"):
+        return "heic"
+    kind = "a PNG" if data[:4] == b"\x89PNG" else "not HEIC or JPEG"
+    raise Unsupported(f"The photo is {kind} inside; a motion photo needs HEIC or JPEG, so it is left as it is")
+
+
 def build(still, mov, target_dir):
     """Join a still and its video into one motion photo file in target_dir. Returns its path. Both
     originals are inside it unchanged; only XMP is added to the photo."""
@@ -462,7 +476,7 @@ def build(still, mov, target_dir):
     video = Path(mov).read_bytes()
     when = still_time_us(mov)
     stem = Path(still).name.rsplit(".", 1)[0]
-    if _ext(still) in ("heic", "heif"):
+    if still_format(raw) == "heic":
         data, name = heic_motion(raw, video, when), f"{stem}.MP.HEIC"
     else:
         data, name = jpeg_motion(raw, video, when), f"{stem}.MP.JPG"

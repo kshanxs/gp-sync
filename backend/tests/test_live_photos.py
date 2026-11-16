@@ -547,3 +547,23 @@ def test_a_live_photo_the_phone_uploaded_is_kept_and_nothing_is_uploaded(separat
     sync.live_fix_step(ACC, lambda a: client)
     trashed = [d for c in client.api.calls if c[0] == "trash" for d in c[1]]
     assert b64(still.read_bytes()) in trashed and b64(mov.read_bytes()) in trashed and b64(phone) not in trashed
+
+
+def test_a_png_named_heic_is_left_as_it_is(separate):
+    """A few phone backups save screenshots as .heic that are PNGs inside: no motion photo can hold
+    a PNG, so the pair is skipped and nothing in Google changes."""
+    still, _mov, _db = separate
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(buf, "PNG")
+    with pytest.raises(livephoto.Unsupported):
+        livephoto.still_format(buf.getvalue())
+    sync.scan()
+    sync.q("UPDATE live_fix SET state='queued'")
+    st = still.stat()
+    still.write_bytes(buf.getvalue() + makernote(CID))  # keeps its content ID, but is a PNG
+    os.utime(still, (st.st_atime, st.st_mtime))
+    client = FixClient()
+    sync.live_fix_step(ACC, lambda a: client)
+    assert client.sent == [] and client.api.calls == []
+    state, error = sync.q("SELECT state, error FROM live_fix")[0]
+    assert state == "skipped" and "PNG" in error
