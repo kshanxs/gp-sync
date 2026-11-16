@@ -1,18 +1,19 @@
 """iPhone Live Photos: find the still and the short video that belong together, and join them into one
-Google-style motion photo (https://developer.android.com/media/platform/motion-photo-format).
+motion photo file that Google Photos plays, keeping both originals byte for byte.
 
 Apple saves a Live Photo as two files linked by a content identifier stored in both: in the still's
 Apple maker note (tag 0x11) and in the video's QuickTime metadata. Google Photos shows a motion photo
-only when it is one file: the still with the video appended and XMP saying where the video starts.
-The video is copied from MOV into MP4 without re-encoding. A JPEG still keeps its bytes (XMP is
-added next to them); a HEIC still becomes a high-quality JPEG first, because Google Photos doesn't
-show HEIC motion photos as motion (heic_motion builds one to the spec, kept for when it does)."""
+only when it is one file. The layout is the one Samsung phones write and MotionPhoto2
+(github.com/PetrVys/MotionPhoto2, a tested open-source converter) reproduces, which Google Photos
+plays: the photo unchanged except for motion-photo XMP merged into its own XMP, then the original MOV
+unchanged, then Samsung's small trailer that points at it. Nothing is re-encoded or converted: a HEIC
+stays HEIC, a JPEG stays JPEG, the MOV stays MOV. The XMP also carries Apple's own still-frame time
+from the MOV, so the photo and the first frame Google shows line up.
+"""
 
-import contextlib
 import os
 import re
 import struct
-import tempfile
 from pathlib import Path
 
 STILL_EXTS = {"heic", "heif", "jpg", "jpeg"}
@@ -90,7 +91,7 @@ def content_id(path):
     return None
 
 
-# ---- Video: MOV to MP4 without re-encoding
+# ---- ISO boxes
 
 
 def _boxes(data, start=0, end=None):
@@ -111,87 +112,66 @@ def _boxes(data, start=0, end=None):
         i += size
 
 
-def _child(data, box, name):
-    _, start, size, head = box
-    return next((b for b in _boxes(data, start + head, start + size) if b[0] == name), None)
+def _box(typ, body, version=None, flags=0):
+    head = b"" if version is None else struct.pack(">I", (version << 24) | flags)
+    return struct.pack(">I4s", 8 + len(head) + len(body), typ) + head + body
 
 
-def _video_matrix(data):
-    """The display matrix (36 bytes) of the first video track in a MOV/MP4, or None."""
-    moov = next((b for b in _boxes(data) if b[0] == b"moov"), None)
-    if not moov:
-        return None, None
-    for trak in _boxes(data, moov[1] + moov[3], moov[1] + moov[2]):
-        if trak[0] != b"trak":
-            continue
-        mdia = _child(data, trak, b"mdia")
-        hdlr = mdia and _child(data, mdia, b"hdlr")
-        if not hdlr or data[hdlr[1] + hdlr[3] + 8 : hdlr[1] + hdlr[3] + 12] != b"vide":
-            continue
-        tkhd = _child(data, trak, b"tkhd")
-        if not tkhd:
-            return None, None
-        body = tkhd[1] + tkhd[3]
-        # version 1: 8-byte times; the matrix comes after the times, track ID, reserved, duration,
-        # reserved (8), layer, alternate group, volume and reserved (8 bytes in all).
-        off = body + (4 + 8 + 8 + 4 + 4 + 8 if data[body] == 1 else 4 + 4 + 4 + 4 + 4 + 4)
-        off += 8 + 2 + 2 + 2 + 2
-        return off, data[off : off + 36]
-    return None, None
+def _uint(n, size):
+    return n.to_bytes(size, "big") if size else b""
 
 
-def mov_to_mp4(mov, target):
-    """Copy the video and audio of a MOV into an MP4 file (no re-encoding), keeping its rotation."""
-    import av
+def _read_uint(data, off, size):
+    return int.from_bytes(data[off : off + size], "big") if size else 0
 
-    with av.open(str(mov)) as src, av.open(str(target), "w", format="mp4") as dst:
-        streams = {}
-        v = src.streams.video[0]
-        streams[v.index] = dst.add_stream_from_template(v)
-        if src.streams.audio:
-            a = src.streams.audio[0]
-            streams[a.index] = dst.add_stream_from_template(a)
-        last = {}  # stream -> last decode time written
-        for packet in src.demux(*[src.streams[i] for i in streams]):
-            if packet.dts is None:
-                continue
-            # A few iPhone videos have a frame shown a moment before it is decoded (pts < dts) or a
-            # decode time that doesn't move on; MP4 refuses both, so nudge them (a few milliseconds).
-            i = packet.stream.index
-            if i in last and packet.dts <= last[i]:
-                packet.dts = last[i] + 1
-            if packet.pts is not None and packet.pts < packet.dts:
-                packet.pts = packet.dts
-            last[i] = packet.dts
-            packet.stream = streams[i]
-            dst.mux(packet)
-    # The track's display matrix (how the phone was held) isn't carried over by a stream copy here.
-    src_bytes = Path(mov).read_bytes()
-    _, matrix = _video_matrix(src_bytes)
-    out = bytearray(Path(target).read_bytes())
-    off, current = _video_matrix(bytes(out))
-    if matrix and off is not None and current != matrix:
-        out[off : off + 36] = matrix
-        Path(target).write_bytes(bytes(out))
-    return target
+
+# ---- Apple's still-frame time
+
+
+STILL_TIME_KEY = b"com.apple.quicktime.still-image-time"
+
+
+def still_time_us(mov):
+    """When in the video Apple took the photo (microseconds), from the MOV's timed metadata track
+    whose key is com.apple.quicktime.still-image-time: its one sample's time. -1 if there is none
+    (the spec's "unset": readers then use the middle)."""
+    try:
+        data = Path(mov).read_bytes()
+        moov = next((b for b in _boxes(data) if b[0] == b"moov"), None)
+        if not moov:
+            return -1
+        traks = [b for b in _boxes(data, moov[1] + moov[3], moov[1] + moov[2]) if b[0] == b"trak"]
+        index = next((n for n, t in enumerate(traks) if STILL_TIME_KEY in data[t[1] : t[1] + t[2]]), None)
+        if index is None:
+            return -1
+        import av
+
+        with av.open(str(mov)) as c:
+            if index >= len(c.streams):
+                return -1
+            stream = c.streams[index]
+            for packet in c.demux(stream):
+                if packet.pts is not None:
+                    return max(0, round(float(packet.pts * packet.time_base) * 1e6))
+    except Exception:
+        return -1
+    return -1
 
 
 # ---- Motion photo XMP
 
 
-def _xmp_description(mime, video_len, padding, timestamp_us):
+def _xmp_description(image_mime, video_len, padding, timestamp_us):
     return (
         '<rdf:Description rdf:about="" xmlns:GCamera="http://ns.google.com/photos/1.0/camera/"'
         ' xmlns:Container="http://ns.google.com/photos/1.0/container/"'
         ' xmlns:Item="http://ns.google.com/photos/1.0/container/item/"'
-        f' GCamera:MotionPhoto="1" GCamera:MotionPhotoVersion="1"'
-        f' GCamera:MotionPhotoPresentationTimestampUs="{timestamp_us}"'
-        f' GCamera:MicroVideo="1" GCamera:MicroVideoVersion="1" GCamera:MicroVideoOffset="{video_len}"'
-        f' GCamera:MicroVideoPresentationTimestampUs="{timestamp_us}">'
+        ' GCamera:MotionPhoto="1" GCamera:MotionPhotoVersion="1"'
+        f' GCamera:MotionPhotoPresentationTimestampUs="{timestamp_us}">'
         "<Container:Directory><rdf:Seq>"
-        f'<rdf:li rdf:parseType="Resource"><Container:Item Item:Mime="{mime}" Item:Semantic="Primary"'
+        f'<rdf:li rdf:parseType="Resource"><Container:Item Item:Mime="{image_mime}" Item:Semantic="Primary"'
         f' Item:Length="0" Item:Padding="{padding}"/></rdf:li>'
-        '<rdf:li rdf:parseType="Resource"><Container:Item Item:Mime="video/mp4" Item:Semantic="MotionPhoto"'
+        '<rdf:li rdf:parseType="Resource"><Container:Item Item:Mime="video/quicktime" Item:Semantic="MotionPhoto"'
         f' Item:Length="{video_len}" Item:Padding="0"/></rdf:li>'
         "</rdf:Seq></Container:Directory></rdf:Description>"
     )
@@ -202,6 +182,53 @@ def _xmp_packet(description):
         '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
         f"{description}</rdf:RDF></x:xmpmeta>"
     ).encode()
+
+
+def _merge_xmp(packet, description):
+    """The photo's own XMP with the motion-photo description added (what was there is kept)."""
+    if not packet:
+        return _xmp_packet(description)
+    close = packet.rfind(b"</rdf:RDF>")
+    if close < 0:
+        raise ValueError("unreadable XMP")
+    return packet[:close] + description.encode() + packet[close:]
+
+
+# ---- Samsung's trailer (what Samsung phones write after a motion photo, and MotionPhoto2 copies)
+
+_SEF_IDS = {"MotionPhoto_Data": bytes([0, 0, 0x30, 0x0A]), "MotionPhoto_Version": bytes([0, 0, 0x31, 0x0A])}
+_SEFH_VERSION = 107
+
+
+def _sef(tags):
+    """Samsung SEF data: the tags, then the SEFH index, its length and "SEFT"."""
+    data, entries = b"", []
+    for name, value in tags.items():
+        record = _SEF_IDS[name] + struct.pack("<i", len(name)) + name.encode() + value
+        entries.append([name, len(data), len(record)])
+        data += record
+    # SEFH counts each tag's offset back from the start of the index.
+    index = b"SEFH" + struct.pack("<ii", _SEFH_VERSION, len(entries))
+    for name, start, length in entries:
+        index += _SEF_IDS[name] + struct.pack("<ii", len(data) - start, length)
+    return data + index + struct.pack("<i", len(index)) + b"SEFT"
+
+
+def _sef_heic_tail(video, image_size):
+    """For a HEIC: the original video, then a "sefd" box with SEF data pointing at it."""
+    mp_data = b"mpv2" + struct.pack(">ii", image_size + 8, len(video))
+    sef = _sef({"MotionPhoto_Data": mp_data, "MotionPhoto_Version": b"mpv3"})
+    return video + struct.pack(">i", len(sef) + 8) + b"sefd" + sef
+
+
+def _sef_jpeg_tail(video):
+    """For a JPEG: SEF data holding the original video. Returns (tail, bytes before the video)."""
+    tail = _sef({"MotionPhoto_Data": video, "MotionPhoto_Version": b"mpv3"})
+    before = len(_SEF_IDS["MotionPhoto_Data"]) + 4 + len("MotionPhoto_Data")
+    return tail, before
+
+
+# ---- JPEG
 
 
 _XMP_SIG = b"http://ns.adobe.com/xap/1.0/\x00"
@@ -221,51 +248,39 @@ def _jpeg_segments(jpg):
         i += 2 + n
 
 
-def jpeg_motion(jpg, mp4, timestamp_us):
-    """A JPEG motion photo: the still's bytes with motion-photo XMP, then the MP4."""
-    desc = _xmp_description("image/jpeg", len(mp4), 0, timestamp_us)
+def jpeg_motion(jpg, mov, timestamp_us):
+    """A JPEG motion photo: the photo's bytes with motion-photo XMP merged into its own XMP, then
+    Samsung's trailer holding the original MOV."""
+    tail, before = _sef_jpeg_tail(mov)
+    desc = _xmp_description("image/jpeg", len(tail) - before, before, timestamp_us)
     segments = list(_jpeg_segments(jpg))
     xmp = next((s for s in segments if s[0] == 0xE1 and jpg[s[1] + 4 : s[1] + 4 + len(_XMP_SIG)] == _XMP_SIG),
                None)  # fmt: skip
-    if xmp:  # add our description to the photo's own XMP, keeping what is there
+    if xmp:
         _, start, end = xmp
-        packet = jpg[start + 4 + len(_XMP_SIG) : end]
-        close = packet.rfind(b"</rdf:RDF>")
-        if close < 0:
-            raise ValueError("unreadable XMP")
-        packet = packet[:close] + desc.encode() + packet[close:]
-        payload = _XMP_SIG + packet
-        if len(payload) + 2 > 0xFFFF:
-            raise ValueError("XMP too large")
-        seg = b"\xff\xe1" + struct.pack(">H", len(payload) + 2) + payload
-        return jpg[:start] + seg + jpg[end:] + mp4
-    # No XMP yet: after the leading APPn segments (EXIF first, as cameras write it).
-    at = 2
-    for marker, _start, end in segments:
-        if not 0xE0 <= marker <= 0xEF:
-            break
-        at = end
-    payload = _XMP_SIG + _xmp_packet(desc)
+        payload = _XMP_SIG + _merge_xmp(jpg[start + 4 + len(_XMP_SIG) : end], desc)
+        at, cut = start, end
+    else:  # after the leading APPn segments (EXIF first, as cameras write it)
+        at = 2
+        for marker, _start, end in segments:
+            if not 0xE0 <= marker <= 0xEF:
+                break
+            at = end
+        payload, cut = _XMP_SIG + _xmp_packet(desc), at
+    if len(payload) + 2 > 0xFFFF:
+        raise ValueError("XMP too large")
     seg = b"\xff\xe1" + struct.pack(">H", len(payload) + 2) + payload
-    return jpg[:at] + seg + jpg[at:] + mp4
+    return jpg[:at] + seg + jpg[cut:] + tail
 
 
-def _box(typ, body, version=None, flags=0):
-    head = b"" if version is None else struct.pack(">I", (version << 24) | flags)
-    return struct.pack(">I4s", 8 + len(head) + len(body), typ) + head + body
+# ---- HEIC
 
 
-def _uint(n, size):
-    return n.to_bytes(size, "big") if size else b""
-
-
-def _read_uint(data, off, size):
-    return int.from_bytes(data[off : off + size], "big") if size else 0
-
-
-def heic_motion(heic, mp4, timestamp_us):
-    """A HEIC motion photo: an XMP item added to the HEIF meta box (existing items untouched, their
-    file offsets moved along), the XMP bytes in a new mdat, and the MP4 in a final 'mpvd' box."""
+def heic_motion(heic, mov, timestamp_us):
+    """A HEIC motion photo: the photo's own XMP item gets the motion-photo description (its new bytes
+    go in a small mdat after the image and its iloc entry points there; nothing else in the image
+    moves), or an XMP item is added if it has none; then a final 'mpvd' box holds the original MOV and
+    Samsung's 'sefd' trailer."""
     data = heic
     top = list(_boxes(data))
     meta = next((b for b in top if b[0] == b"meta"), None)
@@ -283,35 +298,38 @@ def heic_motion(heic, mp4, timestamp_us):
     _, p, _, ph = by[b"pitm"]
     primary = struct.unpack_from(">H" if data[p + ph] == 0 else ">I", data, p + ph + 4)[0]
 
-    # iinf: entry count, then infe boxes
+    # Items: which are XMP ("mime" items of type application/rdf+xml)
     _, i0, isz, ih = by[b"iinf"]
-    iv = data[i0 + ih]
-    cnt_size = 2 if iv == 0 else 4
+    cnt_size = 2 if data[i0 + ih] == 0 else 4
     count = _read_uint(data, i0 + ih + 4, cnt_size)
-    ids = []
-    for typ, s, _sz, hh in _boxes(data, i0 + ih + 4 + cnt_size, i0 + isz):
-        if typ == b"infe":
-            v = data[s + hh]
-            ids.append(_read_uint(data, s + hh + 4, 4 if v >= 3 else 2))
-    new_id = max(ids, default=0) + 1
-    if new_id > 0xFFFF:
-        raise ValueError("too many items")
-    infe = _box(b"infe", struct.pack(">HH4s", new_id, 0, b"mime") + b"\x00application/rdf+xml\x00", 2)
-    iinf = (data[i0 : i0 + ih + 4] + _uint(count + 1, cnt_size) + data[i0 + ih + 4 + cnt_size : i0 + isz]) + infe
-    iinf = struct.pack(">I", len(iinf)) + iinf[4:]
+    ids, xmp_items = [], set()
+    for typ, s, sz, hh in _boxes(data, i0 + ih + 4 + cnt_size, i0 + isz):
+        if typ != b"infe":
+            continue
+        v = data[s + hh]
+        n = 4 if v >= 3 else 2
+        iid = _read_uint(data, s + hh + 4, n)
+        ids.append(iid)
+        rest = data[s + hh + 4 + n + 2 : s + sz]
+        if v >= 2 and rest[:4] == b"mime" and b"application/rdf+xml" in rest:
+            xmp_items.add(iid)
 
-    # iref: add "cdsc" (content describes) from the XMP item to the primary image
+    # Which XMP item describes the primary image ("cdsc" reference to it)
+    described = None
     if b"iref" in by:
         _, r0, rsz, rh = by[b"iref"]
-        rv = data[r0 + rh]
-        idf = ">H" if rv == 0 else ">I"
-        cdsc = _box(b"cdsc", struct.pack(idf, new_id) + struct.pack(">H", 1) + struct.pack(idf, primary))
-        iref = data[r0 : r0 + rsz] + cdsc
-        iref = struct.pack(">I", len(iref)) + iref[4:]
-    else:
-        iref = _box(b"iref", _box(b"cdsc", struct.pack(">HHH", new_id, 1, primary)), 0)
+        idsz = 2 if data[r0 + rh] == 0 else 4
+        for typ, s, _sz, hh in _boxes(data, r0 + rh + 4, r0 + rsz):
+            if typ != b"cdsc":
+                continue
+            frm = _read_uint(data, s + hh, idsz)
+            n = _read_uint(data, s + hh + idsz, 2)
+            tos = [_read_uint(data, s + hh + idsz + 2 + k * idsz, idsz) for k in range(n)]
+            if frm in xmp_items and primary in tos:
+                described = frm
+                break
 
-    # iloc: parse every entry so file offsets can move, then add the XMP item's entry
+    # iloc: every entry, so offsets can move and the XMP item can point at its new bytes
     _, l0, lsz, lh = by[b"iloc"]
     lv = data[l0 + lh]
     o = l0 + lh + 4
@@ -323,9 +341,10 @@ def heic_motion(heic, mp4, timestamp_us):
     id_size = 2 if lv < 2 else 4
     n_items = _read_uint(data, o, id_size)
     o += id_size
-    entries = []  # (header bytes before base offset, cm, base, [(index, offset, length)])
+    entries = []  # (item id, header bytes, construction method, data ref, base, [(index, offset, length)])
     for _ in range(n_items):
         s = o
+        iid = _read_uint(data, o, id_size)
         o += id_size
         cm = 0
         if lv in (1, 2):
@@ -347,15 +366,51 @@ def heic_motion(heic, mp4, timestamp_us):
             el = _read_uint(data, o, len_size)
             o += len_size
             exts.append((idx, eo, el))
-        entries.append((head, cm, dref, base, exts))
+        entries.append((iid, head, cm, dref, base, exts))
     if o != l0 + lsz:
         raise ValueError("unreadable iloc")
 
-    def build_iloc(shift, xmp_offset, xmp_len):
+    old_xmp = b""
+    if described is not None:
+        entry = next((e for e in entries if e[0] == described), None)
+        if not entry or entry[2] != 0 or entry[3] != 0 or not entry[5]:
+            raise ValueError("unusual XMP item")
+        old_xmp = b"".join(data[entry[4] + eo : entry[4] + eo + el] for _i, eo, el in entry[5])
+
+    # The new XMP's size depends only on the video's, not on where things end up.
+    image_end_guess = len(data)  # replaced below once the layout is known
+    tail = _sef_heic_tail(mov, image_end_guess)
+    video_len = len(tail)
+    xmp = _merge_xmp(old_xmp, _xmp_description("image/heic", video_len, 8, timestamp_us))
+
+    new_id = described if described is not None else max(ids, default=0) + 1
+    if new_id > 0xFFFF:
+        raise ValueError("too many items")
+    if described is None:
+        infe = _box(b"infe", struct.pack(">HH4s", new_id, 0, b"mime") + b"\x00application/rdf+xml\x00", 2)
+        iinf = data[i0 : i0 + ih + 4] + _uint(count + 1, cnt_size) + data[i0 + ih + 4 + cnt_size : i0 + isz] + infe
+        iinf = struct.pack(">I", len(iinf)) + iinf[4:]
+        if b"iref" in by:
+            _, r0, rsz, rh = by[b"iref"]
+            idf = ">H" if data[r0 + rh] == 0 else ">I"
+            cdsc = _box(b"cdsc", struct.pack(idf, new_id) + struct.pack(">H", 1) + struct.pack(idf, primary))
+            iref = data[r0 : r0 + rsz] + cdsc
+            iref = struct.pack(">I", len(iref)) + iref[4:]
+        else:
+            iref = _box(b"iref", _box(b"cdsc", struct.pack(">HHH", new_id, 1, primary)), 0)
+    else:
+        iinf = data[i0 : i0 + isz]
+        iref = data[by[b"iref"][1] : by[b"iref"][1] + by[b"iref"][2]]
+
+    def build_iloc(shift, xmp_offset):
         body = bytearray(data[l0 + lh : l0 + lh + 6])  # version/flags + the four sizes
-        body += _uint(n_items + 1, id_size)
+        body += _uint(n_items + (described is None), id_size)
         meta_end = m_start + m_size
-        for head, cm, dref, base, exts in entries:
+        for iid, head, cm, dref, base, exts in entries:
+            if iid == described:  # the XMP item now points at its new bytes
+                body += head + _uint(0, base_size) + _uint(1, 2) + _uint(0, idx_size)
+                body += _uint(xmp_offset, off_size) + _uint(len(xmp), len_size)
+                continue
             moved = cm == 0 and dref == 0
             if moved and base_size and base + (exts[0][1] if exts else 0) >= meta_end:
                 base += shift
@@ -364,13 +419,11 @@ def heic_motion(heic, mp4, timestamp_us):
                 if moved and not base_size and eo >= meta_end:
                     eo += shift
                 body += _uint(idx, idx_size) + _uint(eo, off_size) + _uint(el, len_size)
-        body += _uint(new_id, id_size) + (b"\x00\x00" if lv in (1, 2) else b"") + b"\x00\x00"
-        body += _uint(0, base_size) + _uint(1, 2) + _uint(0, idx_size)
-        body += _uint(xmp_offset, off_size) + _uint(xmp_len, len_size)
+        if described is None:
+            body += _uint(new_id, id_size) + (b"\x00\x00" if lv in (1, 2) else b"") + b"\x00\x00"
+            body += _uint(0, base_size) + _uint(1, 2) + _uint(0, idx_size)
+            body += _uint(xmp_offset, off_size) + _uint(len(xmp), len_size)
         return struct.pack(">I4s", 8 + len(body), b"iloc") + bytes(body)
-
-    desc = _xmp_description("image/heic", len(mp4), 8, timestamp_us)
-    xmp = _xmp_packet(desc)
 
     def build_meta(shift, xmp_offset):
         parts = []
@@ -380,78 +433,39 @@ def heic_motion(heic, mp4, timestamp_us):
             elif typ == b"iref":
                 parts.append(iref)
             elif typ == b"iloc":
-                parts.append(build_iloc(shift, xmp_offset, len(xmp)))
+                parts.append(build_iloc(shift, xmp_offset))
             else:
                 parts.append(data[s : s + sz])
         if b"iref" not in by:
             parts.insert([c[0] for c in children].index(b"iinf") + 1, iref)
-        body = b"".join(parts)
-        return data[m_start : m_start + 12] + body
+        out = data[m_start : m_start + 12] + b"".join(parts)
+        return struct.pack(">I", len(out)) + out[4:]
 
-    # The meta box's new size doesn't depend on the offsets written into it (fixed-size fields).
-    trial = build_meta(0, 0)
-    shift = (len(trial)) - m_size
-    xmp_offset = len(data) + shift + 8  # inside the new mdat after the original file
+    shift = len(build_meta(0, 0)) - m_size  # field sizes are fixed, so offsets don't change it
+    xmp_offset = len(data) + shift + 8  # inside the new mdat after the original image
     meta_bytes = build_meta(shift, xmp_offset)
-    meta_bytes = struct.pack(">I", len(meta_bytes)) + meta_bytes[4:]
     if len(meta_bytes) - m_size != shift:
         raise ValueError("meta size changed")
-    out = data[:m_start] + meta_bytes + data[m_start + m_size :]
-    out += _box(b"mdat", xmp)
-    out += _box(b"mpvd", mp4)
-    return out
-
-
-JPEG_QUALITY = 95
-
-
-def heic_to_jpeg(heic):
-    """The HEIC still as a high-quality JPEG with its EXIF (dates, place, camera, Apple's maker note)
-    and colour profile. Google Photos doesn't treat a HEIC motion photo as one (tried 2026-11-16: a
-    HEIC built to the spec stayed a still, the same photo as JPEG became a motion photo), so a HEIC
-    Live Photo goes up as a JPEG motion photo. The pixels come rotated the right way up (pillow-heif
-    applies the HEIF rotation and sets the EXIF orientation to 1)."""
-    import io
-
-    from PIL import Image
-    from pillow_heif import register_heif_opener
-
-    register_heif_opener()
-    with Image.open(io.BytesIO(heic)) as im:
-        im.load()
-        exif = im.getexif()
-        exif[0x0112] = 1
-        rgb = im.convert("RGB")
-        out = io.BytesIO()
-        rgb.save(out, "JPEG", quality=JPEG_QUALITY, subsampling=0, exif=exif.tobytes(),
-                 icc_profile=im.info.get("icc_profile") or None)  # fmt: skip
-        return out.getvalue()
-
-
-def presentation_us(seconds):
-    """The still sits in the middle of an Apple Live Photo's video."""
-    return int(seconds * 1e6 / 2) if seconds else 0
+    image = data[:m_start] + meta_bytes + data[m_start + m_size :] + _box(b"mdat", xmp)
+    tail = _sef_heic_tail(mov, len(image))
+    if len(tail) != video_len:
+        raise ValueError("trailer size changed")
+    return image + struct.pack(">I4s", 8 + len(tail), b"mpvd") + tail
 
 
 def build(still, mov, target_dir):
-    """Join a still and its video into one motion photo file in target_dir. Returns its path."""
+    """Join a still and its video into one motion photo file in target_dir. Returns its path. Both
+    originals are inside it unchanged; only XMP is added to the photo."""
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
-    e = _ext(still)
-    _, seconds = video_info(mov)
-    fd, tmp = tempfile.mkstemp(suffix=".mp4", dir=target_dir)
-    os.close(fd)
-    try:
-        mov_to_mp4(mov, tmp)
-        mp4 = Path(tmp).read_bytes()
-    finally:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
     raw = Path(still).read_bytes()
+    video = Path(mov).read_bytes()
+    when = still_time_us(mov)
     stem = Path(still).name.rsplit(".", 1)[0]
-    if e in ("heic", "heif"):
-        raw = heic_to_jpeg(raw)
-    data, name = jpeg_motion(raw, mp4, presentation_us(seconds)), f"{stem}.MP.jpg"
+    if _ext(still) in ("heic", "heif"):
+        data, name = heic_motion(raw, video, when), f"{stem}.MP.HEIC"
+    else:
+        data, name = jpeg_motion(raw, video, when), f"{stem}.MP.JPG"
     target = target_dir / name
     target.write_bytes(data)
     st = os.stat(still)
