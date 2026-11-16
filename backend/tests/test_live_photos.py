@@ -584,3 +584,19 @@ def test_a_new_upload_google_never_plays_sends_its_video_alone(iphone, tmp_path,
     assert sync.q("SELECT state FROM live_fix") == [("failed",)]
     todo = [os.path.basename(i[0]) for i in sync.scan() if "iPhone" in i[0]]
     assert todo == ["bbb.mov"]  # the video goes up on its own now
+
+
+def test_fix_dates_never_uploads_half_a_live_photo(iphone):
+    still, mov = iphone
+    todo = sync.scan()
+    sync.upload_all(Recorder(), [i for i in todo if "iPhone" in i[0]])
+    for p in (still, mov):
+        sync.sq(
+            "INSERT OR REPLACE INTO media_dates (path, size, mtime, sha1, fix, error) VALUES (?,?,?,?,'waiting','')",
+            (str(p), p.stat().st_size, p.stat().st_mtime, hashlib.sha1(p.read_bytes()).hexdigest()),
+        )
+    asked = []
+    assert not sync.datefix_step(lambda a: asked.append(a))
+    assert asked == []  # Google is never touched
+    fixes = sync.sq("SELECT fix, error FROM media_dates WHERE path IN (?, ?)", (str(still), str(mov)))
+    assert [f for f, _ in fixes] == ["failed", "failed"] and all("Live Photo" in e for _, e in fixes)

@@ -5186,6 +5186,15 @@ def _live_item(account, key):
     return rows[0] if rows else None
 
 
+def _live_part(path):
+    """True for the still or the video of a Live Photo that GP Sync sends, or sent, as one motion photo."""
+    path = str(path)
+    if path in _live_partner or path in _live_partner.values():
+        return True
+    return bool(q("SELECT 1 FROM live_fix WHERE (still=? OR mov=?) AND state IN ('done', 'uploaded') LIMIT 1",
+                  (path, path)))  # fmt: skip
+
+
 def _live_name(account, dedup):
     """Google's file name for an item, or ""."""
     rows = _library_rows(account, "SELECT file_name FROM remote_media WHERE dedup_key=? LIMIT 1", (dedup,))
@@ -6352,6 +6361,10 @@ def datefix_step(make_client=None, only=None):
             _dates_checked[path] = now
         if not found or not sha1:
             _set_fix(path, "failed", "This file isn't on the server any more")
+            continue
+        if _live_part(path):  # sent inside one motion photo: uploading this half alone would split it
+            _set_fix(path, "failed", "Part of a Live Photo: it is in Google inside one motion photo, so it "
+                                     "isn't uploaded again on its own")  # fmt: skip
             continue
         size, mtime, _account = found[0]
         track = dates_state[account]

@@ -15,6 +15,9 @@
   and never when they have more pixels; those are kept and listed. On the test library, items with
   the same name and time were often different photos, so names and times alone are never used. A
   Live Photo the iPhone's own Google Photos app uploaded is kept, and nothing is uploaded for it.
+- **Fix dates never uploads half of a Live Photo.** The photo and the video of a Live Photo that went
+  up as one motion photo are left out of Fix dates (marked failed, with the reason): uploading one of
+  them alone would have put a separate photo or video next to the motion photo.
 
 ## 1.9.2
 
