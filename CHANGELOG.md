@@ -23,6 +23,11 @@
 - **Dates: a Live Photo's date comes from its video.** For a photo with no date of its own, the
   Dates page now suggests when its Live Photo video was taken ("its Live Photo video"), and shows
   the date of the motion photo in Google rather than of the old separate photo.
+- **A file that went up no longer shows as failed because of a misread key.** gpmc reads Google's
+  answers without their schema, so about one media key in a few thousand came back as a jumble of
+  numbers instead of text; the upload had worked, but saving it failed ("type 'dict' is not
+  supported"). Such keys are now read back to their exact text, and files that failed this way are
+  marked as in Google with their key (or tried again if Google's list doesn't show them yet).
 - **Fix dates never uploads half of a Live Photo.** The photo and the video of a Live Photo that went
   up as one motion photo are left out of Fix dates (marked failed, with the reason): uploading one of
   them alone would have put a separate photo or video next to the motion photo.

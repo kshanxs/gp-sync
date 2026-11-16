@@ -3990,6 +3990,69 @@ def reclaim_cancel(account, keys):
     return {"cancelled": n}
 
 
+# ---------------------------------------------------------------- Google's media keys, read right
+# gpmc reads Google's answers without their schema (blackboxprotobuf), so a text field whose bytes
+# happen to also read as a protobuf message comes back as a dict. A media key ("AF1Qip...") does that
+# about once in a few thousand: the upload worked, but the key was a dict, so saving it failed and
+# the file showed as failed. The type information that comes with the answer is enough to write the
+# dict back to its exact bytes; when those are a media key, the text is put back.
+_MEDIA_KEY = re.compile(r"AF1Qip[A-Za-z0-9_-]{20,}")
+
+
+def _as_bytes(item, entry):
+    """The exact bytes a decoded sub-message came from (re-encoded with its type and field order)."""
+    from blackboxprotobuf import encode_message
+
+    out = encode_message({"1": item}, {"1": entry})
+    i = 1  # one tag byte for field 1, then the length as a varint
+    while out[i] & 0x80:
+        i += 1
+    return out[i + 1 :]
+
+
+def _fix_media_keys(value, typedef):
+    """`value` with every media key that was decoded as a message turned back into its text."""
+    if isinstance(value, list):
+        return [_fix_media_keys(v, typedef) for v in value]
+    if not isinstance(value, dict) or not isinstance(typedef, dict):
+        return value
+    out = {}
+    for field, v in value.items():
+        entry = typedef.get(field) or {}
+        if entry.get("type") == "message":
+            sub = entry.get("message_typedef") or {}
+
+            def one(item, entry=entry, sub=sub):
+                if isinstance(item, dict):
+                    with contextlib.suppress(Exception):
+                        text = _as_bytes(item, entry).decode("ascii")
+                        if _MEDIA_KEY.fullmatch(text):
+                            return text
+                return _fix_media_keys(item, sub)
+
+            v = [one(i) for i in v] if isinstance(v, list) else one(v)
+        out[field] = v
+    return out
+
+
+def _read_media_keys_right():
+    """Make gpmc's answers carry media keys as text (see above). Done once."""
+    import gpmc.api
+
+    real = gpmc.api.decode_message
+    if getattr(real, "_gp_keys", False):
+        return
+
+    def decode(buf, *args, **kwargs):
+        message, typedef = real(buf, *args, **kwargs)
+        return _fix_media_keys(message, typedef), typedef
+
+    decode._gp_keys = True
+    gpmc.api.decode_message = decode
+
+
+_read_media_keys_right()
+
 _clients = {}  # account -> (login, gpmc Client): one login per account, renewed by gpmc when due
 _clients_lock = threading.Lock()
 
@@ -5505,6 +5568,35 @@ def _live_redate(client, account, still, mov, new_key, new_dedup, track):
     return True
 
 
+def fix_dict_key_failures():
+    """Files that went up but showed as failed because Google's key came back as a dict (see
+    _fix_media_keys): marked as in Google with their key from the library list, or tried again."""
+    bad = "%type 'dict' is not supported%"
+    n = 0
+    for table in ("files", "copies"):
+        rows = q(f"SELECT path, account FROM {table} WHERE status='failed' AND error LIKE ?", (bad,))
+        for path, account in rows:
+            owner = account or _main_account("")
+            try:
+                dedup = _b64_hash(media.sha1_file(path))
+            except OSError:
+                continue
+            found = _library_rows(owner, "SELECT media_key FROM remote_media WHERE dedup_key=? AND is_canonical "
+                                         "AND COALESCE(trash_timestamp, 0)=0 LIMIT 1", (dedup,))  # fmt: skip
+            if found and found[0][0]:
+                q(
+                    f"UPDATE {table} SET status='exists', media_key=?, error='', attempts=0, updated=? "
+                    "WHERE path=? AND COALESCE(account, '')=?",
+                    (found[0][0], time.time(), path, account or ""),
+                )
+            else:  # not in the library list yet: try again (Google's key now reads as text)
+                q(f"UPDATE {table} SET attempts=0 WHERE path=? AND COALESCE(account, '')=?", (path, account or ""))
+            n += 1
+    if n:
+        log(f"{n} files that went up but showed as failed (a key Google sent was misread) are fixed", "info")
+    return n
+
+
 def live_fix_step(account, make_client=None):
     """Replace Live Photos sent as two items with one motion photo each. Returns True if it did work."""
     rows = q(
@@ -5875,6 +5967,10 @@ def reclaim_worker():
         q("""UPDATE live_fix SET state='skipped', error=? WHERE state='failed' AND error LIKE '%broken box%'""",
           ("The photo is a PNG inside; a motion photo needs HEIC or JPEG, so it is left as it is",))  # fmt: skip
         # 1.9.1 couldn't copy a few iPhone videos into MP4 (a frame's timestamps out of order): try again.
+        if not meta_get("dict_media_keys"):
+            with contextlib.suppress(Exception):
+                fix_dict_key_failures()
+            meta_set("dict_media_keys", "1")
         if not meta_get("live_retry_mux"):
             q("UPDATE live_fix SET state='queued', error='' WHERE state='failed' AND error LIKE 'ArgumentError%'")
             meta_set("live_retry_mux", "1")
