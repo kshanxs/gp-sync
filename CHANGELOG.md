@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.9.0
+
 - **iPhone Live Photos are motion photos in Google.** They used to arrive as a still plus a separate
   2–3 second video. GP Sync now pairs the photo and video by the ID Apple puts in both (even when a
   phone backup app spreads them over different subfolders) and uploads one motion photo with the
