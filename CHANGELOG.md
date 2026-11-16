@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.3
 
 - **Live Photos keep both originals.** A Live Photo now goes up as the original HEIC (or JPEG) and
   the original MOV in one file, byte for byte, in the motion-photo layout Samsung phones write, which
