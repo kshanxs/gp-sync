@@ -9,11 +9,10 @@ wins, and the Work log row says so. Written by the handoff skill (`handoff.py lo
 
 | Item | Owner | Status | Link |
 |---|---|---|---|
-| Live Photos 1.9.3 (originals) TEST BUILD runs in place of the installed app on umbrel (container kshan-gphotos-sync_web_1 = image gp-sync:live-test; installed 1.9.2 container stopped as kshan-gphotos-sync_web_1_v192). Redoing all Live Photos. NOT released | Claude | Running; owner decides release | PR #13 (draft) |
+| GP Sync 1.9.3 (Live Photo originals) released and installed on umbrel (image kshanxs/gp-sync:1.9.3); test containers removed | Claude | Done | https://github.com/kshanxs/gp-sync/releases/tag/v1.9.3 |
 
 ## Next up
 
-1. Owner decides on releasing PR #13 as 1.9.3. Before a store update, put the installed container back (Umbrel's compose can't replace a container it didn't create): stop the test container, rename it aside, rename kshan-gphotos-sync_web_1_v192 back and start it; then release. If not releasing, do the same to return to 1.9.2. Old stopped containers (_test1.._test3, _v192 after release) can be removed with docker rm.
 1. Live Photos: check Sync › Folders shows the Live Photos fix finished (~515 in shubhanshushukla21; 6 in kshanxs wait until its paused uploads are resumed) and spot-check a few in Google Photos (they play; old still + video in the Trash).
 1. Update GP Sync to 1.8.6 on the Umbrel (the store offers it), try the Jobs card's Pause and the Sync account Pause during a real upload (each finishes its file first), look over Folders on the phone, then add a second account to a folder that is already backed up and watch the check on Sync (the real library read has only been tested with a fake client).
    Then retake the README screenshots in docs/ from the real app (they still show 1.5.8).
