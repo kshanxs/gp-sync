@@ -188,6 +188,16 @@ strong {
     background: transparent;
     color: var(--ink-2);
   }
+  /* Deleted in Google: a long account name wraps instead of running off a phone screen. */
+  .gone-chips .badge {
+    height: auto;
+    min-height: 1.5rem;
+    max-width: 100%;
+    padding-block: 0.25rem;
+    line-height: 1.25;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
   @media (hover: hover) {
     a .badge:hover {
       border-color: color-mix(in oklab, var(--ink) 18%, transparent);

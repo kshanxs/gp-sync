@@ -44,6 +44,7 @@ import { onPrecheckClick } from "./lib/prechecks";
 import { watchSegs } from "./lib/fit-segs";
 import storage from "./views/storage";
 import downloads from "./views/downloads";
+import gone from "./views/gone";
 import upload from "./views/upload";
 
 interface Route {
@@ -62,6 +63,7 @@ const ROUTES: Route[] = [
   { id: "library", title: "Library", ic: "library", view: library, group: "Backup" },
   { id: "storage", title: "Free storage", ic: "cloud", view: storage, group: "Backup" },
   { id: "downloads", title: "Downloads", ic: "download", view: downloads, group: "Backup" },
+  { id: "gone", title: "Deleted in Google", ic: "trash", view: gone, group: "Backup" },
   { id: "copy", title: "Copy accounts", ic: "users", view: copyView, group: "Backup" },
   { id: "folders", title: "Folders", ic: "folder", view: folders, group: "Insights" },
   { id: "insights", title: "Insights", ic: "chart", view: insights, group: "Insights" },
@@ -251,6 +253,7 @@ function updateShell(s: Status): void {
     ],
     health: warnHealth ? ["!", "bad"] : ["", ""],
     dates: s.dates?.waiting ? [String(s.dates.waiting), "info"] : ["", ""],
+    gone: s.gone ? [String(s.gone), "info"] : ["", ""],
     settings: s.accounts.length ? ["", ""] : ["1", "info"],
     sync: s.phase === "uploading" && s.total ? [`${s.done}/${s.total}`, "info"] : ["", ""],
   };

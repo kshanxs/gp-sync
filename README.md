@@ -167,6 +167,7 @@ Immich, every setting and the full example are in [Run it anywhere](#run-it-anyw
 - **Fast moving.** Before downloading anything, GP Sync looks on this server for a file with the
   same checksum and copies that instead. The original is never moved or changed.
 - **Downloads.** Keep the downloaded copies on the server, per account, to save or delete later.
+- **Deleted in Google.** Delete a photo in Google Photos and GP Sync notices it, never uploads it again, and offers to delete it here and in your other accounts.
 - **Freed by GP Sync** shows what was freed: totals, time taken, per day and each item with a link
   to check it in Google Photos.
 
@@ -486,6 +487,10 @@ never stop backups; if Turso can't be used, statistics fall back to SQLite autom
 | `GET /api/storage/freed?account=` | What Free storage freed: totals, time taken, per day, and each item |
 | `POST /api/storage/pause` | Pause or resume Free storage in an account: `{"account", "paused": true}` |
 | `GET /api/downloads?account=` | Copies kept after freeing storage, per account |
+| `GET /api/gone` | Files deleted in Google Photos (in one account or all) that are still here, per account |
+| `POST /api/gone/delete` | `{"paths": [...], "local": true, "google": false}`: delete them here and/or move them to the Trash in the accounts that still have them |
+| `POST /api/gone/keep` | Keep them here (still never uploaded again): `{"paths": [...]}`; `{"all": true, "keep": false}` lists every kept one again |
+| `POST /api/gone/refresh` | Read every account's Google Photos library again |
 | `GET /api/snapchat?action=replace&limit=120` | Snapchat memories: the export, the search in Google, what happens to each one |
 | `POST /api/snapchat/start` | Start memories: `{"account", "actions": ["album", "replace", "upload"]}` or `{"account", "paths": [...]}` |
 | `POST /api/snapchat/action` | Choose for memories: `{"paths": [...], "action": "album"\|"replace"\|"upload"\|"skip"\|"auto"}` |

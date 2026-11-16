@@ -141,6 +141,8 @@ export interface Status {
   dates?: { undated: number; waiting: number };
   /** The user has seen the "album for files without a date" choice. */
   undated_asked?: boolean;
+  /** Files deleted in Google Photos that are still here (the Deleted in Google page). */
+  gone?: number;
   current: Current | null;
   /** Every file uploading right now (several at once: Settings › Sync, Files at once). */
   uploading?: Current[];
@@ -1016,4 +1018,45 @@ export interface DownloadsReport {
   folder: string;
   accounts: Record<string, { photos: number; videos: number; bytes: number }>;
   items: DownloadItem[];
+}
+
+/** A file here that was deleted in Google Photos in at least one account (api/gone). */
+export interface GoneItem {
+  path: string;
+  name: string;
+  kind: "photo" | "video";
+  size: number;
+  mtime: number;
+  /** Each account it was sent to: deleted there, in its Trash, still there, or can't tell yet. */
+  accounts: {
+    account: string;
+    state: "deleted" | "trash" | "present" | "unknown";
+    trash: number;
+    /** When GP Sync noticed it was deleted there (0 = not noted). */
+    seen: number;
+    /** Moved to that account's Trash by GP Sync, when asked here. */
+    by_gp: boolean;
+  }[];
+  trashed: number;
+  seen: number;
+  /** Deleted in every account it was sent to. */
+  everywhere: boolean;
+  /** Accounts that still have it. */
+  in_google: string[];
+  /** GP Sync can delete it here (its folder isn't read-only). */
+  writable: boolean;
+}
+export interface GoneReport {
+  items: GoneItem[];
+  total: number;
+  bytes: number;
+  everywhere: number;
+  in_google: number;
+  writable: number;
+  kept: number;
+  /** When each account's library list was last read (0 = never). */
+  read: Record<string, number>;
+  refreshing: string[];
+  read_only: boolean;
+  upload_folder: string;
 }
