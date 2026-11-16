@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Live Photos keep both originals.** A Live Photo now goes up as the original HEIC (or JPEG) and
+  the original MOV in one file, byte for byte, in the motion-photo layout Samsung phones write, which
+  Google Photos plays (tested on a real account: Google serves the original HEIC and the original
+  MOV back). 1.9.0–1.9.2 turned HEIC into JPEG and copied the video into MP4, and guessed the moment
+  the photo was taken as the middle of the video, so the switch from photo to video could jump; now
+  Apple's own still-frame time is used.
+- **The copies 1.9.0–1.9.2 made are replaced** by the original-quality motion photo; each copy goes
+  to Google's Trash once Google confirms the new one.
+- **Duplicates of a Live Photo are removed, carefully.** Other items taken at the same moment go to
+  the Trash only when the Apple content ID inside them (read from the item) is this Live Photo's,
+  and never when they have more pixels; those are kept and listed. On the test library, items with
+  the same name and time were often different photos, so names and times alone are never used. A
+  Live Photo the iPhone's own Google Photos app uploaded is kept, and nothing is uploaded for it.
+
 ## 1.9.2
 
 - **Live Photos: videos with out-of-order frame times join too.** A few iPhone videos have a frame

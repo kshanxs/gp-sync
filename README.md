@@ -243,15 +243,17 @@ for, a **How it works** where it needs explaining, its numbers, then its filters
 - **Downloads need space.** Free storage downloads each item here first (it checks the free space),
   unless the same file is already on the server. With "Delete the downloaded copy" off, copies stay
   under **Downloads** until you delete them.
-- **iPhone Live Photos** go up as one motion photo. An iPhone saves the photo and its 2–3 second video
-  as two files; GP Sync pairs them by the ID Apple puts in both (anywhere in the same backed-up
-  folder) and sends one file with the video inside. A HEIC photo becomes a high-quality JPEG first
-  (date, place, camera and colour profile kept), because Google doesn't play HEIC motion photos. Live
-  Photos sent earlier as a photo plus a separate video are replaced: once Google shows the new motion
-  photo, the old photo and video go to Google's Trash (60 days to restore), keeping favourite,
-  archive and caption; albums made by hand lose them. Android motion photos (one file) are sent as
-  they are. Free storage and Copy accounts leave motion photos alone, since Google's download of one
-  is only its still.
+- **iPhone Live Photos** go up as one motion photo with **both originals inside, unchanged**: the
+  HEIC (or JPEG) photo and the MOV video, byte for byte, in the layout Samsung phones write (and the
+  open-source [MotionPhoto2](https://github.com/PetrVys/MotionPhoto2) reproduces), which Google
+  Photos plays. GP Sync pairs the photo and video by the ID Apple puts in both (anywhere in the same
+  backed-up folder) and uses Apple's own still-frame time, so the photo and video line up. Live
+  Photos sent earlier as a separate photo and video, or as the JPEG copies 1.9.0–1.9.2 made, are
+  replaced once Google confirms the new motion photo; the old items go to Google's Trash (60 days to
+  restore), keeping favourite, archive and caption. Other copies of the same shot go too, but only
+  when the Apple ID inside them matches and they have no more pixels than the one kept; a Live Photo
+  your iPhone's Google Photos app uploaded itself is kept and nothing is uploaded. Free storage and
+  Copy accounts leave motion photos alone.
 - **Nothing on your server is changed.** Deleting a file there doesn't delete it in Google Photos,
   and GP Sync never deletes files on the server (only its own downloads and thumbnails in `/data`).
   The one writable folder is the upload folder (**Photos/Uploads** on Umbrel).
