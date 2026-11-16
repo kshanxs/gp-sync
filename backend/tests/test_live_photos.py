@@ -405,3 +405,35 @@ def test_free_storage_and_copies_skip_motion_photos(tmp_path, monkeypatch, media
     assert [k for (k,) in sync.q("SELECT media_key FROM reclaim")] == ["STILL"]
     assert [i["key"] for i in sync.copy_candidates(ACC, "other@example.com")["items"]] == ["STILL"]
     sync.q("DELETE FROM reclaim")
+
+
+def test_old_video_noted_empty_is_found_again(separate):
+    """1.9.0 noted some old videos' keys as empty: the tidy-up finds the video again by its row and,
+    for pairs already finished, by its file name and exact size."""
+    still, mov, db = separate
+    with Storage(db) as s:
+        s.update([gitem("OLDMOV", "", type=2)])  # the library copy had no key for it yet
+    sync.scan()
+    client = FixClient()
+    sync.live_fix_step(ACC, lambda a: client)
+    assert not sync.q("SELECT old_mov FROM live_fix")[0][0]
+    dedup = client.sent[0][1]
+    mov_dedup = b64(mov.read_bytes())
+    with Storage(db) as s:  # a fresh read fills the key in, and Google shows the motion photo
+        s.update([gitem("NEW", dedup, motion=True), gitem("OLDMOV", mov_dedup, type=2)])
+    sync.meta_set(f"library_refreshed:{ACC}", str(time.time() + 60))
+    sync.live_fix_step(ACC, lambda a: client)
+    assert ("trash", [b64(still.read_bytes()), mov_dedup]) in client.api.calls
+    # A pair finished with the video left over (its row already points at the motion photo).
+    client.api.calls.clear()
+    with Storage(db) as s:
+        old = MediaItem(
+            media_key="OLDMOV", file_name="bbb.mov", dedup_key=mov_dedup, is_canonical=True, type=2, caption=None,
+            collection_id="", size_bytes=mov.stat().st_size, quota_charged_bytes=0, origin="self",
+            content_version=1, utc_timestamp=1, server_creation_timestamp=0,
+        )  # fmt: skip
+        s.update([old])
+    sync.q("UPDATE live_fix SET state='uploaded', old_mov=''")
+    sync.live_fix_step(ACC, lambda a: client)
+    assert client.api.calls[0] == ("trash", [b64(still.read_bytes()), mov_dedup])
+    assert sync.q("SELECT state FROM live_fix") == [("done",)]

@@ -5197,6 +5197,34 @@ def _live_skip(still, account, why):
       (why, time.time(), still, account))  # fmt: skip
 
 
+def _live_leftovers(account, still, mov, new_key, new_dedup, *known):
+    """Dedup keys of the old items still visible in Google (not in its Trash): the ones noted when
+    the pair was queued, the items the two files' rows point at now (read again after a fresh library
+    read: a key noted earlier can be empty), and a video Google has under the MOV's own file name and
+    exact size (GP Sync sent the halves under their file names)."""
+    found = list(known)
+    for path in (still, mov):
+        key = _live_rows(path, account)[1]
+        if key and key != new_key and (it := _live_item(account, key)):
+            found.append(it[0])
+    with contextlib.suppress(OSError):
+        rows = _library_rows(
+            account,
+            """SELECT dedup_key FROM remote_media WHERE file_name=? AND type=2 AND size_bytes=? AND media_key!=?
+               AND COALESCE(trash_timestamp, 0)=0""",
+            (os.path.basename(mov), os.path.getsize(mov), new_key),
+        )
+        found += [d for (d,) in rows or []]
+    out = []
+    for d in dict.fromkeys(found):
+        if not d or not _is_hash(d) or d == new_dedup:
+            continue
+        it = _live_item(account, d)
+        if it and not it[5]:  # still there and not in the Trash already
+            out.append(d)
+    return out
+
+
 def _live_send(client, account, still, mov, track):
     """Upload the joined motion photo. Returns (media key, dedup key)."""
     from rich.progress import Progress
@@ -5294,7 +5322,7 @@ def live_fix_step(account, make_client=None):
                     _live_ask_refresh(account)
                 continue
             client = client or make_client(account)
-            gone = [d for d in (old_still, old_mov) if d and _is_hash(d) and d != new_dedup]
+            gone = _live_leftovers(account, still, mov, new_key, new_dedup, old_still, old_mov)
             if gone:
                 client.api.move_remote_media_to_trash(gone)
             if fav or arch or cap:
@@ -5533,6 +5561,12 @@ def reclaim_worker():
           (NOT_ORIGINAL,))  # fmt: skip
         q("UPDATE reclaim SET error=? WHERE state='failed' AND error=?",
           (NOT_ORIGINAL, f"RuntimeError: {NOT_ORIGINAL}"))  # fmt: skip
+    with contextlib.suppress(Exception):
+        # 1.9.0 noted some old videos' keys as empty, so they stayed visible: tidy those pairs again.
+        if not meta_get("live_leftover_videos"):
+            q("""UPDATE live_fix SET state='uploaded' WHERE state='done' AND old_still IS NOT NULL
+                 AND COALESCE(old_mov, '')=''""")
+            meta_set("live_leftover_videos", "1")
     while True:
         reclaim_wake.clear()
         account_lanes.wake(dict.fromkeys([*(a for a, _ in accounts()), *list(_refresh_requests)]))
