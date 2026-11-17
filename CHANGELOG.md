@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.5
 
 - **Sync: every account on Backup progress.** With two or more accounts, the Backup progress card
   pages sideways: the whole library first, then one page per account with its own percentage, files
