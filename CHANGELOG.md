@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Deleted in Google lists only your own deletions.** An item now counts only when it went to
+  Google's Trash (or was emptied from there), since Google Photos never deletes for good without it.
+  Never counted: Free storage's replacements (followed to their free copy, which 1.9.4 missed:
+  73 Snapchat memories showed up wrongly), anything trashed right before one of GP Sync's own
+  "Deleted…" or "Live Photo…" log lines, and second copies of a Live Photo GP Sync joined (same
+  Apple content ID). The wrong notes 1.9.4 made are cleared once on start.
+
 ## 1.9.4
 
 - **Deleted in Google.** A new page lists photos and videos GP Sync backed up that you have since

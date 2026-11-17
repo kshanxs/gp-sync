@@ -1027,10 +1027,11 @@ export interface GoneItem {
   kind: "photo" | "video";
   size: number;
   mtime: number;
-  /** Each account it was sent to: deleted there, in its Trash, still there, or can't tell yet. */
+  /** Each account it was sent to: deleted there by you, in its Trash, still there, handled by GP Sync, or can't tell yet. */
   accounts: {
     account: string;
-    state: "deleted" | "trash" | "present" | "unknown";
+    /** ours: GP Sync removed or replaced it there itself (never counted as deleted by you). */
+    state: "deleted" | "trash" | "present" | "ours" | "unknown";
     trash: number;
     /** When GP Sync noticed it was deleted there (0 = not noted). */
     seen: number;
