@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- **Deleted in Google.** A new page lists photos and videos GP Sync backed up that you have since
+  deleted in Google Photos (or put in its Trash), in any of your accounts, while the file is still
+  here. GP Sync never uploads them again, to any account, including accounts added later. For each
+  one: delete it on this device, move it to the Trash in the other accounts that still have it, both,
+  or keep it. Nothing is deleted on its own, and each file is checked against Google once more first.
+- **Noticed without opening the page.** Each account's Google Photos library is read again every 6
+  hours (only the changes), and every newly deleted file is noted in Activity ("You deleted in
+  Google"); the menu shows how many are waiting.
+- **Only your deletions count.** Items GP Sync removed itself (the old halves of Live Photos joined
+  into one motion photo, their duplicates, extra copies of Snapchat memories) are never listed, and a
+  Snapchat memory counts as in Google while any copy Google keeps of it is there. An account is only
+  judged once its library was read after the file was sent.
+- **Read-only folders.** On Umbrel the photo folders are mounted read-only, so GP Sync can delete
+  files here only in the upload folder; the page says which files it can't delete.
+
 ## 1.9.3
 
 - **Live Photos keep both originals.** A Live Photo now goes up as the original HEIC (or JPEG) and

@@ -176,6 +176,8 @@ export const eventMeta: Record<string, { tone: Tone; icon: IconName; label: stri
   freed: { tone: "good", icon: "cloud", label: "Re-uploaded free" },
   copied: { tone: "good", icon: "copy", label: "Copied" },
   deleted: { tone: "warn", icon: "trash", label: "Deleted in Google" },
+  gone: { tone: "warn", icon: "cloudOff", label: "You deleted in Google" },
+  removed: { tone: "warn", icon: "trash", label: "Deleted here" },
   downloaded: { tone: "info", icon: "download", label: "Downloaded" },
   exists: { tone: "info", icon: "verified", label: "Already in Google" },
   failed: { tone: "bad", icon: "error", label: "Failed" },

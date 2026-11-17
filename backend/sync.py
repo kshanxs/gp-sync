@@ -248,6 +248,18 @@ def db():
     )
     # SHA-1 of files not uploaded yet (uploaded ones keep theirs in files), for those comparisons.
     conn.execute("CREATE TABLE IF NOT EXISTS hashes (path TEXT PRIMARY KEY, size INTEGER, mtime REAL, sha1 TEXT)")
+    # Files the user keeps here although they were deleted in Google Photos (see gone_items).
+    conn.execute("CREATE TABLE IF NOT EXISTS gone_kept (path TEXT PRIMARY KEY, added REAL)")
+    # Files deleted in Google Photos, per account (never uploaded there or anywhere again), and items
+    # GP Sync removed in Google itself (never counted as deleted by the user).
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS gone_seen (path TEXT NOT NULL, account TEXT NOT NULL, state TEXT, trash REAL,
+            seen REAL, by_gp INTEGER DEFAULT 0, PRIMARY KEY (path, account))"""
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS gone_removed (account TEXT NOT NULL, key TEXT NOT NULL, time REAL, "
+        "PRIMARY KEY (account, key))"
+    )
     # Keep in sync: everything `src` has is copied to `dst` every so often (both ways: two rows).
     conn.execute(
         """CREATE TABLE IF NOT EXISTS mirrors (
@@ -853,7 +865,7 @@ EVENT_KINDS = {
     "google": ("fixed", "freed", "copied", "deleted", "downloaded"),
     "exists": ("exists",),
     "failed": ("failed", "error"),
-    "system": ("scan", "info", "pause", "resume", "account", "album", "received"),
+    "system": ("scan", "info", "pause", "resume", "account", "album", "received", "gone", "removed"),
 }
 
 
@@ -1595,6 +1607,7 @@ def scan(st=None):
         (p, acc): (s, m, status, a)
         for p, acc, s, m, status, a in q("SELECT path,account,size,mtime,status,attempts FROM copies")
     }
+    gone_paths = {p for (p,) in q("SELECT DISTINCT path FROM gone_seen")}  # deleted in Google: never sent again
     todo = []
     index = []
     copies_todo = []  # the same files for a folder's other accounts, after the main backup
@@ -1695,6 +1708,13 @@ def scan(st=None):
                         for d in (lib, f):
                             d["synced_files"] += 1
                             d["synced_bytes"] += fst.st_size
+                    continue
+                if path in gone_paths:  # deleted in Google Photos: no account gets it again
+                    for extra in tmap[top][1:]:
+                        skip_copy.add((rel(path), extra))
+                    for d in (lib, f):
+                        d["synced_files"] += 1
+                        d["synced_bytes"] += fst.st_size
                     continue
                 settled = now - fst.st_mtime >= SETTLE
                 for extra in tmap[top][1:]:
@@ -3582,6 +3602,7 @@ def status_json():
             )
         ),
         "undated_asked": st["undated"]["asked"],
+        "gone": state.get("gone", 0),  # files deleted in Google Photos still here (Deleted in Google)
         "counts": {
             "uploaded": counts.get("uploaded", 0),
             "exists": counts.get("exists", 0),
@@ -5707,6 +5728,7 @@ def live_fix_step(account, make_client=None):
             )  # fmt: skip
             gone = [d for d in dict.fromkeys(gone) if (it := _live_item(account, d)) and not it[5]]
             if gone:
+                _note_removed(account, gone)
                 client.api.move_remote_media_to_trash(gone)
             if kept:
                 q("UPDATE live_fix SET kept=? WHERE still=? AND account=?", (", ".join(kept), still, account))
@@ -5824,6 +5846,336 @@ def download_path(i):
     return p if p and p.is_file() and DOWNLOADS_DIR in p.parents else None
 
 
+# ---------------------------------------------------------------- deleted in Google Photos
+# A file GP Sync sent to Google Photos (or found already there) that the user later deleted there,
+# in any of the accounts it went to: gone from that account's library list, or in Google's Trash.
+# The file is never uploaded again by any sync (gone_seen). The page lists it with what is left:
+# delete it here, delete it in the other accounts that still have it, or keep it. An account is
+# only judged once its list was read after the file was sent, and items GP Sync removed itself
+# (Live Photos joined into one motion photo, extra copies of Snapchat memories) never count.
+
+GONE_LIMIT = 2000  # items listed at most
+GONE_REFRESH = 6 * 3600  # each account's library list is read again this often (cheap: only changes)
+GONE_LOG_EACH = 10  # more newly deleted files than this in one account are logged as one line
+_gone_lock = threading.Lock()
+
+
+def _gone_library(account):
+    """(visible {media key: dedup key}, visible dedup keys, {key or dedup: trash time}) of an account's
+    library list, or None when there is no list here yet. The Locked folder counts as visible: moved
+    there, not deleted."""
+    rows = _library_rows(account, "SELECT media_key, dedup_key, COALESCE(trash_timestamp, 0) FROM remote_media")
+    if rows is None:
+        return None
+    keys, dedups, trashed = {}, set(), {}
+    for key, dedup, trash in rows:
+        if trash:
+            trashed[key] = trashed[dedup] = _seconds(trash)
+        else:
+            keys[key] = dedup
+            dedups.add(dedup)
+    return keys, dedups, trashed
+
+
+def _note_removed(account, keys):
+    """GP Sync itself trashed or deleted these items in Google (they are never "deleted by you")."""
+    now = time.time()
+    qmany(
+        "INSERT OR IGNORE INTO gone_removed (account, key, time) VALUES (?,?,?)", [(account, k, now) for k in keys if k]
+    )
+
+
+def _gone_ours(accs, trashed):
+    """{account: keys and dedup keys GP Sync removed in Google itself}. Recorded since this version
+    (gone_removed); before it, the old halves of Live Photos and deleted Snapchat copies are known,
+    and items the Live Photo fix trashed are recognised by their trash time: just before its log line."""
+    ours = {a: set() for a in accs}
+    for a, k in q("SELECT account, key FROM gone_removed"):
+        ours.setdefault(a, set()).add(k)
+    for a, *ks in q("SELECT account, old_still, old_mov, prev_motion FROM live_fix"):
+        ours.setdefault(a, set()).update(k for k in ks if k)
+    snap = {k for row in q("SELECT media_key, dedup FROM snap_copies WHERE state='deleted'") for k in row if k}
+    for a in accs:
+        ours[a] |= snap
+        marks = sorted(
+            t for (t,) in sq("SELECT time FROM events WHERE text LIKE ?", (f"Live Photo % Google's Trash ({a})",)) or []
+        )
+        if not marks:
+            continue
+        for key, when in trashed.get(a, {}).items():
+            i = bisect.bisect_left(marks, when - 1)
+            if i < len(marks) and marks[i] <= when + 30:
+                ours[a].add(key)
+    return ours
+
+
+def _gone_target(path):
+    """Where the file can be deleted: its own path when its folder is writable, or the same file in
+    the upload folder (on Umbrel the photo folders are read-only, the upload folder isn't). None if
+    neither can be written."""
+    p = Path(path)
+    if os.access(p.parent, os.W_OK):
+        return p
+    shown = upload_folder_name()
+    name = rel(p)
+    if shown and name.startswith(shown + "/"):
+        other = UPLOAD_DIR / name.removeprefix(shown + "/")
+        with contextlib.suppress(OSError):
+            if other.is_file() and os.path.samefile(other, p) and os.access(other.parent, os.W_OK):
+                return other
+    return None
+
+
+def _gone_scan():
+    """Every file sent to Google with where it stands in each account it went to:
+    {path: [(account, state, trash time, dedup keys to delete it by)]}; state is "present",
+    "trash", "deleted" or "unknown" (not read since, being replaced, or removed by GP Sync)."""
+    libs, refreshed = {}, {}
+    for a, _ in accounts():
+        lib = _gone_library(a)
+        if lib is not None:
+            libs[a] = lib
+            refreshed[a] = float(meta_get(f"library_refreshed:{a}") or 0)
+    if not libs:
+        return {}
+    ours = _gone_ours(list(libs), {a: lib[2] for a, lib in libs.items()})
+    main = _main_account("")
+    sent = collections.defaultdict(list)  # path -> [(account, key, updated)]
+    sha = {}
+    for p, a, key, sha1, up in q(
+        "SELECT path, account, media_key, sha1, updated FROM files WHERE status IN ('uploaded','exists')"
+    ):
+        sent[p].append((a or main, key or "", up or 0))
+        sha[p] = sha1
+    for p, a, key, up in q(
+        "SELECT path, account, media_key, updated FROM copies WHERE status IN ('uploaded','exists')"
+    ):
+        sent[p].append((a, key or "", up or 0))
+    busy_dates = {p for (p,) in sq("SELECT path FROM media_dates WHERE fix IN ('waiting','in_google')")}
+    busy_reclaim = {d for (d,) in q("SELECT dedup_key FROM reclaim WHERE state NOT IN ('done','failed')")}
+    live = {}
+    for still, mov, a, st_, key, dedup in q("SELECT still, mov, account, state, new_key, new_dedup FROM live_fix"):
+        for p in (still, mov):
+            if p:
+                live.setdefault(p, {})[a] = (st_, key or "", dedup or "")
+    snap = collections.defaultdict(set)  # memory -> every key Google has or had for it, but deleted copies
+    for p, *ks in q("SELECT path, new_key, google_key, google_dedup FROM snap_items WHERE state='done'"):
+        snap[p].update(k for k in ks if k)
+    for p, k, d in q("SELECT path, media_key, dedup FROM snap_copies WHERE COALESCE(state, '') != 'deleted'"):
+        snap[p].update(x for x in (k, d) if x)
+    out = {}
+    for p, sends in sent.items():
+        if p in busy_dates:
+            continue
+        dedup = _b64_hash(bytes.fromhex(sha[p])) if sha.get(p) else ""
+        if dedup and dedup in busy_reclaim:
+            continue  # Free storage is replacing it right now
+        where = []
+        for a, key, up in sends:
+            lib = libs.get(a)
+            look = [key, dedup, *snap.get(p, ())]
+            fix = live.get(p, {}).get(a)
+            if fix and fix[0] in ("done", "uploaded", "redate"):
+                look = [fix[1], fix[2]]  # sent inside one motion photo: that is what to look for
+            elif fix and fix[0] not in ("skipped", "failed"):
+                lib = None  # being joined into one motion photo
+            look = [x for x in look if x]
+            if lib is None or up >= refreshed.get(a, 0) or not look:
+                where.append((a, "unknown", 0, []))
+                continue
+            keys, dedups, trashed = lib
+            here = [keys[x] for x in look if x in keys] + [x for x in look if x in dedups]
+            if here:
+                where.append((a, "present", 0, list(dict.fromkeys(here))))
+            elif any(x in ours.get(a, ()) for x in look):
+                where.append((a, "unknown", 0, []))  # GP Sync removed it itself
+            else:
+                trash = max((trashed.get(x, 0) for x in look), default=0)
+                where.append((a, "trash" if trash else "deleted", trash, []))
+        out[p] = where
+    return out
+
+
+def gone_check():
+    """Note files newly deleted in Google Photos (gone_seen: no sync uploads them again) and log them;
+    forget the ones back in Google (restored from its Trash). Returns {path: where} of files deleted
+    in at least one account (see _gone_scan)."""
+    with _gone_lock:
+        scanned = _gone_scan()
+        now = time.time()
+        seen = {(p, a): by for p, a, by in q("SELECT path, account, by_gp FROM gone_seen")}
+        gone_now = {(p, w[0]): w for p, ws in scanned.items() for w in ws if w[1] in ("trash", "deleted")}
+        here = {p: os.path.exists(p) for p, _a in gone_now}
+        gone_now = {k: w for k, w in gone_now.items() if here[k[0]]}  # gone here too: nothing to note
+        back = [(p, w[0]) for p, ws in scanned.items() for w in ws if w[1] == "present" and (p, w[0]) in seen]
+        qmany("DELETE FROM gone_seen WHERE path=? AND account=?", back)
+        new = [(p, a, w[1], w[2], now) for (p, a), w in gone_now.items() if (p, a) not in seen]
+        qmany("INSERT OR IGNORE INTO gone_seen (path, account, state, trash, seen, by_gp) VALUES (?,?,?,?,?,0)", new)
+        by_account = collections.defaultdict(list)
+        for p, a, *_ in new:
+            by_account[a].append(p)
+        for a, paths in by_account.items():
+            if len(paths) <= GONE_LOG_EACH:
+                for p in paths:
+                    log(f"{rel(p)} was deleted in Google Photos ({a})", "gone", rel(p))
+            else:
+                log(f"{len(paths)} files were deleted in Google Photos ({a}): see Deleted in Google", "gone")
+        found = {p: ws for p, ws in scanned.items() if any(w[1] in ("trash", "deleted") for w in ws)}
+        kept = {p for (p,) in q("SELECT path FROM gone_kept")}
+        count = sum(1 for p in found if p not in kept and here.get(p))
+        if new or back or state.get("gone") != count:
+            state["gone"] = count
+            notify_change()
+        return found
+
+
+def gone_items(found=None):
+    """Files here that were deleted in Google Photos in at least one account: [{path, name, kind, size,
+    mtime, accounts: [{account, state, trash}], trashed, everywhere, writable, in_google}]."""
+    found = gone_check() if found is None else found
+    kept = {p for (p,) in q("SELECT path FROM gone_kept")}
+    seen = {(p, a): (t, by) for p, a, t, by in q("SELECT path, account, seen, by_gp FROM gone_seen")}
+    out = []
+    for p, where in found.items():
+        if p in kept:
+            continue
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue  # not here any more: nothing to delete
+        name = rel(p)
+        accs = [
+            {
+                "account": a,
+                "state": s,
+                "trash": t,
+                "seen": seen.get((p, a), (0, 0))[0],
+                "by_gp": bool(seen.get((p, a), (0, 0))[1]),
+            }
+            for a, s, t, _ in where
+        ]
+        out.append(
+            {
+                "path": name,
+                "name": Path(p).name,
+                "kind": "video" if ext(name) in VIDEO_EXTS else "photo",
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+                "accounts": accs,
+                "trashed": max((x["trash"] for x in accs), default=0),
+                "seen": max((x["seen"] for x in accs), default=0),
+                "everywhere": all(x["state"] in ("trash", "deleted") for x in accs),
+                "in_google": [x["account"] for x in accs if x["state"] == "present"],
+                "writable": _gone_target(p) is not None,
+                "_abs": p,
+                "_dedups": {a: d for a, s, _t, d in where if s == "present"},
+            }
+        )
+    out.sort(key=lambda i: (-i["seen"], -i["trashed"], -i["mtime"], i["path"]))
+    return out
+
+
+def gone_report():
+    items = gone_items()
+    shown = items[:GONE_LIMIT]
+    accs = [a for a, _ in accounts()]
+    return {
+        "items": [{k: v for k, v in i.items() if not k.startswith("_")} for i in shown],
+        "total": len(items),
+        "bytes": sum(i["size"] for i in items),
+        "everywhere": sum(1 for i in items if i["everywhere"]),
+        "in_google": sum(1 for i in items if i["in_google"]),
+        "writable": sum(1 for i in items if i["writable"]),
+        "kept": q("SELECT COUNT(*) FROM gone_kept")[0][0],
+        "read": {a: float(meta_get(f"library_refreshed:{a}") or 0) for a in accs},
+        "refreshing": sorted(set(accs) & (_refreshing | set(_refresh_requests))),
+        "read_only": not os.access(MEDIA, os.W_OK),
+        "upload_folder": upload_folder_name(),
+    }
+
+
+def gone_delete(names, local=True, google=False, make_client=None):
+    """For files deleted in Google Photos in at least one account: move them to Google's Trash in the
+    accounts that still have them (google), and delete them here (local). Each is checked again first:
+    a file not deleted in any account is never touched. Returns {deleted, bytes, trashed, failed}."""
+    make_client = make_client or _reclaim_client
+    wanted = set(names)
+    found = {i["path"]: i for i in gone_items() if i["path"] in wanted}
+    deleted, freed, failed = [], 0, []
+    trashed = 0
+    if google:
+        per_account = collections.defaultdict(list)  # account -> [(item, dedups)]
+        for name in names:
+            i = found.get(name)
+            for a, ds in (i or {}).get("_dedups", {}).items():
+                per_account[a].append((i, ds))
+        for a, todo in per_account.items():
+            dedups = list(dict.fromkeys(d for _, ds in todo for d in ds))
+            try:
+                client = make_client(a)
+                for k in range(0, len(dedups), 100):
+                    client.api.move_remote_media_to_trash(dedups[k : k + 100])
+            except Exception as e:
+                for i, _ in todo:
+                    failed.append({"path": i["path"], "error": f"{a}: {type(e).__name__}: {e}"[:200]})
+                    found.pop(i["path"], None)  # not deleted here either: Google still has it
+                continue
+            now = time.time()  # noted as deleted at the user's request: not logged as deleted by them
+            qmany(
+                "INSERT OR REPLACE INTO gone_seen (path, account, state, trash, seen, by_gp) "
+                "VALUES (?,?,'trash',?,?,1)",
+                [(i["_abs"], a, now, now) for i, _ in todo],
+            )
+            trashed += len(todo)
+            log(f"Moved {len(todo)} file(s) to Google's Trash in {a}: they were deleted in another account", "deleted")
+            if a not in _refresh_requests:
+                _refresh_requests.append(a)
+        reclaim_wake.set()
+    if local:
+        for name in names:
+            i = found.get(name)
+            if not i:
+                if not any(f["path"] == name for f in failed):
+                    failed.append({"path": name, "error": "It wasn't deleted in Google Photos, or it isn't here"})
+                continue
+            target = _gone_target(i["_abs"])
+            if target is None:
+                failed.append({"path": name, "error": "GP Sync can't write to this folder (it is read-only)"})
+                continue
+            try:
+                target.unlink()
+            except OSError as e:
+                failed.append({"path": name, "error": f"{type(e).__name__}: {e.strerror or e}"[:200]})
+                continue
+            p = i["_abs"]
+            for table in ("files", "copies", "hashes", "live_ids", "gone_seen", "gone_kept"):
+                q(f"DELETE FROM {table} WHERE path=?", (p,))
+            deleted.append(name)
+            freed += i["size"]
+            log(f"Deleted {name} here: it was deleted in Google Photos", "removed", name)
+    if deleted or trashed:
+        notify_change()
+    return {"deleted": len(deleted), "bytes": freed, "trashed": trashed, "failed": failed}
+
+
+def gone_keep(names, keep=True):
+    """Keep files here although they were deleted in Google Photos: they leave the list but are still
+    never uploaded again (keep=False puts them back on the list)."""
+    rows = [(str(MEDIA / n),) for n in names if clean_folder(n)]
+    if keep:
+        qmany("INSERT OR IGNORE INTO gone_kept (path, added) VALUES (?, strftime('%s','now'))", rows)
+    else:
+        qmany("DELETE FROM gone_kept WHERE path=?", rows)
+    return {"ok": True, "count": len(rows)}
+
+
+def gone_due(account):
+    """True when the account's library list was read before but not for GONE_REFRESH seconds."""
+    if not _library_db(account).exists():
+        return False
+    return time.time() - float(meta_get(f"library_refreshed:{account}") or 0) > GONE_REFRESH
+
+
 def refresh_library(account, make_client=None):
     """Read the account's library list from Google (the first time can take a few minutes)."""
     _refreshing.add(account)
@@ -5833,6 +6185,11 @@ def refresh_library(account, make_client=None):
         update_library((make_client or _reclaim_client)(account), account)
     except Exception as e:
         reclaim_state[account]["error"] = f"{type(e).__name__}: {e}"[:300]
+    else:
+        try:
+            gone_check()
+        except Exception as e:
+            print(f"Deleted in Google: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     finally:
         _refreshing.discard(account)
         notify_change()
@@ -5907,6 +6264,8 @@ def _account_step(account):
     while _take_refresh(account):
         refresh_library(account)
         busy = True
+    if gone_due(account):  # notices files deleted in Google Photos without opening a page
+        refresh_library(account)
     try:
         busy = auto_free_step(account) or busy
     except Exception as e:
@@ -5935,6 +6294,8 @@ def reclaim_worker():
     side across accounts), and adds albums and captions for every account."""
     with contextlib.suppress(Exception):  # reset work cut short by a restart
         q("UPDATE reclaim SET state='queued' WHERE state='downloading'")
+    with contextlib.suppress(Exception):  # the count of files deleted in Google Photos, for the menu
+        gone_check()
     with contextlib.suppress(Exception):
         # Items queued before 1.5.2 kept gpmc's "{}" (no caption) as their caption: drop it.
         q("UPDATE reclaim SET caption='' WHERE caption LIKE '{%}' AND state != 'done'")
@@ -9240,6 +9601,9 @@ class Handler(BaseHTTPRequestHandler):
                 )
             else:
                 self.send(404, "{}")
+        elif path == "/api/gone":
+            stamp = ":".join(meta_get(f"library_refreshed:{a}") or "" for a, _ in accounts())
+            self.cached(f"gone:{stamp}:{state['last_scan']}", 60, gone_report, fresh=5)
         elif path == "/api/downloads":
             account = arg("account", "")
             self.cached(f"downloads:{account}", 120, lambda: downloads_report(account), fresh=10)
@@ -9458,6 +9822,29 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(copy_retry(src, dst))
             else:
                 self.send(404, "{}")
+        elif path in ("/api/gone/delete", "/api/gone/keep", "/api/gone/refresh"):
+            try:
+                req = json.loads(body or "{}")
+                names = [str(n) for n in req.get("paths") or []][:5000]
+            except (ValueError, TypeError, AttributeError):
+                self.json({"error": "bad request"}, 400)
+                return
+            if path == "/api/gone/delete":
+                local, google = req.get("local", True) is not False, req.get("google") is True
+                self.json(gone_delete(names, local=local, google=google))
+            elif path == "/api/gone/keep":
+                if req.get("all") is True and req.get("keep") is False:  # show every kept file again
+                    q("DELETE FROM gone_kept")
+                    self.json({"ok": True})
+                else:
+                    self.json(gone_keep(names, req.get("keep", True) is not False))
+            else:  # read every account's library list again
+                for a, _ in accounts():
+                    if a not in _refresh_requests:
+                        _refresh_requests.append(a)
+                reclaim_wake.set()
+                notify_change()
+                self.json({"ok": True})
         elif path == "/api/downloads/delete":
             try:
                 req = json.loads(body or "{}")
