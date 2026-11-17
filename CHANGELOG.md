@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.4
 
 - **Deleted in Google.** A new page lists photos and videos GP Sync backed up that you have since
   deleted in Google Photos (or put in its Trash), in any of your accounts, while the file is still
@@ -14,8 +14,10 @@
   into one motion photo, their duplicates, extra copies of Snapchat memories) are never listed, and a
   Snapchat memory counts as in Google while any copy Google keeps of it is there. An account is only
   judged once its library was read after the file was sent.
-- **Read-only folders.** On Umbrel the photo folders are mounted read-only, so GP Sync can delete
-  files here only in the upload folder; the page says which files it can't delete.
+- **Umbrel: GP Sync can delete in your folders now.** The Umbrel home folder is mounted writable so
+  Delete works in every backed-up folder; GP Sync still only deletes a file when you press Delete
+  and confirm. On a read-only folder (plain Docker with `:ro`) the page says which files it can't
+  delete.
 
 ## 1.9.3
 

@@ -39,8 +39,8 @@ file is: on every account you back up to.
       <sub>Back each folder up to one account or several at once, and see per account what was uploaded, what Google already had and what is still to sync.</sub>
     </td>
     <td width="33%" valign="top">
-      <b>Read-only by design</b><br>
-      <sub>Your folders are mounted read-only. Nothing on your server is ever changed or deleted.</sub>
+      <b>Nothing deleted behind your back</b><br>
+      <sub>A file on your server is only deleted when you delete it in Google Photos and then press Delete on the Deleted in Google page.</sub>
     </td>
   </tr>
   <tr>
@@ -255,9 +255,10 @@ for, a **How it works** where it needs explaining, its numbers, then its filters
   when the Apple ID inside them matches and they have no more pixels than the one kept; a Live Photo
   your iPhone's Google Photos app uploaded itself is kept and nothing is uploaded. Free storage and
   Copy accounts leave motion photos alone.
-- **Nothing on your server is changed.** Deleting a file there doesn't delete it in Google Photos,
-  and GP Sync never deletes files on the server (only its own downloads and thumbnails in `/data`).
-  The one writable folder is the upload folder (**Photos/Uploads** on Umbrel).
+- **Nothing on your server is changed on its own.** Deleting a file there doesn't delete it in Google
+  Photos. GP Sync deletes a file on the server only when you press Delete on **Deleted in Google**
+  (after you deleted it in Google Photos); otherwise only its own downloads and thumbnails in `/data`.
+  On Umbrel the home folder is mounted writable for that; mount a folder `:ro` on Docker to rule it out.
 - **Dates.** Photos with no date inside get the best date GP Sync can find; Google Photos dates
   them by the upload otherwise. Arrival dates on Folders come from filesystem timestamps, which can
   change.
@@ -276,8 +277,10 @@ app does, through [gpmc](https://github.com/xob0t/google_photos_mobile_client).
 <details>
 <summary><b>Will it delete anything on my server?</b></summary>
 
-No. Your folders are mounted read-only. GP Sync only ever deletes its own downloads and thumbnails
-in `/data`.
+Only when you ask. After you delete a photo or video in Google Photos, the **Deleted in Google** page
+offers to delete it on the server too; nothing is deleted until you press Delete and confirm. Mount a
+folder read-only (`:ro`, as in the examples below) and GP Sync can't delete anything in it. Otherwise
+it only deletes its own downloads and thumbnails in `/data`.
 </details>
 
 <details>
