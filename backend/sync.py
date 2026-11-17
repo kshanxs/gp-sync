@@ -5857,6 +5857,7 @@ def download_path(i):
 GONE_LIMIT = 2000  # items listed at most
 GONE_REFRESH = 6 * 3600  # each account's library list is read again this often (cheap: only changes)
 GONE_LOG_EACH = 10  # more newly deleted files than this in one account are logged as one line
+GONE_MARK_SECONDS = 60  # an item trashed this long before one of GP Sync's "deleted" log lines is GP Sync's
 _gone_lock = threading.Lock()
 
 
@@ -5897,14 +5898,22 @@ def _gone_ours(accs, trashed):
     snap = {k for row in q("SELECT media_key, dedup FROM snap_copies WHERE state='deleted'") for k in row if k}
     for a in accs:
         ours[a] |= snap
+        # The Live Photo fix logs right after it trashes; Free storage, date fixes and Snapchat log
+        # "Deleted … in Google Photos (account) …" after trashing and emptying (a failed emptying
+        # leaves the item in the Trash). An item trashed just before such a line is GP Sync's.
         marks = sorted(
-            t for (t,) in sq("SELECT time FROM events WHERE text LIKE ?", (f"Live Photo % Google's Trash ({a})",)) or []
+            t
+            for (t,) in sq(
+                "SELECT time FROM events WHERE text LIKE ? OR (kind='deleted' AND text LIKE ?)",
+                (f"Live Photo % Google's Trash ({a})", f"Deleted % in Google Photos ({a})%"),
+            )
+            or []
         )
         if not marks:
             continue
         for key, when in trashed.get(a, {}).items():
             i = bisect.bisect_left(marks, when - 1)
-            if i < len(marks) and marks[i] <= when + 30:
+            if i < len(marks) and marks[i] <= when + GONE_MARK_SECONDS:
                 ours[a].add(key)
     return ours
 
@@ -5929,7 +5938,9 @@ def _gone_target(path):
 def _gone_scan():
     """Every file sent to Google with where it stands in each account it went to:
     {path: [(account, state, trash time, dedup keys to delete it by)]}; state is "present",
-    "trash", "deleted" or "unknown" (not read since, being replaced, or removed by GP Sync)."""
+    "trash", "deleted", "ours" (GP Sync removed or replaced it) or "unknown" (not read since, or being
+    replaced). "deleted" here only means gone; gone_check counts it as the user's only when the item
+    was seen in Google's Trash first: Google Photos never deletes for good without the Trash."""
     libs, refreshed = {}, {}
     for a, _ in accounts():
         lib = _gone_library(a)
@@ -5958,6 +5969,21 @@ def _gone_scan():
         for p in (still, mov):
             if p:
                 live.setdefault(p, {})[a] = (st_, key or "", dedup or "")
+    # Free storage replaced an item with a free copy (other bytes, a new key): look for the copy too.
+    freed = {}
+    for mk, dk, nk in q(
+        "SELECT media_key, dedup_key, new_key FROM reclaim WHERE state='done' AND COALESCE(new_key,'')!=''"
+    ):
+        freed[mk] = nk
+        if dk:
+            freed[dk] = nk
+    # Live Photos GP Sync joined into one motion photo: other files with the same Apple content ID
+    # (a second copy of the photo or its video) are its duplicates; removing them is GP Sync's work.
+    joined_cids = {c for (c,) in q(
+        """SELECT DISTINCT i.cid FROM live_ids i JOIN live_fix f ON i.path IN (f.still, f.mov)
+           WHERE f.state IN ('done','uploaded','redate') AND COALESCE(i.cid,'')!=''"""
+    )}  # fmt: skip
+    cid_of = {p: c for p, c in q("SELECT path, cid FROM live_ids WHERE COALESCE(cid,'')!=''") if c in joined_cids}
     snap = collections.defaultdict(set)  # memory -> every key Google has or had for it, but deleted copies
     for p, *ks in q("SELECT path, new_key, google_key, google_dedup FROM snap_items WHERE state='done'"):
         snap[p].update(k for k in ks if k)
@@ -5979,6 +6005,7 @@ def _gone_scan():
                 look = [fix[1], fix[2]]  # sent inside one motion photo: that is what to look for
             elif fix and fix[0] not in ("skipped", "failed"):
                 lib = None  # being joined into one motion photo
+            look += [freed[x] for x in look if x in freed]
             look = [x for x in look if x]
             if lib is None or up >= refreshed.get(a, 0) or not look:
                 where.append((a, "unknown", 0, []))
@@ -5987,8 +6014,8 @@ def _gone_scan():
             here = [keys[x] for x in look if x in keys] + [x for x in look if x in dedups]
             if here:
                 where.append((a, "present", 0, list(dict.fromkeys(here))))
-            elif any(x in ours.get(a, ()) for x in look):
-                where.append((a, "unknown", 0, []))  # GP Sync removed it itself
+            elif any(x in ours.get(a, ()) for x in look) or (p in cid_of and not fix):
+                where.append((a, "ours", 0, []))  # GP Sync removed it itself
             else:
                 trash = max((trashed.get(x, 0) for x in look), default=0)
                 where.append((a, "trash" if trash else "deleted", trash, []))
@@ -6004,12 +6031,20 @@ def gone_check():
         scanned = _gone_scan()
         now = time.time()
         seen = {(p, a): by for p, a, by in q("SELECT path, account, by_gp FROM gone_seen")}
+        # Gone for good without passing through Google's Trash (while GP Sync watched): not the user.
+        for p, ws in scanned.items():
+            scanned[p] = [
+                (a, "ours", 0, d) if st_ == "deleted" and (p, a) not in seen else (a, st_, t, d) for a, st_, t, d in ws
+            ]
+        ours_rows = [(p, w[0]) for p, ws in scanned.items() for w in ws if w[1] == "ours" and (p, w[0]) in seen]
+        qmany("DELETE FROM gone_seen WHERE path=? AND account=? AND by_gp=0", ours_rows)
+        seen = {k: v for k, v in seen.items() if k not in set(ours_rows) or v}
         gone_now = {(p, w[0]): w for p, ws in scanned.items() for w in ws if w[1] in ("trash", "deleted")}
         here = {p: os.path.exists(p) for p, _a in gone_now}
         gone_now = {k: w for k, w in gone_now.items() if here[k[0]]}  # gone here too: nothing to note
         back = [(p, w[0]) for p, ws in scanned.items() for w in ws if w[1] == "present" and (p, w[0]) in seen]
         qmany("DELETE FROM gone_seen WHERE path=? AND account=?", back)
-        new = [(p, a, w[1], w[2], now) for (p, a), w in gone_now.items() if (p, a) not in seen]
+        new = [(p, a, w[1], w[2], now) for (p, a), w in gone_now.items() if (p, a) not in seen and w[1] == "trash"]
         qmany("INSERT OR IGNORE INTO gone_seen (path, account, state, trash, seen, by_gp) VALUES (?,?,?,?,?,0)", new)
         by_account = collections.defaultdict(list)
         for p, a, *_ in new:
@@ -6021,6 +6056,8 @@ def gone_check():
             else:
                 log(f"{len(paths)} files were deleted in Google Photos ({a}): see Deleted in Google", "gone")
         found = {p: ws for p, ws in scanned.items() if any(w[1] in ("trash", "deleted") for w in ws)}
+        if new or ours_rows:
+            notify_change()
         kept = {p for (p,) in q("SELECT path FROM gone_kept")}
         count = sum(1 for p in found if p not in kept and here.get(p))
         if new or back or state.get("gone") != count:
@@ -6169,6 +6206,14 @@ def gone_keep(names, keep=True):
     return {"ok": True, "count": len(rows)}
 
 
+def gone_migrate():
+    """Once: 1.9.4 also noted items gone for good that it never saw in Google's Trash (Free storage's
+    replacements and the like). Only the Trash counts now, so those notes go."""
+    if not meta_get("gone_trash_only"):
+        q("DELETE FROM gone_seen WHERE state='deleted' AND by_gp=0")
+        meta_set("gone_trash_only", "1")
+
+
 def gone_due(account):
     """True when the account's library list was read before but not for GONE_REFRESH seconds."""
     if not _library_db(account).exists():
@@ -6295,6 +6340,7 @@ def reclaim_worker():
     with contextlib.suppress(Exception):  # reset work cut short by a restart
         q("UPDATE reclaim SET state='queued' WHERE state='downloading'")
     with contextlib.suppress(Exception):  # the count of files deleted in Google Photos, for the menu
+        gone_migrate()
         gone_check()
     with contextlib.suppress(Exception):
         # Items queued before 1.5.2 kept gpmc's "{}" (no caption) as their caption: drop it.

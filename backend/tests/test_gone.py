@@ -50,8 +50,17 @@ def library(account, *items, read=2000.0):
     sync.meta_set(f"library_refreshed:{account}", str(read))
 
 
-def everything_but(*gone, account=MAIN):
-    library(account, *[item(f"K-{n}", data=DATA[n]) for n in DATA if n not in gone])
+def everything_but(*gone, account=MAIN, emptied=()):
+    """The account's library: the files `gone` in Google's Trash (deleted by the user), the files
+    `emptied` gone for good, the rest there."""
+    library(
+        account,
+        *[item(f"K-{n}", data=DATA[n], **({"trash_timestamp": TRASHED_MS} if n in gone else {}))
+          for n in DATA if n not in emptied],
+    )  # fmt: skip
+
+
+TRASHED_MS = 1_700_000_000_000
 
 
 def names():
@@ -98,17 +107,19 @@ def test_nothing_is_listed_before_the_library_was_read(gone):
     assert names() == []
 
 
-def test_a_file_gone_from_google_or_in_its_trash_is_listed(gone):
+def test_only_what_went_through_googles_trash_is_the_users(gone):
     library(
         MAIN,
         item(f"K-{A}", data=DATA[A]),  # still there
-        item(f"K-{B}", data=DATA[B], trash_timestamp=1_700_000_000_000),  # in the Trash
-    )  # c.mp4 is gone altogether
+        item(f"K-{B}", data=DATA[B], trash_timestamp=TRASHED_MS),  # in the Trash: the user deleted it
+    )  # c.mp4 vanished without the Trash: Google Photos never deletes that way, so not the user
     got = {i["path"]: i for i in sync.gone_items()}
-    assert sorted(got) == [B, C]
+    assert sorted(got) == [B]
     assert got[B]["trashed"] == 1_700_000_000 and got[B]["accounts"][0]["state"] == "trash"
-    assert got[C]["trashed"] == 0 and got[C]["accounts"][0]["state"] == "deleted"
-    assert got[C]["kind"] == "video" and got[C]["size"] == 300 and got[C]["everywhere"] and got[C]["writable"]
+    assert got[B]["kind"] == "photo" and got[B]["size"] == 200 and got[B]["everywhere"] and got[B]["writable"]
+    # Emptied from the Trash afterwards: still the user's, now gone for good.
+    library(MAIN, item(f"K-{A}", data=DATA[A]))
+    assert states(B) == {MAIN: "deleted"} and names() == [B]
 
 
 def test_found_by_its_fingerprint_when_google_gave_it_a_new_key(gone):
@@ -134,9 +145,10 @@ def test_deleted_in_one_account_is_listed_with_the_accounts_that_still_have_it(g
     library(TWO, item("C2", data=DATA[C]))  # the second account still has c.mp4
     [i] = sync.gone_items()
     assert i["path"] == C and not i["everywhere"] and i["in_google"] == [TWO]
-    assert states(C) == {MAIN: "deleted", TWO: "present"}
-    library(TWO)
-    assert states(C) == {MAIN: "deleted", TWO: "deleted"} and sync.gone_items()[0]["everywhere"]
+    assert states(C) == {MAIN: "trash", TWO: "present"}
+    everything_but(C, account=TWO)
+    library(TWO, item("C2", data=DATA[C], trash_timestamp=TRASHED_MS))
+    assert states(C) == {MAIN: "trash", TWO: "trash"} and sync.gone_items()[0]["everywhere"]
 
 
 def test_files_being_replaced_in_google_are_not_listed(gone):
@@ -154,8 +166,8 @@ def test_live_photo_halves_follow_their_motion_photo(gone):
     # GP Sync trashed the old separate items itself; the motion photo is there: not listed.
     library(MAIN, item("A", data=DATA[A]), item("M", data=b"motion"))
     assert names() == []
-    library(MAIN, item("A", data=DATA[A]))  # the user deleted the motion photo
-    assert names() == [B, C]
+    library(MAIN, item("A", data=DATA[A]), item("M", data=b"motion", trash_timestamp=TRASHED_MS))
+    assert names() == [B, C]  # the user deleted the motion photo
 
 
 def test_items_gp_sync_removed_itself_never_count(gone):
@@ -208,8 +220,7 @@ def test_noticed_once_logged_and_forgotten_when_restored(gone, monkeypatch):
     assert logged == [("gone", f"{C} was deleted in Google Photos ({MAIN})")]
     assert sync.state["gone"] == 1
     (sync.MEDIA / B).unlink()  # gone here and in Google: nothing to note
-    sync.q("UPDATE files SET updated=1 WHERE path=?", (str(sync.MEDIA / B),))
-    library(MAIN, item(f"K-{A}", data=DATA[A]))
+    everything_but(B, C)
     sync.gone_check()
     assert [m for _, m in logged if "b.HEIC" in m] == []
     everything_but()  # restored from Google's Trash
@@ -221,7 +232,7 @@ def test_many_at_once_are_logged_as_one_line(gone, monkeypatch):
     logged = []
     monkeypatch.setattr(sync, "log", lambda msg, kind="info", name=None: logged.append(msg))
     monkeypatch.setattr(sync, "GONE_LOG_EACH", 1)
-    library(MAIN)
+    everything_but(A, B, C)
     sync.gone_check()
     assert logged == [f"3 files were deleted in Google Photos ({MAIN}): see Deleted in Google"]
 
@@ -248,12 +259,12 @@ def test_delete_in_the_other_accounts_too(gone, monkeypatch):
     assert client.api.trashed == [[dedup(C)]]
     assert (sync.MEDIA / C).exists()
     assert sync.q("SELECT account, state, by_gp FROM gone_seen WHERE path=? ORDER BY account",
-                  (str(sync.MEDIA / C),)) == [(MAIN, "deleted", 0), (TWO, "trash", 1)]  # fmt: skip
+                  (str(sync.MEDIA / C),)) == [(MAIN, "trash", 0), (TWO, "trash", 1)]  # fmt: skip
     # The next library read shows it in the Trash there: noted, not logged as deleted by the user.
     logged = []
     monkeypatch.setattr(sync, "log", lambda msg, kind="info", name=None: logged.append(msg))
     library(TWO, item("C2", data=DATA[C], trash_timestamp=5_000_000))
-    assert states(C) == {MAIN: "deleted", TWO: "trash"} and logged == []
+    assert states(C) == {MAIN: "trash", TWO: "trash"} and logged == []
 
 
 def test_a_google_error_leaves_the_file_here(gone):
@@ -312,7 +323,8 @@ def test_keep_hides_it_still_never_uploads_and_can_be_undone(gone, server):
 
 
 def test_report_status_and_refresh(gone, server):
-    library(MAIN, item(f"K-{A}", data=DATA[A]), read=time.time() - 10)
+    everything_but(B, C)
+    sync.meta_set(f"library_refreshed:{MAIN}", str(time.time() - 10))
     with urllib.request.urlopen(server + "/api/gone") as r:
         report = json.loads(r.read())
     assert report["total"] == 2 and report["bytes"] == 500 and report["everywhere"] == 2
@@ -331,3 +343,46 @@ def test_library_read_again_every_few_hours(gone):
     assert sync.gone_due(MAIN)
     sync.meta_set(f"library_refreshed:{MAIN}", str(time.time()))
     assert not sync.gone_due(MAIN)
+
+
+def test_free_storage_replacements_are_not_the_users(gone):
+    # Free storage swapped the item for a free copy (other bytes, a new key); the old one is gone.
+    sync.q("INSERT INTO reclaim (account, media_key, dedup_key, state, new_key) VALUES (?,?,?,'done','FREE')",
+           (MAIN, f"K-{C}", dedup(C)))  # fmt: skip
+    library(MAIN, item(f"K-{A}", data=DATA[A]), item(f"K-{B}", data=DATA[B]), item("FREE", data=b"free copy"))
+    assert names() == []
+    # The user deletes the free copy: now it is theirs.
+    library(MAIN, item(f"K-{A}", data=DATA[A]), item(f"K-{B}", data=DATA[B]),
+            item("FREE", data=b"free copy", trash_timestamp=TRASHED_MS))  # fmt: skip
+    assert names() == [C]
+
+
+def test_trashed_right_before_gp_syncs_own_deleted_line_is_gp_syncs(gone):
+    trashed_at = 1_794_000_000.0
+    library(MAIN, item(f"K-{A}", data=DATA[A]), item(f"K-{B}", data=DATA[B]),
+            item(f"K-{C}", data=DATA[C], trash_timestamp=int(trashed_at * 1000)))  # fmt: skip
+    sync.sq("INSERT INTO events (time, kind, text, name) VALUES (?, 'deleted', ?, '')",
+            (trashed_at + 20, f"Deleted c.mp4 in Google Photos ({MAIN}) to upload it again for free"))  # fmt: skip
+    assert names() == []
+
+
+def test_a_copy_of_a_joined_live_photo_is_gp_syncs(gone):
+    # b.HEIC is one Live Photo GP Sync joined; c.mp4 carries the same Apple content ID (a second copy).
+    still = str(sync.MEDIA / B)
+    sync.q("INSERT INTO live_fix (still, account, mov, state, new_key, new_dedup) VALUES (?,?,?,'done','M','MD')",
+           (still, MAIN, str(sync.MEDIA / "x.mov")))  # fmt: skip
+    sync.q("INSERT OR REPLACE INTO live_ids (path, cid) VALUES (?, 'CID'), (?, 'CID')", (still, str(sync.MEDIA / C)))
+    library(MAIN, item(f"K-{A}", data=DATA[A]), item("M", data=b"motion"),
+            item(f"K-{C}", data=DATA[C], trash_timestamp=TRASHED_MS))  # fmt: skip
+    assert names() == []
+    sync.q("DELETE FROM live_ids")
+
+
+def test_notes_from_before_that_never_saw_the_trash_are_dropped(gone):
+    sync.q("INSERT INTO gone_seen (path, account, state, trash, seen, by_gp) VALUES (?,?,'deleted',0,1,0)",
+           (str(sync.MEDIA / C), MAIN))  # fmt: skip
+    sync.meta_set("gone_trash_only", "")
+    sync.gone_migrate()
+    everything_but(emptied=(C,))
+    assert names() == [] and not sync.q("SELECT 1 FROM gone_seen")
+    assert sync.meta_get("gone_trash_only") == "1"

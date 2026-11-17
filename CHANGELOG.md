@@ -12,6 +12,12 @@
   the page stopped scrolling while a thumb was on it. On touch screens that list, the Upload page's
   file list, Health's app log and Settings' prompt now grow with the page instead; a mouse or
   trackpad keeps the boxes.
+- **Deleted in Google lists only your own deletions.** An item now counts only when it went to
+  Google's Trash (or was emptied from there), since Google Photos never deletes for good without it.
+  Never counted: Free storage's replacements (followed to their free copy, which 1.9.4 missed:
+  73 Snapchat memories showed up wrongly), anything trashed right before one of GP Sync's own
+  "Deleted…" or "Live Photo…" log lines, and second copies of a Live Photo GP Sync joined (same
+  Apple content ID). The wrong notes 1.9.4 made are cleared once on start.
 
 ## 1.9.4
 

@@ -63,6 +63,13 @@ function chips(i: GoneItem, multi: boolean): string {
           a.trash ? `Since ${date(a.trash, true)}: Google Photos can still restore it for a while` : undefined); // prettier-ignore
       if (a.state === "deleted") return badge(`Deleted in Google${who}`, "bad", "cloudOff");
       if (a.state === "present") return badge(`Still in ${short(a.account)}`, "", "cloud");
+      if (a.state === "ours")
+        return badge(
+          `Handled by GP Sync${who}`,
+          "",
+          "verified",
+          "Removed or replaced there by GP Sync, not by you",
+        );
       return badge(`Not checked yet${who}`, "", "clock");
     })
     .join("");
@@ -123,7 +130,7 @@ function render(): void {
       el,
       `${head}<section class="card mt-4 p-6 text-center"><div class="mx-auto max-w-md space-y-2">${icon("check", "mx-auto size-8 text-ink-3")}
         <div class="text-base font-medium">Everything here is still in Google Photos</div>
-        <p class="text-sm text-ink-3">When you delete a photo or video in Google Photos that GP Sync backed up, in any of your accounts, it shows up here. GP Sync won't upload it again, and you can delete it on this device and in your other accounts too.</p></div></section>`,
+        <p class="text-sm text-ink-3">When you delete a photo or video in Google Photos that GP Sync backed up, in any of your accounts, it shows up here. Only your own deletions count: items GP Sync removed or replaced itself (Live Photos, Free storage, Snapchat copies) never do. GP Sync won't upload it again, and you can delete it on this device and in your other accounts too.</p></div></section>`,
     );
   }
   const roNote =
