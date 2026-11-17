@@ -559,6 +559,144 @@ function nowCard(s: Status): string {
     </div>${upNext(s, "")}`;
 }
 
+// ---- Backup progress, per account: one slide per connected account after the library's, with dots.
+
+let slidesKey = ""; // the accounts the slides were made for; rebuilt only when they change
+
+const short = (a: string) => a.split("@")[0] ?? a;
+
+function accountSlide(account: string): string {
+  return `<div class="hero-slide p-5" data-acc-slide="${esc(account)}" role="group" aria-label="${esc(account)}">
+    <div class="flex items-center justify-between gap-2"><div class="min-w-0"><span class="label">Account</span><h2 class="mt-1 truncate text-base font-medium" title="${esc(account)}">${esc(account)}</h2></div><span class="hs-rate shrink-0 text-xs text-ink-3 tabular-nums"></span></div>
+    <div class="mt-6 flex items-center gap-6">
+      <div class="ring-box relative shrink-0">${ring(0, 148, 8)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="hs-pct num text-[32px] leading-9">–</div><div class="hs-pct-sub meta mt-1">in this account</div></div></div></div>
+      <div class="hs-text min-w-0 flex-1 space-y-2"></div>
+    </div>
+    <div class="hs-badges mt-4 grid auto-cols-fr grid-flow-col gap-2 text-center empty:hidden"></div>
+  </div>`;
+}
+
+function laneTone(l: AccountLane, s: Status): string {
+  if (s.paused_accounts?.includes(l.account)) return "warn";
+  return l.phase === "uploading"
+    ? "info"
+    : l.phase === "stopped"
+      ? "warn"
+      : l.phase === "caught_up"
+        ? "good"
+        : "";
+}
+
+/** Fill one account's slide from the status (and the folder report, for uploaded / already there). */
+function fillAccountSlide(el: HTMLElement, account: string, s: Status, lane: AccountLane | undefined): void {
+  const q = <T extends Element>(sel: string) => el.querySelector<T>(sel);
+  const rate = q<HTMLElement>(".hs-rate");
+  const text = q<HTMLElement>(".hs-text");
+  const badges = q<HTMLElement>(".hs-badges");
+  if (!rate || !text || !badges) return;
+  if (!lane) {
+    setRing(q(".ring-box svg"), 0);
+    q<HTMLElement>(".hs-pct")!.textContent = "–";
+    rate.textContent = "";
+    html(
+      text,
+      `<div class="text-sm text-ink-2">Gets no folders yet</div><button type="button" class="btn sm" data-folders-sheet="${esc(account)}">${icon("folder")}Choose folders</button>`,
+    );
+    html(badges, "");
+    return;
+  }
+  const p = pct(lane.done, lane.total);
+  setRing(q(".ring-box svg"), p);
+  q<HTMLElement>(".hs-pct")!.textContent = lane.total
+    ? `${p >= 99.95 || p === 0 ? p.toFixed(0) : p.toFixed(1)}%`
+    : "–";
+  rate.textContent = lane.uploading.length ? `${num(lane.uploading.length)} sending` : "";
+  const tone = laneTone(lane, s);
+  const file = lane.uploading[0];
+  const left = lane.total - lane.done;
+  html(
+    text,
+    `<div><div class="font-mono text-lg whitespace-nowrap tabular-nums sm:text-xl">${num(lane.done)}<span class="text-ink-3"> / ${num(lane.total)}</span></div><div class="mt-1 text-xs text-ink-3">files in this account</div></div>
+     <div class="flex min-w-0 items-center gap-1.5 text-sm"><i class="job-dot shrink-0 ${tone}"></i><span class="job-state min-w-0 truncate ${tone}">${esc(lanePhaseText(lane, s))}</span></div>
+     <div class="truncate text-xs text-ink-3">${
+       file
+         ? `Sending ${esc(fileName(file.name))}`
+         : lane.roundTotal
+           ? `This round: ${num(lane.roundDone)} of ${num(lane.roundTotal)}`
+           : left
+             ? `${num(left)} still to back up`
+             : "Every file is in this account"
+     }</div>`,
+  );
+  const has = accReport?.total.accounts?.find((a) => a.account === account);
+  html(
+    badges,
+    has
+      ? [
+          `<div class="stat-tile"><div class="num text-lg">${num(has.uploaded)}</div><div class="text-[11px] text-ink-3">Uploaded</div></div>`,
+          `<div class="stat-tile"><div class="num text-lg">${num(has.exists)}</div><div class="text-[11px] text-ink-3">Already there</div></div>`,
+          `<div class="stat-tile"><div class="num text-lg">${num(has.waiting)}</div><div class="text-[11px] text-ink-3">Waiting</div></div>`,
+          has.failed
+            ? `<div class="stat-tile"><div class="num text-lg text-bad">${num(has.failed)}</div><div class="text-[11px] text-ink-3">Failed</div></div>`
+            : "",
+        ].join("")
+      : "",
+  );
+}
+
+/** The page the track shows now (0 = the library). */
+function slideIndex(track: HTMLElement): number {
+  return track.clientWidth ? Math.round(track.scrollLeft / track.clientWidth) : 0;
+}
+
+function paintDots(): void {
+  const track = document.getElementById("sy-track");
+  const dots = document.getElementById("sy-dots");
+  if (!track || !dots) return;
+  const i = slideIndex(track);
+  dots.querySelectorAll<HTMLElement>("[data-dot]").forEach((d) => {
+    const on = Number(d.dataset.dot) === i;
+    d.classList.toggle("on", on);
+    d.setAttribute("aria-selected", String(on));
+  });
+}
+
+/** One slide per connected account after the library's, once there are two or more accounts. */
+function drawAccountSlides(s: Status): void {
+  const track = document.getElementById("sy-track");
+  const dots = document.getElementById("sy-dots");
+  if (!track || !dots) return;
+  const accounts = (s.accounts?.length ?? 0) > 1 ? (s.accounts ?? []) : [];
+  const key = accounts.join("\n");
+  if (key !== slidesKey) {
+    const at = slideIndex(track);
+    slidesKey = key;
+    track.querySelectorAll("[data-acc-slide]").forEach((el) => el.remove());
+    track.insertAdjacentHTML("beforeend", accounts.map(accountSlide).join(""));
+    const names = ["Your library", ...accounts];
+    dots.hidden = accounts.length === 0;
+    dots.innerHTML = names
+      .map(
+        (n, i) =>
+          `<button type="button" role="tab" data-dot="${i}" aria-label="${esc(i ? `Show ${n}` : n)}" title="${esc(i ? short(n) : n)}"><i></i></button>`,
+      )
+      .join("");
+    track.scrollLeft = Math.min(at, accounts.length) * track.clientWidth;
+    paintDots();
+  }
+  if (!accounts.length) return;
+  const lanes = accountLanes(s);
+  track.querySelectorAll<HTMLElement>("[data-acc-slide]").forEach((el) => {
+    const account = el.dataset.accSlide ?? "";
+    fillAccountSlide(
+      el,
+      account,
+      s,
+      lanes.find((l) => l.account === account),
+    );
+  });
+}
+
 function heroBadges(s: Status): string {
   const left = s.library.files - s.library.synced_files;
   const eta = etaText(s);
@@ -644,13 +782,19 @@ const sync: View = {
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-12">
       <!-- Phones: progress, Now, then the tiles. Wider: progress with the tiles under it, beside Now. -->
       <div class="contents lg:col-span-5 lg:flex lg:flex-col lg:gap-4">
-      <section class="card overview-hero relative order-1 overflow-hidden p-5 lg:order-none" id="sy-hero">
+      <section class="card overview-hero relative order-1 overflow-hidden lg:order-none" id="sy-hero">
+        <!-- Swipe sideways: the whole library first, then each account's own progress (dots below). -->
+        <div class="hero-track" id="sy-track" tabindex="-1">
+        <div class="hero-slide p-5" data-slide="library" role="group" aria-label="Your library">
         <div class="flex items-center justify-between gap-2"><div><span class="label">Your library</span><h2 class="mt-1 text-base font-medium">Backup progress</h2></div><span id="sy-rate" class="text-xs text-ink-3 tabular-nums"></span></div>
         <div class="mt-6 flex items-center gap-6">
-          <div class="ring-box relative shrink-0">${ring(0, 148, 8)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-[32px] leading-9" id="sy-pct">–</div><div class="meta mt-1" id="sy-pct-sub">of files</div></div></div></div>
+          <div class="ring-box relative shrink-0" id="sy-lib-ring">${ring(0, 148, 8)}<div class="absolute inset-0 grid place-items-center text-center"><div><div class="num text-[32px] leading-9" id="sy-pct">–</div><div class="meta mt-1" id="sy-pct-sub">of files</div></div></div></div>
           <div class="min-w-0 space-y-2" id="sy-hero-text"></div>
         </div>
         <div class="even mt-4" id="sy-badges"></div>
+        </div>
+        </div>
+        <div class="hero-dots" id="sy-dots" role="tablist" aria-label="Backup progress pages" hidden></div>
       </section>
       <section class="order-3 grid grid-cols-2 gap-4 lg:order-none">
         ${tile({ id: "sy-today", label: "Today", value: "–", ic: "calendar", chart: "", href: "#/activity/uploaded" })}
@@ -687,8 +831,32 @@ const sync: View = {
         <div class="card-b"><div class="scroll-thin fade-x overflow-x-auto pb-1" id="sy-year"><div class="skeleton h-28"></div></div><div class="mt-2 flex justify-end">${heatLegend()}</div></div>
       </section>
     </div>`;
+    slidesKey = "";
+    const track = $("#sy-track");
+    let ticking = false;
+    track.addEventListener(
+      "scroll",
+      () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(() => {
+          ticking = false;
+          paintDots();
+        });
+      },
+      { passive: true },
+    );
     el.addEventListener("click", (e) => {
       const t = e.target as HTMLElement;
+      const dot = t.closest<HTMLElement>("[data-dot]");
+      if (dot) {
+        const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        track.scrollTo({
+          left: Number(dot.dataset.dot) * track.clientWidth,
+          behavior: reduce ? "auto" : "smooth",
+        });
+        return;
+      }
       const seg = t.closest<HTMLElement>("[data-seg]");
       if (seg) {
         const [acc = "", part = "all"] = seg.dataset.seg!.split("|");
@@ -744,7 +912,7 @@ const sync: View = {
     else if (!kindsDrawn) renderShare();
     const lib = s.library;
     const p = pct(lib.synced_files, lib.files);
-    setRing($("#sy-hero .ring-box svg"), p);
+    setRing($("#sy-lib-ring svg"), p);
     $("#sy-pct").textContent = lib.files ? `${p >= 99.95 || p === 0 ? p.toFixed(0) : p.toFixed(1)}%` : "–";
     const left = lib.files - lib.synced_files;
     html(
@@ -762,6 +930,7 @@ const sync: View = {
        <div class="text-xs text-ink-3">${left ? `${bytes(lib.bytes - lib.synced_bytes)} still to back up` : copying ? `Main library is in. Still copying to ${esc(copying)}` : "Every file is in Google Photos"}</div>`,
     );
     html($("#sy-badges"), heroBadges(s));
+    drawAccountSlides(s);
     html($("#sy-now"), nowCard(s));
     if (Date.now() - accAt > 30_000) void loadAccounts();
     drawLanes(s);
