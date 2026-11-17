@@ -804,6 +804,62 @@ strong {
 .overview-hero .ring-box {
   border-radius: 50%;
 }
+/* Sync's Backup progress: the library, then one page per account, side by side; swipe or use the dots. */
+.hero-track {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.hero-track::-webkit-scrollbar {
+  display: none;
+}
+.hero-slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  overflow: hidden; /* a long line never shows on the page beside it */
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+.hero-dots {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  margin-top: -0.5rem;
+  padding-bottom: 0.625rem;
+}
+.hero-dots[hidden] {
+  display: none;
+}
+.hero-dots button {
+  display: grid;
+  place-items: center;
+  height: 1.25rem;
+  padding: 0 4px;
+}
+.hero-dots i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--ink-3);
+  opacity: 0.45;
+  transition:
+    width 0.25s var(--ease),
+    opacity 0.25s var(--ease),
+    background-color 0.25s var(--ease);
+}
+.hero-dots button.on i {
+  width: 18px;
+  opacity: 1;
+  background: var(--ink);
+}
+.hero-dots button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
 /* Text placed directly on the accent needs the darker fill in both themes. */
 .bg-accent.text-white {
   background-color: var(--accent-fill);
@@ -1567,6 +1623,9 @@ svg:hover .donut-arc:not(:hover) {
 .job-state {
   @apply shrink-0 font-medium text-ink-2;
 }
+.hero-slide .job-state {
+  flex-shrink: 1; /* an account's state on Backup progress fits its page */
+}
 .job-state.info {
   @apply text-accent;
 }
@@ -1954,6 +2013,18 @@ svg:hover .donut-arc:not(:hover) {
 }
 .work-list > li {
   @apply min-w-0;
+}
+/* Touch screens: a box that scrolls on its own inside the page catches the thumb, so the page stops
+   scrolling while a finger is on it (worse with overscroll-contain, which never hands the swipe
+   back). There these lists grow with the page instead; a mouse or trackpad keeps the box. */
+@media (pointer: coarse) {
+  .work-list,
+  .prompt-box,
+  .inner-scroll {
+    max-height: none;
+    overflow-y: visible;
+    overscroll-behavior: auto;
+  }
 }
 .work-row {
   @apply flex items-center gap-3 px-4 py-3;

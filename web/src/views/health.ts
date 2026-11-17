@@ -143,7 +143,7 @@ const health: View = {
           <input class="input h-8 w-40 sm:w-56" id="hl-q" placeholder="Search the log">
           <button class="btn sm" id="hl-dl">${icon("download")}Save</button>
           <a class="btn sm primary" href="api/diagnostics?hours=48" download title="Versions, checks, settings without secrets, and the last 48 hours of log and activity">${icon("code")}Diagnostics</a></div></div>
-        <div id="hl-logs" class="scroll-thin max-h-[420px] overflow-y-auto font-mono text-xs"></div>
+        <div id="hl-logs" class="inner-scroll scroll-thin max-h-[420px] overflow-y-auto font-mono text-xs"></div>
         <div class="border-t border-line p-2 text-center"><button class="btn sm" id="hl-more">${icon("history")}Older</button></div>
       </section>
     </div>`;
