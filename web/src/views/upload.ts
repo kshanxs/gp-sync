@@ -445,7 +445,7 @@ const upload: View = {
 
       <section class="card lg:col-span-8">
         ${cardHead("This visit", "layers", `<button class="btn sm" id="up-clear">${icon("trash")}Clear finished</button>`)}
-        <div id="up-list" class="scroll-thin max-h-[60vh] overflow-y-auto" data-gallery></div>
+        <div id="up-list" class="inner-scroll scroll-thin max-h-[60vh] overflow-y-auto" data-gallery></div>
       </section>
 
       <section class="card lg:col-span-4">

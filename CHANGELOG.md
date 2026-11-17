@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Sync: every account on Backup progress.** With two or more accounts, the Backup progress card
+  pages sideways: the whole library first, then one page per account with its own percentage, files
+  in it, what it is doing now (the file it is sending, this round, or what is left) and its
+  uploaded / already there / waiting counts. Swipe on a phone, or use the dots under the card, which
+  show the page you are on.
+- **Phones: scrolling the page never gets stuck on a list.** The list of files in progress (Sync,
+  Overview, Copy accounts) scrolled inside its own box and kept the swipe when it reached its end, so
+  the page stopped scrolling while a thumb was on it. On touch screens that list, the Upload page's
+  file list, Health's app log and Settings' prompt now grow with the page instead; a mouse or
+  trackpad keeps the boxes.
+
 ## 1.9.4
 
 - **Deleted in Google.** A new page lists photos and videos GP Sync backed up that you have since
